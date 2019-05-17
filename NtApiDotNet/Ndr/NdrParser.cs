@@ -29,6 +29,7 @@ namespace NtApiDotNet.Ndr
 {
 #pragma warning disable 1591
     [Flags]
+    [Serializable]
     public enum NdrInterpreterOptFlags : byte
     {
         ServerMustSize = 0x01,
@@ -41,6 +42,7 @@ namespace NtApiDotNet.Ndr
     }
 
     [Flags]
+    [Serializable]
     public enum NdrInterpreterOptFlags2 : byte
     {
         HasNewCorrDesc = 0x01,
@@ -48,10 +50,10 @@ namespace NtApiDotNet.Ndr
         ServerCorrCheck = 0x04,
         HasNotify = 0x08,
         HasNotify2 = 0x10,
-        Unknown20 = 0x20,
-        ExtendedCorrDesc = 0x40,
-        Unknown80 = 0x80,
-        Valid = HasNewCorrDesc | ClientCorrCheck | ServerCorrCheck | HasNotify | HasNotify2 | ExtendedCorrDesc
+        HasComplexReturn = 0x20,
+        HasRangeOnConformance = 0x40,
+        HasBigByValParam = 0x80,
+        Valid = HasNewCorrDesc | ClientCorrCheck | ServerCorrCheck | HasNotify | HasNotify2 | HasRangeOnConformance
     }
 
 #pragma warning restore 1591
@@ -87,9 +89,10 @@ namespace NtApiDotNet.Ndr
         public ISymbolResolver SymbolResolver { get; }
         public MIDL_STUB_DESC StubDesc { get; }
         public IntPtr TypeDesc { get; }
-        public int CorrDescSize { get; }
         public IMemoryReader Reader { get; }
         public NdrParserFlags Flags { get; }
+        public NDR_EXPR_DESC ExprDesc { get; }
+        public NdrInterpreterOptFlags2 OptFlags { get; }
 
         public bool HasFlag(NdrParserFlags flags)
         {
@@ -97,14 +100,15 @@ namespace NtApiDotNet.Ndr
         }
 
         internal NdrParseContext(NdrTypeCache type_cache, ISymbolResolver symbol_resolver, 
-            MIDL_STUB_DESC stub_desc, IntPtr type_desc, int desc_size, IMemoryReader reader,
-            NdrParserFlags parser_flags)
+            MIDL_STUB_DESC stub_desc, IntPtr type_desc, NDR_EXPR_DESC expr_desc,
+            NdrInterpreterOptFlags2 opt_flags, IMemoryReader reader, NdrParserFlags parser_flags)
         {
             TypeCache = type_cache;
             SymbolResolver = symbol_resolver;
             StubDesc = stub_desc;
             TypeDesc = type_desc;
-            CorrDescSize = desc_size;
+            ExprDesc = expr_desc;
+            OptFlags = opt_flags;
             Reader = reader;
             Flags = parser_flags;
         }
@@ -175,6 +179,7 @@ namespace NtApiDotNet.Ndr
             IntPtr[] dispatch_funcs = server_info.GetDispatchTable(reader, dispatch_count);
             MIDL_STUB_DESC stub_desc = server_info.GetStubDesc(reader);
             IntPtr type_desc = stub_desc.pFormatTypes;
+            NDR_EXPR_DESC expr_desc = stub_desc.GetExprDesc(reader);
             List<NdrProcedureDefinition> procs = new List<NdrProcedureDefinition>();
             if (fmt_str_ofs != IntPtr.Zero)
             {
@@ -189,11 +194,39 @@ namespace NtApiDotNet.Ndr
                             name = names[i - start_offset];
                         }
                         procs.Add(new NdrProcedureDefinition(reader, type_cache, symbol_resolver,
-                            stub_desc, proc_str + fmt_ofs, type_desc, dispatch_funcs[i], name, parser_flags));
+                            stub_desc, proc_str + fmt_ofs, type_desc, expr_desc, dispatch_funcs[i], name, parser_flags));
                     }
                 }
             }
             return procs.AsReadOnly();
+        }
+
+        private void ReadTypes(IntPtr midl_type_pickling_info_ptr, IntPtr midl_stub_desc_ptr, IEnumerable<int> fmt_offsets)
+        {
+            if (midl_type_pickling_info_ptr == IntPtr.Zero)
+            {
+                throw new ArgumentException("Must specify the MIDL_TYPE_PICKLING_INFO pointer");
+            }
+
+            if (midl_stub_desc_ptr == IntPtr.Zero)
+            {
+                throw new ArgumentException("Must specify the MIDL_STUB_DESC pointer");
+            }
+
+            var pickle_info = _reader.ReadStruct<MIDL_TYPE_PICKLING_INFO>(midl_type_pickling_info_ptr);
+            if (pickle_info.Version != 0x33205054)
+            {
+                throw new ArgumentException($"Unsupported picking type version {pickle_info.Version:X}");
+            }
+
+            var flags = pickle_info.Flags.HasFlag(MidlTypePicklingInfoFlags.NewCorrDesc) ? NdrInterpreterOptFlags2.HasNewCorrDesc : 0;
+            MIDL_STUB_DESC stub_desc = _reader.ReadStruct<MIDL_STUB_DESC>(midl_stub_desc_ptr);
+            NdrParseContext context = new NdrParseContext(_type_cache, null, stub_desc, stub_desc.pFormatTypes, stub_desc.GetExprDesc(_reader),
+                flags, _reader, NdrParserFlags.IgnoreUserMarshal);
+            foreach (var i in fmt_offsets)
+            {
+                NdrBaseTypeReference.Read(context, i);
+            }
         }
 
         [UnmanagedFunctionPointer(CallingConvention.StdCall)]
@@ -242,7 +275,7 @@ namespace NtApiDotNet.Ndr
                 // Reference Count
                 // ProxyFileInfo*
 
-                IntPtr pInfo = Marshal.ReadIntPtr(psfactory, 2 * IntPtr.Size);
+                IntPtr pInfo = System.Runtime.InteropServices.Marshal.ReadIntPtr(psfactory, 2 * IntPtr.Size);
                 // TODO: Should add better checks here, 
                 // for example VTable should be in COMBASE and the pointer should be in the
                 // server DLL's rdata section. But this is probably good enough for now.
@@ -264,7 +297,7 @@ namespace NtApiDotNet.Ndr
             {
                 if (psfactory != IntPtr.Zero)
                 {
-                    Marshal.Release(psfactory);
+                    System.Runtime.InteropServices.Marshal.Release(psfactory);
                 }
             }
         }
@@ -348,6 +381,16 @@ namespace NtApiDotNet.Ndr
 
                 throw new NdrParserException("Error while parsing NDR structures");
             }
+        }
+
+        private static void RunWithAccessCatch(Action func)
+        {
+            RunWithAccessCatch(() =>
+            {
+                func();
+                return 0;
+            }
+            );
         }
 
         private static IMemoryReader CreateReader(NtProcess process)
@@ -607,6 +650,45 @@ namespace NtApiDotNet.Ndr
         /// List of parsed complex types from the NDR.
         /// </summary>
         public IEnumerable<NdrComplexTypeReference> ComplexTypes { get { return Types.OfType<NdrComplexTypeReference>(); } }
+
+        #endregion
+
+        #region Static Methods
+        /// <summary>
+        /// Parse NDR complex type information from a pickling structure. Used to extract explicit Encode/Decode method information.
+        /// </summary>
+        /// <param name="process">The process to read from.</param>
+        /// <param name="midl_type_pickling_info">Pointer to the MIDL_TYPE_PICKLING_INFO structure.</param>
+        /// <param name="midl_stub_desc">The pointer to the MIDL_STUB_DESC structure.</param>
+        /// <param name="start_offsets">Offsets into the format string to the start of the types.</param>
+        /// <returns>The list of complex types.</returns>
+        /// <remarks>This function is used to extract type information for calls to NdrMesTypeDecode2. MIDL_TYPE_PICKLING_INFO is the second parameter,
+        /// MIDL_STUB_DESC is the third (minus the offset).</remarks>
+        public static IEnumerable<NdrComplexTypeReference> ReadPicklingComplexTypes(NtProcess process, IntPtr midl_type_pickling_info, IntPtr midl_stub_desc, params int[] start_offsets)
+        {
+            if (start_offsets.Length == 0)
+            {
+                return new NdrComplexTypeReference[0];
+            }
+
+            NdrParser parser = new NdrParser(process, null, NdrParserFlags.IgnoreUserMarshal);
+            RunWithAccessCatch(() => parser.ReadTypes(midl_type_pickling_info, midl_stub_desc, start_offsets));
+            return parser.ComplexTypes;
+        }
+
+        /// <summary>
+        /// Parse NDR complex type information from a pickling structure. Used to extract explicit Encode/Decode method information.
+        /// </summary>
+        /// <param name="midl_type_pickling_info">Pointer to the MIDL_TYPE_PICKLING_INFO structure.</param>
+        /// <param name="midl_stub_desc">The pointer to the MIDL_STUB_DESC structure.</param>
+        /// <param name="start_offsets">Offsets into the format string to the start of the types.</param>
+        /// <returns>The list of complex types.</returns>
+        /// <remarks>This function is used to extract type information for calls to NdrMesTypeDecode2. MIDL_TYPE_PICKLING_INFO is the second parameter,
+        /// MIDL_STUB_DESC is the third (minus the offset).</remarks>
+        public static IEnumerable<NdrComplexTypeReference> ReadPicklingComplexTypes(IntPtr midl_type_pickling_info, IntPtr midl_stub_desc, params int[] start_offsets)
+        {
+            return ReadPicklingComplexTypes(null, midl_type_pickling_info, midl_stub_desc, start_offsets);
+        }
 
         #endregion
     }

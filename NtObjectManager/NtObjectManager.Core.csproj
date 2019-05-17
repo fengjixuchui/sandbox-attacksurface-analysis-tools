@@ -7,17 +7,18 @@
     <Authors>James Forshaw</Authors>
     <Company>Google Inc.</Company>
     <Product>NtObjectManager</Product>
-    <FileVersion>1.1.18.0</FileVersion>
+    <FileVersion>1.1.22.0</FileVersion>
     <Copyright>Copyright © Google Inc. 2016, 2017, 2018, 2019</Copyright>
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <PackageLicenseUrl>https://www.apache.org/licenses/LICENSE-2.0</PackageLicenseUrl>
-    <RepositoryUrl>https://github.com/google/sandbox-attacksurface-analysis-tools</RepositoryUrl>
+    <RepositoryUrl>https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools</RepositoryUrl>
     <DefineConstants>NETCORE</DefineConstants>
   </PropertyGroup>
 
   <ItemGroup>
     <PackageReference Include="Microsoft.Win32.Registry" Version="4.4.0" />
-    <PackageReference Include="PowerShellStandard.Library" Version="3.0.0-preview-01" />
+    <PackageReference Include="PowerShellStandard.Library" Version="5.1.0" />
+    <PackageReference Include="System.Security.AccessControl" Version="4.5.0" />
     <PackageReference Include="System.ServiceProcess.ServiceController" Version="4.4.1" />
   </ItemGroup>
 

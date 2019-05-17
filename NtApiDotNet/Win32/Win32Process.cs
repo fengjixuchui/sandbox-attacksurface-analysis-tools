@@ -24,40 +24,56 @@ namespace NtApiDotNet.Win32
     /// Flags for create process.
     /// </summary>
     [Flags]
-    public enum CreateProcessFlags
+    public enum CreateProcessFlags : uint
     {
         /// <summary>
         /// No flags.
         /// </summary>
         None = 0,
         /// <summary>
-        /// Breakaway from a job object.
+        /// Debug process.
         /// </summary>
-        BreakawayFromJob = 0x01000000,
+        DebugProcess = 0x00000001,
         /// <summary>
-        /// Default error mode.
+        /// Debug only this process.
         /// </summary>
-        DefaultErrorMode = 0x04000000,
+        DebugOnlyThisProcess = 0x00000002,
+        /// <summary>
+        /// Create suspended.
+        /// </summary>
+        Suspended = 0x00000004,
+        /// <summary>
+        /// Detach process.
+        /// </summary>
+        DetachedProcess = 0x00000008,
         /// <summary>
         /// Create a new console.
         /// </summary>
         NewConsole = 0x00000010,
         /// <summary>
+        /// Normal priority class.
+        /// </summary>
+        NormalPriorityClass = 0x00000020,
+        /// <summary>
+        /// Idle priority class.
+        /// </summary>
+        IdlePriorityClass = 0x00000040,
+        /// <summary>
+        /// High priority class.
+        /// </summary>
+        HighPriorityClass = 0x00000080,
+        /// <summary>
+        /// Realtime priority class.
+        /// </summary>
+        RealtimePriorityClass = 0x00000100,
+        /// <summary>
         /// Create a new process group.
         /// </summary>
         NewProcessGroup = 0x00000200,
         /// <summary>
-        /// No window.
+        /// Create from a unicode environment.
         /// </summary>
-        NoWindow = 0x08000000,
-        /// <summary>
-        /// Create a protected process.
-        /// </summary>
-        ProtectedProcess = 0x00040000,
-        /// <summary>
-        /// Preserve code authz level.
-        /// </summary>
-        PreserveCodeAuthZLevel = 0x02000000,
+        UnicodeEnvironment = 0x00000400,
         /// <summary>
         /// Create a separate WOW VDM.
         /// </summary>
@@ -67,33 +83,77 @@ namespace NtApiDotNet.Win32
         /// </summary>
         SharedWowVdm = 0x00001000,
         /// <summary>
-        /// Create suspended.
+        /// Force DOS process.
         /// </summary>
-        Suspended = 0x00000004,
+        ForceDOS = 0x00002000,
         /// <summary>
-        /// Create from a unicode environment.
+        /// Below normal priority class.
         /// </summary>
-        UnicodeEnvironment = 0x00000400,
+        BelowNormalPriorityClass = 0x00004000,
         /// <summary>
-        /// Debug only this process.
+        /// Above normal priority class.
         /// </summary>
-        DebugOnlyThisProcess = 0x00000002,
+        AboveNormalPriorityClass = 0x00008000,
         /// <summary>
-        /// Debug process.
+        /// Inherit parent affinity.
         /// </summary>
-        DebugProcess = 0x00000001,
+        InheritParentAffinity = 0x00010000,
         /// <summary>
-        /// Detach process.
+        /// Inherit caller priority (deprecated)
         /// </summary>
-        DetachedProcess = 0x00000008,
+        InheritCallerPriority = 0x00020000,
+        /// <summary>
+        /// Create a protected process.
+        /// </summary>
+        ProtectedProcess = 0x00040000,
         /// <summary>
         /// Specify extended startup information is present.
         /// </summary>
         ExtendedStartupInfoPresent = 0x00080000,
         /// <summary>
-        /// Inherit parent affinity.
+        /// Process mode background begin.
         /// </summary>
-        InheritParentAffinity = 0x00010000
+        ModeBackgroundBegin = 0x00100000,
+        /// <summary>
+        /// Process mode background end.
+        /// </summary>
+        ModeBackgroundEnd = 0x00200000,
+        /// <summary>
+        /// Create a secure process.
+        /// </summary>
+        SecureProcess = 0x00400000,
+        /// <summary>
+        /// Breakaway from a job object.
+        /// </summary>
+        BreakawayFromJob = 0x01000000,
+        /// <summary>
+        /// Preserve code authz level.
+        /// </summary>
+        PreserveCodeAuthZLevel = 0x02000000,
+        /// <summary>
+        /// Default error mode.
+        /// </summary>
+        DefaultErrorMode = 0x04000000,
+        /// <summary>
+        /// No window.
+        /// </summary>
+        NoWindow = 0x08000000,
+        /// <summary>
+        /// Profile user.
+        /// </summary>
+        ProfileUser = 0x10000000,
+        /// <summary>
+        /// Profile kernel.
+        /// </summary>
+        ProfileKernel = 0x20000000,
+        /// <summary>
+        /// Profile server.
+        /// </summary>
+        ProfileServer = 0x40000000,
+        /// <summary>
+        /// Ignore system default.
+        /// </summary>
+        IgnoreSystemDefault = 0x80000000
     }
 
     /// <summary>
@@ -276,7 +336,31 @@ namespace NtApiDotNet.Win32
         AppPPL = 8
     }
 
-    class ProcessAttributes
+    /// <summary>
+    /// Extended process flags.
+    /// </summary>
+    [Flags]
+    public enum ProcessExtendedFlags
+    {
+        /// <summary>
+        /// No flags.
+        /// </summary>
+        None = 0,
+        /// <summary>
+        /// Log elevation failure.
+        /// </summary>
+        LogElevationFailure = 0x1,
+        /// <summary>
+        /// Ignore elevation requirements.
+        /// </summary>
+        IgnoreElevationCheck = 0x2,
+        /// <summary>
+        /// Force job breakaway (needs TCB privilege).
+        /// </summary>
+        ForceBreakawayJob = 0x4,
+    }
+
+    class Win32ProcessAttributes
     {
         const int PROC_THREAD_ATTRIBUTE_THREAD = 0x00010000;
         const int PROC_THREAD_ATTRIBUTE_INPUT = 0x00020000;
@@ -303,6 +387,7 @@ namespace NtApiDotNet.Win32
         enum PROC_THREAD_ATTRIBUTE_NUM
         {
             ProcThreadAttributeParentProcess = 0,
+            ProcThreadAttributeExtendedFlags = 1,
             ProcThreadAttributeHandleList = 2,
             ProcThreadAttributeGroupAffinity = 3,
             ProcThreadAttributePreferredNode = 4,
@@ -322,109 +407,33 @@ namespace NtApiDotNet.Win32
             ProcThreadAttributePseudoConsole = 22,
         }
 
-        public static IntPtr ProcThreadAttributeParentProcess
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeParentProcess, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeParentProcess => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeParentProcess, false, true, false);
 
-        public static IntPtr ProcThreadAttributeHandleList
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeHandleList, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeHandleList => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeHandleList, false, true, false);
 
-        public static IntPtr ProcThreadAttributeMitigationPolicy
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeMitigationPolicy, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeMitigationPolicy => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeMitigationPolicy, false, true, false);
 
-        public static IntPtr ProcThreadAttributeChildProcessPolicy
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeChildProcessPolicy, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeChildProcessPolicy => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeChildProcessPolicy, false, true, false);
 
-        public static IntPtr ProcThreadAttributeWin32kFilter
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeWin32kFilter, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeWin32kFilter => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeWin32kFilter, false, true, false);
 
-        public static IntPtr ProcThreadAttributeAllApplicationPackagesPolicy
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeAllApplicationPackagesPolicy, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeAllApplicationPackagesPolicy => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeAllApplicationPackagesPolicy, false, true, false);
 
-        public static IntPtr ProcThreadAttributeProtectionLevel
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeProtectionLevel, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeProtectionLevel => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeProtectionLevel, false, true, false);
 
-        public static IntPtr ProcThreadAttributeSecurityCapabilities
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeSecurityCapabilities, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeSecurityCapabilities => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeSecurityCapabilities, false, true, false);
 
-        public static IntPtr ProcThreadAttributeDesktopAppPolicy
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeDesktopAppPolicy, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeDesktopAppPolicy => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeDesktopAppPolicy, false, true, false);
 
-        public static IntPtr ProcThreadAttributePackageName
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributePackageName, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributePackageName => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributePackageName, false, true, false);
 
-        public static IntPtr ProcThreadAttributePseudoConsole
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributePseudoConsole, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributePseudoConsole => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributePseudoConsole, false, true, false);
 
-        public static IntPtr ProcThreadAttributeBnoIsolation
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeBnoIsolation, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeBnoIsolation => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeBnoIsolation, false, true, false);
 
-        public static IntPtr ProcThreadAttributeSafeOpenPromptOriginClaim
-        {
-            get
-            {
-                return GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeSafeOpenPromptOriginClaim, false, true, false);
-            }
-        }
+        public static IntPtr ProcThreadAttributeSafeOpenPromptOriginClaim => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeSafeOpenPromptOriginClaim, false, true, false);
+
+        public static IntPtr ProcThreadAttributeExtendedFlags => GetValue(PROC_THREAD_ATTRIBUTE_NUM.ProcThreadAttributeExtendedFlags, false, true, true);
     }
 
     class SafeProcThreadAttributeListBuffer : SafeHGlobalBuffer
@@ -476,6 +485,24 @@ namespace NtApiDotNet.Win32
             }
 
             return false;
+        }
+    }
+
+    internal class ScopedDebugObject : IDisposable
+    {
+        private readonly NtDebug _debug_object;
+        private readonly IntPtr _old_debug_object_handle;
+
+        public ScopedDebugObject(NtDebug debug_object)
+        {
+            _debug_object = debug_object;
+            _old_debug_object_handle = NtDbgUi.DbgUiGetThreadDebugObject();
+            NtDbgUi.DbgUiSetThreadDebugObject(debug_object.Handle.DangerousGetHandle());
+        }
+
+        public void Dispose()
+        {
+            NtDbgUi.DbgUiSetThreadDebugObject(_old_debug_object_handle);
         }
     }
 
@@ -635,7 +662,7 @@ namespace NtApiDotNet.Win32
         /// <summary>
         /// Specify list of handles to inherit.
         /// </summary>
-        public List<IntPtr> InheritHandleList { get; private set; }
+        public List<IntPtr> InheritHandleList { get; }
         /// <summary>
         /// Specify the appcontainer Sid.
         /// </summary>
@@ -643,7 +670,7 @@ namespace NtApiDotNet.Win32
         /// <summary>
         /// Specify the appcontainer capabilities.
         /// </summary>
-        public List<Sid> Capabilities { get; private set; }
+        public List<Sid> Capabilities { get; }
         /// <summary>
         /// Specify LPAC.
         /// </summary>
@@ -692,6 +719,18 @@ namespace NtApiDotNet.Win32
         /// Specify the safe open prompt original claim.
         /// </summary>
         public byte[] SafeOpenPromptOriginClaim { get; set; }
+        /// <summary>
+        /// When specifying the debug flags use this debug object instead of the current thread's object.
+        /// </summary>
+        public NtDebug DebugObject { get; set; }
+        /// <summary>
+        /// When specified do not fallback to using CreateProcessWithLogon if CreateProcessWithUser fails.
+        /// </summary>
+        public bool NoTokenFallback { get; set; }
+        /// <summary>
+        /// Specify additional extended flags.
+        /// </summary>
+        public ProcessExtendedFlags ExtendedFlags { get; set; }
 
         /// <summary>
         /// Add an object's handle to the list of inherited handles. 
@@ -706,6 +745,24 @@ namespace NtApiDotNet.Win32
             IntPtr handle = obj.Handle.DangerousGetHandle();
             InheritHandleList.Add(handle);
             return handle;
+        }
+
+        /// <summary>
+        /// Add an AppContainer capability by name.
+        /// </summary>
+        /// <param name="capability_name"></param>
+        public void AddNamedCapability(string capability_name)
+        {
+            Capabilities.Add(NtSecurity.GetCapabilitySid(capability_name));
+        }
+
+        /// <summary>
+        /// Set AppContainer SID from a package name.
+        /// </summary>
+        /// <param name="package_name">The package name.</param>
+        public void SetAppContainerSidFromName(string package_name)
+        {
+            AppContainerSid = TokenUtils.DerivePackageSidFromName(package_name);
         }
 
         /// <summary>
@@ -811,6 +868,11 @@ namespace NtApiDotNet.Win32
                 count++;
             }
 
+            if (ExtendedFlags != ProcessExtendedFlags.None)
+            {
+                count++;
+            }
+
             return count;
         }
 
@@ -825,7 +887,7 @@ namespace NtApiDotNet.Win32
             var attr_list = resources.AddResource(new SafeProcThreadAttributeListBuffer(count));
             if (ParentProcess != null)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeParentProcess, ParentProcess.Handle.DangerousGetHandle());
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeParentProcess, ParentProcess.Handle.DangerousGetHandle());
             }
 
             if (MitigationOptions2 != ProcessMitigationOptions2.None)
@@ -835,24 +897,26 @@ namespace NtApiDotNet.Win32
 
                 writer.Write((ulong)MitigationOptions);
                 writer.Write((ulong)MitigationOptions2);
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeMitigationPolicy, stm.ToArray());
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeMitigationPolicy, stm.ToArray());
             }
             else if (MitigationOptions != ProcessMitigationOptions.None)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeMitigationPolicy, (ulong)MitigationOptions);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeMitigationPolicy, (ulong)MitigationOptions);
             }
 
             if (Win32kFilterFlags != Win32kFilterFlags.None)
             {
-                Win32kFilterAttribute filter = new Win32kFilterAttribute();
-                filter.Flags = Win32kFilterFlags;
-                filter.FilterLevel = Win32kFilterLevel;
-                attr_list.AddAttributeBuffer(ProcessAttributes.ProcThreadAttributeWin32kFilter, resources.AddResource(filter.ToBuffer()));
+                Win32kFilterAttribute filter = new Win32kFilterAttribute
+                {
+                    Flags = Win32kFilterFlags,
+                    FilterLevel = Win32kFilterLevel
+                };
+                attr_list.AddAttributeBuffer(Win32ProcessAttributes.ProcThreadAttributeWin32kFilter, resources.AddResource(filter.ToBuffer()));
             }
 
             if ((CreationFlags & CreateProcessFlags.ProtectedProcess) != 0 && ProtectionLevel != ProtectionLevel.None)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeProtectionLevel, (int)ProtectionLevel);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeProtectionLevel, (int)ProtectionLevel);
             }
 
             if (InheritHandleList.Count > 0)
@@ -860,7 +924,7 @@ namespace NtApiDotNet.Win32
                 int total_size = IntPtr.Size * InheritHandleList.Count;
                 var handle_list = resources.AddResource(new SafeHGlobalBuffer(total_size));
                 handle_list.WriteArray(0, InheritHandleList.ToArray(), 0, InheritHandleList.Count);
-                attr_list.AddAttributeBuffer(ProcessAttributes.ProcThreadAttributeHandleList, handle_list);
+                attr_list.AddAttributeBuffer(Win32ProcessAttributes.ProcThreadAttributeHandleList, handle_list);
             }
 
             if (AppContainerSid != null)
@@ -886,12 +950,12 @@ namespace NtApiDotNet.Win32
                     caps.Capabilities = cap_buffer.DangerousGetHandle();
                     caps.CapabilityCount = cap_sids.Length;
                 }
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeSecurityCapabilities, caps);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeSecurityCapabilities, caps);
             }
 
             if (LowPrivilegeAppContainer)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeAllApplicationPackagesPolicy, 1);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeAllApplicationPackagesPolicy, 1);
             }
 
             if (RestrictChildProcessCreation || OverrideChildProcessCreation)
@@ -899,37 +963,42 @@ namespace NtApiDotNet.Win32
                 int flags = RestrictChildProcessCreation ? 1 : 0;
                 flags |= OverrideChildProcessCreation ? 2 : 0;
 
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeChildProcessPolicy, flags);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeChildProcessPolicy, flags);
             }
 
             if (DesktopAppBreakaway != ProcessDesktopAppBreakawayFlags.None)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeDesktopAppPolicy, (int)DesktopAppBreakaway);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeDesktopAppPolicy, (int)DesktopAppBreakaway);
             }
 
             if (!string.IsNullOrWhiteSpace(PackageName))
             {
                 byte[] str_bytes = Encoding.Unicode.GetBytes(PackageName);
                 var string_buffer = resources.AddResource(new SafeHGlobalBuffer(str_bytes));
-                attr_list.AddAttributeBuffer(ProcessAttributes.ProcThreadAttributePackageName, string_buffer);
+                attr_list.AddAttributeBuffer(Win32ProcessAttributes.ProcThreadAttributePackageName, string_buffer);
             }
 
             if (PseudoConsole != IntPtr.Zero)
             {
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributePseudoConsole, PseudoConsole);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributePseudoConsole, PseudoConsole);
             }
 
             if (!string.IsNullOrEmpty(BnoIsolationPrefix))
             {
                 var prefix = new BnoIsolationAttribute() { IsolationEnabled = 1, IsolationPrefix = BnoIsolationPrefix };
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeBnoIsolation, prefix);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeBnoIsolation, prefix);
             }
 
             if (SafeOpenPromptOriginClaim != null)
             {
                 var bytes = (byte[])SafeOpenPromptOriginClaim.Clone();
                 Array.Resize(ref bytes, 524);
-                attr_list.AddAttribute(ProcessAttributes.ProcThreadAttributeSafeOpenPromptOriginClaim, bytes);
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeSafeOpenPromptOriginClaim, bytes);
+            }
+
+            if (ExtendedFlags != ProcessExtendedFlags.None)
+            {
+                attr_list.AddAttribute(Win32ProcessAttributes.ProcThreadAttributeExtendedFlags, (int)ExtendedFlags);
             }
 
             return attr_list;
@@ -949,8 +1018,17 @@ namespace NtApiDotNet.Win32
         }
 
         internal SECURITY_ATTRIBUTES ThreadSecurityAttributes(DisposableList<IDisposable> resources)
-        {            
+        {
             return CreateSecurityAttributes(ThreadSecurityDescriptor, InheritThreadHandle, resources);
+        }
+
+        internal ScopedDebugObject SetDebugObject()
+        {
+            if ((CreationFlags & (CreateProcessFlags.DebugProcess | CreateProcessFlags.DebugOnlyThisProcess)) == 0 || DebugObject == null)
+            {
+                return null;
+            }
+            return new ScopedDebugObject(DebugObject);
         }
 
         private static SECURITY_ATTRIBUTES CreateSecurityAttributes(SecurityDescriptor sd, 
@@ -991,18 +1069,28 @@ namespace NtApiDotNet.Win32
                 STARTUPINFOEX start_info = config.ToStartupInfoEx(resources);
                 SECURITY_ATTRIBUTES proc_attr = config.ProcessSecurityAttributes(resources);
                 SECURITY_ATTRIBUTES thread_attr = config.ThreadSecurityAttributes(resources);
-                
-                if (!Win32NativeMethods.CreateProcessAsUser(token.Handle, config.ApplicationName, config.CommandLine,
-                        proc_attr, thread_attr, config.InheritHandles, config.CreationFlags 
-                        | CreateProcessFlags.ExtendedStartupInfoPresent, config.Environment, 
-                        config.CurrentDirectory, start_info, out proc_info))
+
+                using (var debug_object = config.SetDebugObject())
                 {
-                    if (!Win32NativeMethods.CreateProcessWithTokenW(token.Handle, 0, config.ApplicationName, config.CommandLine,
-                        config.CreationFlags, config.Environment, config.CurrentDirectory, 
-                        ref start_info.StartupInfo, out proc_info))
+                    if (Win32NativeMethods.CreateProcessAsUser(token.Handle, config.ApplicationName, config.CommandLine,
+                            proc_attr, thread_attr, config.InheritHandles, config.CreationFlags
+                            | CreateProcessFlags.ExtendedStartupInfoPresent, config.Environment,
+                            config.CurrentDirectory, start_info, out proc_info))
                     {
-                        throw new SafeWin32Exception();
+                        return new Win32Process(proc_info, config.TerminateOnDispose);
                     }
+                }
+
+                if (config.NoTokenFallback)
+                {
+                    throw new SafeWin32Exception();
+                }
+
+                if (!Win32NativeMethods.CreateProcessWithTokenW(token.Handle, 0, config.ApplicationName, config.CommandLine,
+                    config.CreationFlags, config.Environment, config.CurrentDirectory,
+                    ref start_info.StartupInfo, out proc_info))
+                {
+                    throw new SafeWin32Exception();
                 }
 
                 return new Win32Process(proc_info, config.TerminateOnDispose);
@@ -1101,11 +1189,14 @@ namespace NtApiDotNet.Win32
                 SECURITY_ATTRIBUTES proc_attr = config.ProcessSecurityAttributes(resources);
                 SECURITY_ATTRIBUTES thread_attr = config.ThreadSecurityAttributes(resources);
 
-                if (!Win32NativeMethods.CreateProcess(config.ApplicationName, config.CommandLine, proc_attr, thread_attr, config.InheritHandles,
-                        config.CreationFlags | CreateProcessFlags.ExtendedStartupInfoPresent, 
-                        config.Environment, config.CurrentDirectory, config.ToStartupInfoEx(resources), out proc_info))
+                using (var debug_object = config.SetDebugObject())
                 {
-                    throw new SafeWin32Exception();
+                    if (!Win32NativeMethods.CreateProcess(config.ApplicationName, config.CommandLine, proc_attr, thread_attr, config.InheritHandles,
+                            config.CreationFlags | CreateProcessFlags.ExtendedStartupInfoPresent,
+                            config.Environment, config.CurrentDirectory, config.ToStartupInfoEx(resources), out proc_info))
+                    {
+                        throw new SafeWin32Exception();
+                    }
                 }
 
                 return new Win32Process(proc_info, config.TerminateOnDispose);
@@ -1156,19 +1247,19 @@ namespace NtApiDotNet.Win32
         /// <summary>
         /// The handle to the process.
         /// </summary>
-        public NtProcess Process { get; private set; }
+        public NtProcess Process { get; }
         /// <summary>
         /// The handle to the initial thread.
         /// </summary>
-        public NtThread Thread { get; private set; }
+        public NtThread Thread { get; }
         /// <summary>
         /// The process ID of the process.
         /// </summary>
-        public int Pid { get; private set; }
+        public int Pid { get; }
         /// <summary>
         /// The thread ID of the initial thread.
         /// </summary>
-        public int Tid { get; private set; }
+        public int Tid { get; }
         /// <summary>
         /// True to terminate process when disposed.
         /// </summary>

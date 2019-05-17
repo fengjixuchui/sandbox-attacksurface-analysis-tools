@@ -24,6 +24,7 @@ namespace NtApiDotNet.Ndr
 {
 #pragma warning disable 1591
     [Flags]
+    [Serializable]
     public enum NdrCorrelationType : byte
     {
         FC_NORMAL_CONFORMANCE = 0,
@@ -34,15 +35,38 @@ namespace NtApiDotNet.Ndr
     }
 
     [Flags]
+    [Serializable]
     public enum NdrCorrelationFlags : byte
     {
         Early = 0x1,
         Split = 0x2,
         IsIidIs = 0x4,
-        DontCheck = 0x8
+        DontCheck = 0x8,
+        Range = 0x10,
     }
 
-    public class NdrCorrelationDescriptor
+    [Serializable]
+    public sealed class NdrCorrelationDescriptorRange
+    {
+        public bool IsValid { get; }
+        public int MinValue { get; }
+        public int MaxValue { get; }
+
+        internal NdrCorrelationDescriptorRange()
+        {
+        }
+
+        internal NdrCorrelationDescriptorRange(BinaryReader reader)
+        {
+            IsValid = (reader.ReadByte() & 1) != 0;
+            reader.ReadByte(); // Padding?
+            MinValue = reader.ReadInt32();
+            MaxValue = reader.ReadInt32();
+        }
+    }
+
+    [Serializable]
+    public sealed class NdrCorrelationDescriptor
     {
         public NdrCorrelationType CorrelationType { get; private set; }
         public NdrFormatCharacter ValueType { get; private set; }
@@ -50,20 +74,34 @@ namespace NtApiDotNet.Ndr
         public int Offset { get; private set; }
         public NdrCorrelationFlags Flags { get; private set; }
         public bool IsValid { get; private set; }
+        public NdrCorrelationDescriptorRange Range { get; private set; }
+        public NdrExpression Expression { get; private set; }
+        public bool IsConstant => CorrelationType == NdrCorrelationType.FC_CONSTANT_CONFORMANCE;
+        public bool IsNormal => CorrelationType == NdrCorrelationType.FC_NORMAL_CONFORMANCE;
+        public bool IsTopLevel => CorrelationType == NdrCorrelationType.FC_TOP_LEVEL_CONFORMANCE;
+        public bool IsPointer => CorrelationType == NdrCorrelationType.FC_POINTER_CONFORMANCE;
 
-        internal NdrCorrelationDescriptor(NdrParseContext context, BinaryReader reader)
+        internal NdrCorrelationDescriptor()
+        {
+            Range = new NdrCorrelationDescriptorRange();
+            Expression = new NdrExpression();
+        }
+
+        internal NdrCorrelationDescriptor(NdrParseContext context, BinaryReader reader) : this()
         {
             byte type_byte = reader.ReadByte();
             byte op_byte = reader.ReadByte();
             int offset = reader.ReadInt16();
-            byte flags = 0;
-            if (context.CorrDescSize > 4)
+            int flags = 0;
+            if (context.OptFlags.HasFlag(NdrInterpreterOptFlags2.HasNewCorrDesc) || context.OptFlags.HasFlag(NdrInterpreterOptFlags2.HasRangeOnConformance))
             {
-                flags = reader.ReadByte();
-                reader.ReadByte();
-
-                // Read padding.
-                reader.ReadAll(context.CorrDescSize - 6);
+                flags = reader.ReadInt16();
+                // Read out the range.
+                if (context.OptFlags.HasFlag(NdrInterpreterOptFlags2.HasRangeOnConformance))
+                {
+                    Range = new NdrCorrelationDescriptorRange(reader);
+                    System.Diagnostics.Debug.Assert(((flags & 0x10) == 0x10) == Range.IsValid);
+                }
             }
 
             if (type_byte != 0xFF || op_byte != 0xFF || offset != -1)
@@ -74,6 +112,18 @@ namespace NtApiDotNet.Ndr
                 Operator = (NdrFormatCharacter)op_byte;
                 Offset = offset;
                 Flags = (NdrCorrelationFlags)flags;
+                if (IsConstant)
+                {
+                    Offset |= (op_byte << 16);
+                    Operator = NdrFormatCharacter.FC_ZERO;
+                }
+                else
+                {
+                    if (Operator == NdrFormatCharacter.FC_EXPR)
+                    {
+                        Expression = NdrExpression.Read(context, offset);
+                    }
+                }
             }
         }
 
@@ -81,7 +131,8 @@ namespace NtApiDotNet.Ndr
         {
             if (IsValid)
             {
-                return $"({CorrelationType})({Offset})({Operator})({ValueType})({Flags})";
+                string expr = (Operator == NdrFormatCharacter.FC_EXPR) && Expression.IsValid ? Expression.ToString() : Operator.ToString();
+                return $"({CorrelationType})({Offset})({expr})({ValueType})({Flags})";
             }
             return string.Empty;
         }

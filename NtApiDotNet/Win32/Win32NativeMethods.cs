@@ -19,6 +19,7 @@ using System.Text;
 
 namespace NtApiDotNet.Win32
 {
+#pragma warning disable 1591
     /// <summary>
     /// Flags for DefineDosDevice
     /// </summary>
@@ -45,6 +46,69 @@ namespace NtApiDotNet.Win32
         /// Don't broadcast changes to the system
         /// </summary>
         NoBroadcastSystem = 8,
+    }
+
+    /// <summary>
+    /// Disposition values for CreateFile.
+    /// </summary>
+    public enum CreateFileDisposition
+    {
+        /// <summary>
+        /// Create a new file. Fail if it exists.
+        /// </summary>
+        CreateNew = 1,
+        /// <summary>
+        /// Always create a new file, overwrite if it exists.
+        /// </summary>
+        CreateAlways = 2,
+        /// <summary>
+        /// Open a file, fail if it doesn't exist.
+        /// </summary>
+        OpenExisting = 3,
+        /// <summary>
+        /// Open a file, create if it doesn't exist.
+        /// </summary>
+        OpenAlways = 4,
+        /// <summary>
+        /// Truncate existing file.
+        /// </summary>
+        TruncateExisting = 5
+    }
+
+    [Flags]
+    public enum CreateFileFlagsAndAttributes : uint
+    {
+        None = 0,
+        ReadOnly = 0x00000001,
+        Hidden = 0x00000002,
+        System = 0x00000004,
+        Directory = 0x00000010,
+        Archive = 0x00000020,
+        Device = 0x00000040,
+        Normal = 0x00000080,
+        Temporary = 0x00000100,
+        SparseFile = 0x00000200,
+        ReparsePoint = 0x00000400,
+        Compressed = 0x00000800,
+        Offline = 0x00001000,
+        NotContentIndexed = 0x00002000,
+        Encrypted = 0x00004000,
+        IntegrityStream = 0x00008000,
+        SecurityIdentification = 0x00010000,
+        SecurityImpersonation = 0x00020000,
+        SecurityDelegation = 0x00030000,
+        ContextTracking = 0x00040000,
+        EffectiveOnly = 0x00080000,
+        SQoSPresent = 0x00100000,
+        OpenReparsePoint = 0x00200000,
+        PosixSemantics = 0x01000000,
+        BackupDemantics = 0x02000000,
+        DeleteOnClose = 0x04000000,
+        SequentialScan = 0x08000000,
+        RandomAccess = 0x10000000,
+        NoBuffering = 0x20000000,
+        Overlapped = 0x40000000,
+        WriteThrough = 0x80000000,
     }
 
     internal enum WTS_CONNECTSTATE_CLASS
@@ -144,6 +208,13 @@ namespace NtApiDotNet.Win32
         SERVICE_STATE_ALL = SERVICE_ACTIVE | SERVICE_INACTIVE
     }
 
+    [Flags]
+    internal enum PackageFlags
+    {
+        Basic = 0,
+        Full = 0x00000100
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct PROCESS_INFORMATION
     {
@@ -153,11 +224,76 @@ namespace NtApiDotNet.Win32
         public int dwThreadId;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    struct PACKAGE_VERSION
+    {
+        public ushort Revision;
+        public ushort Build;
+        public ushort Minor;
+        public ushort Major;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct PACKAGE_ID
+    {
+        public int reserved;
+        public int processorArchitecture;
+        public PACKAGE_VERSION version;
+        public IntPtr name;
+        public IntPtr publisher;
+        public IntPtr resourceId;
+        public IntPtr publisherId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct EVENT_FILTER_DESCRIPTOR
+    {
+        public long Ptr;
+        public int Size;
+        public int Type;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct EVENT_DESCRIPTOR
+    {
+        public ushort Id;
+        public byte Version;
+        public byte Channel;
+        public byte Level;
+        public byte Opcode;
+        public ushort Task;
+        public ulong Keyword;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct EVENT_DATA_DESCRIPTOR
+    {
+        public long Ptr;
+        public int Size;
+        public byte Type;
+        public byte Reserved1;
+        public ushort Reserved2;
+    }
+
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate bool EnumResTypeProc(IntPtr hModule, IntPtr lpszType, IntPtr lParam);
 
     [UnmanagedFunctionPointer(CallingConvention.StdCall)]
     internal delegate bool EnumResNameProcDelegate(IntPtr hModule, IntPtr lpszType, IntPtr lpszName, IntPtr lParam);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
+    internal delegate Win32Error GetStagedPackageOrigin(string packageFullName, out PackageOrigin origin);
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    internal delegate void EventEnableCallback(
+          ref Guid SourceId,
+          int IsEnabled,
+          byte Level,
+          ulong MatchAnyKeyword,
+          ulong MatchAllKeyword,
+          ref EVENT_FILTER_DESCRIPTOR FilterData,
+          IntPtr CallbackContext
+        );
 
     internal static class Win32NativeMethods
     {
@@ -166,7 +302,6 @@ namespace NtApiDotNet.Win32
 
         [DllImport("aclui.dll", SetLastError = true)]
         internal static extern bool EditSecurity(IntPtr hwndOwner, ISecurityInformation psi);
-
 
         [DllImport("rpcrt4.dll", CharSet = CharSet.Unicode)]
         internal static extern int RpcBindingFromStringBinding([MarshalAs(UnmanagedType.LPTStr)] string StringBinding, out SafeRpcBindingHandle Binding);
@@ -270,6 +405,8 @@ namespace NtApiDotNet.Win32
         );
 
         internal const int GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
+        internal const int GET_MODULE_HANDLE_EX_FLAG_PIN = 0x00000001;
+        internal const int GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT = 0x00000002;
 
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
         internal static extern bool GetModuleHandleEx(int dwFlags, IntPtr lpModuleName, out SafeLoadLibraryHandle phModule);
@@ -617,5 +754,66 @@ namespace NtApiDotNet.Win32
           string pszAppContainerSid,
           out SafeCoTaskMemHandle ppszPath
         );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error PackageIdFromFullName(
+          string packageFullName,
+          PackageFlags flags,
+          ref int  bufferLength,
+          SafeBuffer buffer
+        );
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetStagedPackageOrigin(
+          string packageFullName,
+          out PackageOrigin origin
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetStagedPackagePathByFullName(
+            string packageFullName,
+            ref int pathLength,
+            StringBuilder path
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error EventAccessQuery(
+          ref Guid Guid,
+          SafeBuffer Buffer,
+          ref int BufferSize
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error EventRegister(
+          ref Guid ProviderId,
+          EventEnableCallback EnableCallback,
+          IntPtr CallbackContext,
+          out SafeEventRegHandle RegHandle
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error EventUnregister(
+            IntPtr RegHandle
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error EventWrite(
+          SafeEventRegHandle RegHandle,
+          ref EVENT_DESCRIPTOR EventDescriptor,
+          int UserDataCount,
+          EVENT_DATA_DESCRIPTOR[] UserData
+        );
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern SafeKernelObjectHandle CreateFile(
+          string lpFileName,
+          FileAccessRights dwDesiredAccess,
+          FileShareMode dwShareMode,
+          SECURITY_ATTRIBUTES lpSecurityAttributes,
+          CreateFileDisposition dwCreationDisposition,
+          CreateFileFlagsAndAttributes dwFlagsAndAttributes,
+          SafeKernelObjectHandle hTemplateFile
+        );
     }
+#pragma warning restore 1591
 }

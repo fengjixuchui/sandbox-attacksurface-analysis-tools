@@ -19,177 +19,6 @@ using System.Text;
 
 namespace NtApiDotNet
 {
-#pragma warning disable 1591
-    [Flags]
-    public enum TransactionAccessRights : uint
-    {
-        QueryInformation = 1,
-        SetInformation = 2,
-        Enlist = 4,
-        Commit = 8,
-        Rollback = 0x10,
-        Propagate = 0x20,
-        RightReserved1 = 0x40,
-        GenericRead = GenericAccessRights.GenericRead,
-        GenericWrite = GenericAccessRights.GenericWrite,
-        GenericExecute = GenericAccessRights.GenericExecute,
-        GenericAll = GenericAccessRights.GenericAll,
-        Delete = GenericAccessRights.Delete,
-        ReadControl = GenericAccessRights.ReadControl,
-        WriteDac = GenericAccessRights.WriteDac,
-        WriteOwner = GenericAccessRights.WriteOwner,
-        Synchronize = GenericAccessRights.Synchronize,
-        MaximumAllowed = GenericAccessRights.MaximumAllowed,
-        AccessSystemSecurity = GenericAccessRights.AccessSystemSecurity
-    }
-
-    [Flags]
-    public enum TransactionCreateFlags
-    {
-        None = 0,
-        DoNotPromote = 1,
-    }
-
-    [Flags]
-    public enum TransactionIsolationFlags
-    {
-        None = 0,
-    }
-
-    public enum TransactionInformationClass
-    {
-        TransactionBasicInformation,
-        TransactionPropertiesInformation,
-        TransactionEnlistmentInformation,
-        TransactionSuperiorEnlistmentInformation
-    }
-
-    public static partial class NtSystemCalls
-    {
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCreateTransaction(out SafeKernelObjectHandle TransactionHandle,
-                TransactionAccessRights DesiredAccess, ObjectAttributes ObjectAttributes,
-                OptionalGuid Uow, SafeKernelObjectHandle TmHandle,
-                TransactionCreateFlags CreateOptions,
-                int IsolationLevel,
-                TransactionIsolationFlags IsolationFlags,
-                LargeInteger Timeout,
-                UnicodeString Description);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtOpenTransaction(out SafeKernelObjectHandle TransactionHandle, TransactionAccessRights DesiredAccess,
-            ObjectAttributes ObjectAttributes, OptionalGuid Uow, SafeKernelObjectHandle TmHandle);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCommitTransaction(SafeKernelObjectHandle TransactionHandle, bool Wait);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRollbackTransaction(SafeKernelObjectHandle TransactionHandle, bool Wait);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtQueryInformationTransaction(
-            SafeKernelObjectHandle TransactionHandle,
-            TransactionInformationClass TransactionInformationClass,
-            SafeBuffer TransactionInformation,
-            int TransactionInformationLength,
-            out int ReturnLength
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtSetInformationTransaction(
-            SafeKernelObjectHandle TransactionHandle,
-            TransactionInformationClass TransactionInformationClass,
-            SafeBuffer TransactionInformation,
-            int TransactionInformationLength
-        );
-    }
-
-    public static partial class NtRtl
-    {
-        [DllImport("ntdll.dll")]
-        public static extern bool RtlSetCurrentTransaction(SafeKernelObjectHandle TransactionHandle);
-
-        [DllImport("ntdll.dll")]
-        public static extern IntPtr RtlGetCurrentTransaction();
-    }
-
-    public sealed class TransactionContext : IDisposable
-    {
-        internal TransactionContext(SafeKernelObjectHandle transaction)
-        {
-            NtRtl.RtlSetCurrentTransaction(transaction);
-        }
-
-        void IDisposable.Dispose()
-        {
-            NtRtl.RtlSetCurrentTransaction(SafeKernelObjectHandle.Null);
-        }
-    }
-
-    public enum TransactionState
-    {
-        None = 0,
-        Normal,
-        Indoubt,
-        CommittedNotify
-    }
-
-    public enum TransactionOutcome
-    {
-        None = 0,
-        Undetermined,
-        Committed,
-        Aborted
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct TransactionBasicInformation
-    {
-        public Guid TransactionId;
-        public TransactionState State;
-        public TransactionOutcome Outcome;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode), DataStart("Description", IncludeDataField = true)]
-    public struct TransactionPropertiesInformation
-    {
-        public int IsolationLevel;
-        public int IsolationFlags;
-        public LargeIntegerStruct Timeout;
-        public TransactionOutcome Outcome;
-        public int DescriptionLength;
-        public char Description;
-    }
-
-#pragma warning restore 1591
-
-    /// <summary>
-    /// Interface to abstract the kernel transaction manager support.
-    /// </summary>
-    public interface INtTransaction
-    {
-        /// <summary>
-        /// Get handle for the transaction.
-        /// </summary>
-        SafeKernelObjectHandle Handle { get; }
-
-        /// <summary>
-        /// Commit the transaction
-        /// </summary>
-        void Commit();
-
-        /// <summary>
-        /// Rollback the transaction
-        /// </summary>
-        void Rollback();
-
-        /// <summary>
-        /// Enable the transaction for anything in the current thread context.
-        /// </summary>
-        /// <returns>The transaction context. This should be disposed to disable the transaction.</returns>
-        TransactionContext Enable();
-    }
-
     /// <summary>
     /// Class to represent a kernel transaction.
     /// </summary>
@@ -203,14 +32,8 @@ namespace NtApiDotNet
 
         internal sealed class NtTypeFactoryImpl : NtTypeFactoryImplBase
         {
-            public NtTypeFactoryImpl() : base(true)
+            public NtTypeFactoryImpl() : base(false)
             {
-            }
-
-            protected override sealed NtResult<NtTransaction> OpenInternal(ObjectAttributes obj_attributes,
-                TransactionAccessRights desired_access, bool throw_on_error)
-            {
-                return NtTransaction.Open(obj_attributes, desired_access, throw_on_error);
             }
         }
 
@@ -420,21 +243,6 @@ namespace NtApiDotNet
         /// <summary>
         /// Open a transaction object.
         /// </summary>
-        /// <param name="path">The path to the object</param>
-        /// <param name="root">The root if path is relative</param>
-        /// <param name="desired_access">The desired access for the object</param>
-        /// <returns>The opened object</returns>
-        public static NtTransaction Open(string path, NtObject root, TransactionAccessRights desired_access)
-        {
-            using (ObjectAttributes obja = new ObjectAttributes(path, AttributeFlags.CaseInsensitive, root))
-            {
-                return Open(obja, desired_access);
-            }
-        }
-
-        /// <summary>
-        /// Open a transaction object.
-        /// </summary>
         /// <param name="object_attributes">The object attributes for the object</param>
         /// <param name="desired_access">The desired access for the object</param>
         /// <param name="transaction_manager">Optional transaction manager.</param>
@@ -442,10 +250,10 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw an exception on error.</param>
         /// <returns>The NT status code and object result.</returns>
         public static NtResult<NtTransaction> Open(ObjectAttributes object_attributes, TransactionAccessRights desired_access, 
-            Guid? uow, NtTransactionManager transaction_manager, bool throw_on_error)
+            Guid uow, NtTransactionManager transaction_manager, bool throw_on_error)
         {
             return NtSystemCalls.NtOpenTransaction(out SafeKernelObjectHandle handle, desired_access, object_attributes,
-                uow.ToOptional(), transaction_manager.GetHandle()).CreateResult(throw_on_error, () => new NtTransaction(handle));
+                ref uow, transaction_manager.GetHandle()).CreateResult(throw_on_error, () => new NtTransaction(handle));
         }
 
         /// <summary>
@@ -455,9 +263,9 @@ namespace NtApiDotNet
         /// <param name="desired_access">The desired access for the object</param>
         /// <param name="transaction_manager">Optional transaction manager.</param>
         /// <param name="uow">UOW Guid.</param>
-        /// <returns>The NT status code and object result.</returns>
+        /// <returns>The object result.</returns>
         public static NtTransaction Open(ObjectAttributes object_attributes, TransactionAccessRights desired_access,
-            Guid? uow, NtTransactionManager transaction_manager)
+            Guid uow, NtTransactionManager transaction_manager)
         {
             return Open(object_attributes, desired_access, uow, transaction_manager, true).Result;
         }
@@ -465,35 +273,50 @@ namespace NtApiDotNet
         /// <summary>
         /// Open a transaction object.
         /// </summary>
-        /// <param name="object_attributes">The object attributes for the object</param>
         /// <param name="desired_access">The desired access for the object</param>
-        /// <param name="throw_on_error">True to throw an exception on error.</param>
-        /// <returns>The NT status code and object result.</returns>
-        public static NtResult<NtTransaction> Open(ObjectAttributes object_attributes,
-            TransactionAccessRights desired_access, bool throw_on_error)
+        /// <param name="transaction_manager">Optional transaction manager.</param>
+        /// <param name="uow">UOW Guid.</param>
+        /// <returns>The object result.</returns>
+        public static NtTransaction Open(TransactionAccessRights desired_access,
+            Guid uow, NtTransactionManager transaction_manager)
         {
-            return Open(object_attributes, desired_access, null, null, throw_on_error);
+            return Open(null, desired_access, uow, transaction_manager);
         }
 
         /// <summary>
         /// Open a transaction object.
         /// </summary>
-        /// <param name="object_attributes">The object attributes for the object</param>
-        /// <param name="desired_access">The desired access for the object</param>
-        /// <returns>The opened object</returns>
-        public static NtTransaction Open(ObjectAttributes object_attributes, TransactionAccessRights desired_access)
+        /// <param name="transaction_manager">Optional transaction manager.</param>
+        /// <param name="uow">UOW Guid.</param>
+        /// <returns>The object result.</returns>
+        public static NtTransaction Open(Guid uow, NtTransactionManager transaction_manager)
         {
-            return Open(object_attributes, desired_access, true).Result;
+            return Open(TransactionAccessRights.MaximumAllowed, uow, transaction_manager);
         }
 
         /// <summary>
         /// Open a transaction object.
         /// </summary>
-        /// <param name="path">The path to the object</param>
-        /// <returns>The opened object</returns>
-        public static NtTransaction Open(string path)
+        /// <param name="uow">UOW Guid.</param>
+        /// <returns>The object result.</returns>
+        public static NtTransaction Open(Guid uow)
         {
-            return Open(path, null, TransactionAccessRights.MaximumAllowed);
+            return Open(uow, null);
+        }
+
+        /// <summary>
+        /// Get a list of all accessible transaction objects.
+        /// </summary>
+        /// <param name="object_attributes">The object attributes for the object</param>
+        /// <param name="transaction_manager">Optional transaction manager.</param>
+        /// <param name="desired_access">The access for the transaction objects.</param>
+        /// <returns>The list of all accessible transaction objects.</returns>
+        public static IEnumerable<NtTransaction> GetAccessibleTransaction(ObjectAttributes object_attributes, 
+            TransactionAccessRights desired_access, NtTransactionManager transaction_manager)
+        {
+            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
+                transaction_manager.GetHandle(), KtmObjectType.Transaction,
+                id => Open(object_attributes, desired_access, id, transaction_manager, false));
         }
 
         /// <summary>
@@ -503,9 +326,7 @@ namespace NtApiDotNet
         /// <returns>The list of all accessible transaction objects.</returns>
         public static IEnumerable<NtTransaction> GetAccessibleTransaction(TransactionAccessRights desired_access)
         {
-            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
-                SafeKernelObjectHandle.Null, KtmObjectType.Transaction,
-                id => Open(null, desired_access, id, null, false));
+            return GetAccessibleTransaction(null, desired_access, null);
         }
 
         /// <summary>
@@ -682,6 +503,29 @@ namespace NtApiDotNet
             get => new NtWaitTimeout(GetProperties().Timeout.QuadPart);
             set => SetProperties(null, null, value);
         }
+
+        /// <summary>
+        /// Query list of enlistments for this transaction.
+        /// </summary>
+        public IEnumerable<TransactionEnlistmentPair> Enlistments
+        {
+            get
+            {
+                using (var buffer = QueryBuffer<TransactionEnlistmentsInformation>(TransactionInformationClass.TransactionEnlistmentInformation))
+                {
+                    int count = buffer.Result.NumberOfEnlistments;
+                    TransactionEnlistmentPair[] pairs = new TransactionEnlistmentPair[count];
+                    buffer.Data.ReadArray(0, pairs, 0, count);
+                    return pairs;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Query the superior enlistment for this transaction.
+        /// </summary>
+        public TransactionEnlistmentPair SuperiorEnlistment => Query<TransactionSuperiorEnlistmentInformation>(
+            TransactionInformationClass.TransactionSuperiorEnlistmentInformation).SuperiorEnlistmentPair;
 
         #endregion
 

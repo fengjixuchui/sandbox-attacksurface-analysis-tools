@@ -17,7 +17,11 @@ namespace NtApiDotNet.Win32
     internal enum Win32Error
     {
         SUCCESS = 0,
+        ERROR_FILE_NOT_FOUND = 2,
+        ERROR_INVALID_PARAMETER = 87,
+        ERROR_INSUFFICIENT_BUFFER = 122,
         ERROR_ALREADY_EXISTS = 183,
-        ERROR_MORE_DATA = 234
+        ERROR_MORE_DATA = 234,
+        ERROR_NOT_FOUND = 1168
     }
 }

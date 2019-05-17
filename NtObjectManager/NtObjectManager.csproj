@@ -28,11 +28,11 @@
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
-    <OutputPath>..\bin\Release\NtObjectManager\</OutputPath>
+    <OutputPath>..\bin\Release\</OutputPath>
     <DefineConstants>TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
-    <DocumentationFile>..\bin\Release\NtObjectManager\NtObjectManager.XML</DocumentationFile>
+    <DocumentationFile>..\bin\Release\NtObjectManager.XML</DocumentationFile>
   </PropertyGroup>
   <ItemGroup>
     <Reference Include="System" />
@@ -43,13 +43,22 @@
       <HintPath>..\..\..\Program Files (x86)\Reference Assemblies\Microsoft\WindowsPowerShell\3.0\System.Management.Automation.dll</HintPath>
       <Private>False</Private>
     </Reference>
+    <Reference Include="System.Runtime.Serialization" />
     <Reference Include="System.ServiceProcess" />
+    <Reference Include="System.XML" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="NdrNameData.cs" />
+    <Compile Include="NtAlpcCmdlets.cs" />
+    <Compile Include="NtDebugCmdlets.cs" />
+    <Compile Include="NtEnlistmentCmdlets.cs" />
     <Compile Include="NtPartitionCmdlets.cs" />
+    <Compile Include="NtResourceManagerCmdlets.cs" />
     <Compile Include="NtTransactionCmdlets.cs" />
     <Compile Include="NtTransactionManagerCmdlets.cs" />
     <Compile Include="PSUtils.cs" />
+    <Compile Include="RpcServerNameCmdlets.cs" />
+    <Compile Include="TestNetworkAccessCmdlet.cs" />
     <Compile Include="Win32Cmdlets.cs" />
     <Compile Include="CommonAccessBaseCmdlet.cs" />
     <Compile Include="GenericObjectSecurity.cs" />
@@ -87,7 +96,6 @@
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </Content>
     <None Include="packages.config" />
-    <None Include="Readme.txt" />
     <None Include="Formatters.ps1xml">
       <CopyToOutputDirectory>Always</CopyToOutputDirectory>
     </None>

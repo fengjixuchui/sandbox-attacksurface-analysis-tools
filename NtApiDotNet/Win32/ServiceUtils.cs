@@ -212,9 +212,9 @@ namespace NtApiDotNet.Win32
 
     public class ServiceTriggerCustomData
     {
-        public ServiceTriggerDataType DataType { get; private set; }
-        public byte[] RawData { get; private set; }
-        public string Data { get; private set; }
+        public ServiceTriggerDataType DataType { get; }
+        public byte[] RawData { get; }
+        public string Data { get; }
 
         private string GetDataString()
         {
@@ -239,7 +239,7 @@ namespace NtApiDotNet.Win32
                         string[] ss = Encoding.Unicode.GetString(RawData).TrimEnd('\0').Split('\0');
                         if (ss.Length == 1)
                         {
-                           return ss[0];
+                            return ss[0];
                         }
                         else
                         {
@@ -248,7 +248,7 @@ namespace NtApiDotNet.Win32
                     }
                     break;
             }
-            return String.Join(",", RawData.Select(b => $"0x{b:X02}"));
+            return string.Join(",", RawData.Select(b => $"0x{b:X02}"));
         }
 
         internal ServiceTriggerCustomData(SERVICE_TRIGGER_SPECIFIC_DATA_ITEM data_item)
@@ -257,7 +257,7 @@ namespace NtApiDotNet.Win32
             RawData = new byte[data_item.cbData];
             if (data_item.pData != IntPtr.Zero)
             {
-                Marshal.Copy(data_item.pData, RawData, 0, data_item.cbData);   
+                Marshal.Copy(data_item.pData, RawData, 0, data_item.cbData);
             }
             else
             {
@@ -269,11 +269,11 @@ namespace NtApiDotNet.Win32
 
     public class ServiceTriggerInformation
     {
-        public ServiceTriggerType TriggerType { get; private set; }
-        public ServiceTriggerAction Action { get; private set; }
-        public Guid SubType { get; private set; }
-        public string SubTypeDescription { get; private set; }
-        public IEnumerable<ServiceTriggerCustomData> CustomData { get; private set; }
+        public ServiceTriggerType TriggerType { get; }
+        public ServiceTriggerAction Action { get; }
+        public Guid SubType { get; }
+        public string SubTypeDescription { get; }
+        public IEnumerable<ServiceTriggerCustomData> CustomData { get; }
 
         static Guid NETWORK_MANAGER_FIRST_IP_ADDRESS_ARRIVAL_GUID = new Guid("4f27f2de-14e2-430b-a549-7cd48cbc8245");
         static Guid NETWORK_MANAGER_LAST_IP_ADDRESS_REMOVAL_GUID = new Guid("cc4ba62a-162e-4648-847a-b6bdf993e335");
@@ -367,8 +367,8 @@ namespace NtApiDotNet.Win32
             List<ServiceTriggerCustomData> data = new List<ServiceTriggerCustomData>();
             if (trigger.pDataItems != IntPtr.Zero && trigger.cDataItems > 0)
             {
-                SERVICE_TRIGGER_SPECIFIC_DATA_ITEM[] data_items;
-                ReadArray(trigger.pDataItems, trigger.cDataItems, out data_items);
+                ReadArray(trigger.pDataItems, trigger.cDataItems, 
+                    out SERVICE_TRIGGER_SPECIFIC_DATA_ITEM[] data_items);
                 for (int i = 0; i < data_items.Length; ++i)
                 {
                     data.Add(new ServiceTriggerCustomData(data_items[i]));
@@ -381,7 +381,52 @@ namespace NtApiDotNet.Win32
         {
             return $"{TriggerType} {Action} {SubTypeDescription}";
         }
+
+        /// <summary>
+        /// Trigger the service.
+        /// </summary>
+        public virtual void Trigger()
+        {
+            throw new NotImplementedException("This trigger type is not supported");
+        }
+
+        internal static ServiceTriggerInformation GetTriggerInformation(SERVICE_TRIGGER trigger)
+        {
+            if (trigger.dwTriggerType == ServiceTriggerType.Custom)
+            {
+                return new EtwServiceTriggerInformation(trigger);
+            }
+            return new ServiceTriggerInformation(trigger);
+        }
     }
+
+    public class EtwServiceTriggerInformation : ServiceTriggerInformation
+    {
+        public SecurityDescriptor SecurityDescriptor { get; }
+
+        public override void Trigger()
+        {
+            using (var reg = EventTracing.Register(SubType))
+            {
+                reg.Write();
+            }
+        }
+
+        internal EtwServiceTriggerInformation(SERVICE_TRIGGER trigger) 
+            : base(trigger)
+        {
+            var sd = EventTracing.QueryTraceSecurity(SubType, false);
+            if (sd.IsSuccess)
+            {
+                SecurityDescriptor = sd.Result;
+            }
+            else
+            {
+                SecurityDescriptor = new SecurityDescriptor();
+            }
+        }
+    }
+
 #pragma warning restore
 
     /// <summary>
@@ -392,15 +437,15 @@ namespace NtApiDotNet.Win32
         /// <summary>
         /// The name of the service.
         /// </summary>
-        public string Name { get; private set; }
+        public string Name { get; }
         /// <summary>
         /// The security descriptor of the service.
         /// </summary>
-        public SecurityDescriptor SecurityDescriptor { get; private set; }
+        public SecurityDescriptor SecurityDescriptor { get; }
         /// <summary>
         /// The list of triggers for the service.
         /// </summary>
-        public IEnumerable<ServiceTriggerInformation> Triggers { get; private set; }
+        public IEnumerable<ServiceTriggerInformation> Triggers { get; }
 
         internal ServiceInformation(string name, SecurityDescriptor sd, IEnumerable<ServiceTriggerInformation> triggers)
         {
@@ -650,7 +695,7 @@ namespace NtApiDotNet.Win32
 
                 for (int i = 0; i < trigger_arr.Length; ++i)
                 {
-                    triggers.Add(new ServiceTriggerInformation(trigger_arr[i]));
+                    triggers.Add(ServiceTriggerInformation.GetTriggerInformation(trigger_arr[i]));
                 }
 
                 return triggers.AsReadOnly();

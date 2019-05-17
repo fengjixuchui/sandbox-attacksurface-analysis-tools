@@ -29,7 +29,7 @@ namespace NtApiDotNet
         /// <summary>
         /// The NT status code.
         /// </summary>
-        public NtStatus Status { get; private set; }
+        public NtStatus Status { get; }
         /// <summary>
         /// The result of the NT call.
         /// </summary>
@@ -50,6 +50,27 @@ namespace NtApiDotNet
         {
             Status.ToNtException();
             return Result;
+        }
+
+        /// <summary>
+        /// Get the result object or a default value if an error occurred.
+        /// </summary>
+        /// <param name="default_value">The default value to return.</param>
+        /// <returns>The result or the default if an error occurred.</returns>
+        public T GetResultOrDefault(T default_value)
+        {
+            if (IsSuccess)
+                return _result;
+            return default_value;
+        }
+
+        /// <summary>
+        /// Get the result object or a default value if an error occurred.
+        /// </summary>
+        /// <returns>The result or the default if an error occurred.</returns>
+        public T GetResultOrDefault()
+        {
+            return GetResultOrDefault(default(T));
         }
 
         /// <summary>

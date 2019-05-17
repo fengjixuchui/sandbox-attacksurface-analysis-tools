@@ -20,7 +20,7 @@ namespace NtApiDotNet
     /// Exception class representing an NT status error.
     /// </summary>
     [Serializable]
-    public sealed class NtException : ApplicationException
+    public class NtException : ApplicationException
     {
         /// <summary>
         /// Constructor
@@ -44,7 +44,7 @@ namespace NtApiDotNet
             get
             {
                 string message = NtObjectUtils.GetNtStatusMessage(Status);
-                if (String.IsNullOrEmpty(message))
+                if (string.IsNullOrEmpty(message))
                 {
                     if (Enum.IsDefined(typeof(NtStatus), Status))
                     {

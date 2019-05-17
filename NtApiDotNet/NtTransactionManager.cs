@@ -18,139 +18,6 @@ using System.Runtime.InteropServices;
 
 namespace NtApiDotNet
 {
-#pragma warning disable 1591
-    [Flags]
-    public enum TransactionManagerAccessRights : uint
-    {
-        QueryInformation = 1,
-        SetInformation = 2,
-        Recover = 4,
-        Rename = 8,
-        CreateRm = 0x10,
-        BindTransaction = 0x20,
-        GenericRead = GenericAccessRights.GenericRead,
-        GenericWrite = GenericAccessRights.GenericWrite,
-        GenericExecute = GenericAccessRights.GenericExecute,
-        GenericAll = GenericAccessRights.GenericAll,
-        Delete = GenericAccessRights.Delete,
-        ReadControl = GenericAccessRights.ReadControl,
-        WriteDac = GenericAccessRights.WriteDac,
-        WriteOwner = GenericAccessRights.WriteOwner,
-        Synchronize = GenericAccessRights.Synchronize,
-        MaximumAllowed = GenericAccessRights.MaximumAllowed,
-        AccessSystemSecurity = GenericAccessRights.AccessSystemSecurity
-    }
-
-    [Flags]
-    public enum TransactionManagerCreateOptions
-    {
-        CommitDefault = 0x00000000,
-        Volatile = 0x00000001,
-        CommitSystemVolume = 0x00000002,
-        CommitSystemHives = 0x00000004,
-        CommitLowest = 0x00000008,
-        CorruptForRecovery = 0x00000010,
-        CorruptForProgress = 0x00000020,
-    }
-
-    [Flags]
-    public enum TransactionManagerOpenOptions
-    {
-        None = 0
-    }
-
-    public enum TransactionManagerInformationClass
-    {
-        TransactionManagerBasicInformation,
-        TransactionManagerLogInformation,
-        TransactionManagerLogPathInformation,
-        TransactionManagerRecoveryInformation
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct TransactionManagerBasicInformation
-    {
-        public Guid TmIdentity;
-        public LargeIntegerStruct VirtualClock;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct TransactionManagerLogInformation
-    {
-        public Guid LogIdentity;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode), DataStart("LogPath")]
-    public struct TransactionLogPathInformation
-    {
-        public int LogPathLength;
-        public char LogPath;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct TransactionManagerRecoveryInformation
-    {
-        public ulong LastRecoveredLsn;
-    }
-
-    public static partial class NtSystemCalls
-    {
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCreateTransactionManager(
-            out SafeKernelObjectHandle TmHandle,
-            TransactionManagerAccessRights DesiredAccess,
-            ObjectAttributes ObjectAttributes,
-            UnicodeString LogFileName,
-            TransactionManagerCreateOptions CreateOptions,
-            int CommitStrength
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtOpenTransactionManager(
-            out SafeKernelObjectHandle TmHandle,
-            TransactionManagerAccessRights DesiredAccess,
-            ObjectAttributes ObjectAttributes,
-            UnicodeString LogFileName,
-            OptionalGuid TmIdentity,
-            TransactionManagerOpenOptions OpenOptions
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtQueryInformationTransactionManager(
-          SafeKernelObjectHandle TmHandle,
-          TransactionManagerInformationClass TransactionManagerInformationClass,
-          SafeBuffer TransactionManagerInformation,
-          int TransactionManagerInformationLength,
-          out int ReturnLength
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtSetInformationTransactionManager(
-          SafeKernelObjectHandle TmHandle,
-          TransactionManagerInformationClass TransactionManagerInformationClass,
-          SafeBuffer TransactionManagerInformation,
-          int TransactionManagerInformationLength);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRecoverTransactionManager(
-            SafeKernelObjectHandle TmHandle
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRenameTransactionManager(
-            UnicodeString LogFileName,
-            OptionalGuid ExistingTransactionManagerGuid
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRollforwardTransactionManager(
-            SafeKernelObjectHandle TmHandle,
-            LargeInteger TmVirtualClock
-        );
-    }
-
-#pragma warning restore 1591
-
     /// <summary>
     /// Class to represent a kernel transaction manager.
     /// </summary>
@@ -436,13 +303,26 @@ namespace NtApiDotNet
         /// <summary>
         /// Get a list of all accessible transaction manager objects.
         /// </summary>
+        /// <param name="object_attributes">Object attributes for opened handle.</param>
+        /// <param name="desired_access">The access for the transaction manager objects.</param>
+        /// <param name="options">Open options.</param>
+        /// <returns>The list of all accessible transaction manager objects.</returns>
+        public static IEnumerable<NtTransactionManager> GetAccessibleTransactionManager(ObjectAttributes object_attributes, 
+            TransactionManagerAccessRights desired_access, TransactionManagerOpenOptions options)
+        {
+            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
+                SafeKernelObjectHandle.Null, KtmObjectType.TransactionManager,
+                id => Open(object_attributes, desired_access, null, id, options, false));
+        }
+
+        /// <summary>
+        /// Get a list of all accessible transaction manager objects.
+        /// </summary>
         /// <param name="desired_access">The access for the transaction manager objects.</param>
         /// <returns>The list of all accessible transaction manager objects.</returns>
         public static IEnumerable<NtTransactionManager> GetAccessibleTransactionManager(TransactionManagerAccessRights desired_access)
         {
-            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
-                SafeKernelObjectHandle.Null, KtmObjectType.TransactionManager,
-                id => Open(null, desired_access, null, id, TransactionManagerOpenOptions.None, false));
+            return GetAccessibleTransactionManager(null, desired_access, TransactionManagerOpenOptions.None);
         }
 
         /// <summary>
@@ -480,7 +360,19 @@ namespace NtApiDotNet
         /// <summary>
         /// Get Transaction Manager last recovered Log Sequence Number.
         /// </summary>
-        public ulong LastRecoveredLsn => Query< TransactionManagerRecoveryInformation>(TransactionManagerInformationClass.TransactionManagerRecoveryInformation).LastRecoveredLsn;
+        public ulong LastRecoveredLsn => Query<TransactionManagerRecoveryInformation>(TransactionManagerInformationClass.TransactionManagerRecoveryInformation).LastRecoveredLsn;
+
+        /// <summary>
+        /// Get whether the transaction manager is volatile.
+        /// </summary>
+        public bool Volatile
+        {
+            get
+            {
+                var log_path = GetLogPath(false);
+                return !log_path.IsSuccess || string.IsNullOrEmpty(log_path.Result);
+            }
+        }
 
         #endregion
 
@@ -650,14 +542,25 @@ namespace NtApiDotNet
         /// <summary>
         /// Get a list of all accessible resource manager objects owned by this transaction manager.
         /// </summary>
+        /// <param name="object_attributes">Object attributes for opened handle.</param>
+        /// <param name="desired_access">The access for the resource manager objects.</param>
+        /// <returns>The list of all accessible resource manager objects.</returns>
+        public IEnumerable<NtResourceManager> GetAccessibleResourceManager(ObjectAttributes object_attributes, ResourceManagerAccessRights desired_access)
+        {
+            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
+                Handle,
+                KtmObjectType.ResourceManager,
+                id => NtResourceManager.Open(object_attributes, desired_access, this, id, false));
+        }
+
+        /// <summary>
+        /// Get a list of all accessible resource manager objects owned by this transaction manager.
+        /// </summary>
         /// <param name="desired_access">The access for the resource manager objects.</param>
         /// <returns>The list of all accessible resource manager objects.</returns>
         public IEnumerable<NtResourceManager> GetAccessibleResourceManager(ResourceManagerAccessRights desired_access)
         {
-            return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
-                Handle, 
-                KtmObjectType.ResourceManager, 
-                id => NtResourceManager.Open(null, desired_access, this, id, false));
+            return GetAccessibleResourceManager(null, desired_access);
         }
 
         /// <summary>

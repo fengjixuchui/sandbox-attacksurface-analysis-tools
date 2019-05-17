@@ -25,7 +25,119 @@ namespace NtObjectManager
     /// <summary>
     /// Base object cmdlet.
     /// </summary>
-    public abstract class NtObjectBaseCmdlet : PSCmdlet, IDisposable
+    public abstract class NtObjectBaseNoPathCmdlet : PSCmdlet, IDisposable
+    {
+        /// <summary>
+        /// <para type="description">Object Attribute flags used during Open/Create calls.</para>
+        /// </summary>
+        [Parameter]
+        public AttributeFlags ObjectAttributes { get; set; }
+
+        /// <summary>
+        /// <para type="description">Set to provide an explicit security descriptor to a newly created object.</para>
+        /// </summary>
+        [Parameter]
+        public SecurityDescriptor SecurityDescriptor { get; set; }
+
+        /// <summary>
+        /// <para type="description">Set to mark the new handle as inheritable. Can be used with ObjectAttributes.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter Inherit { get; set; }
+
+        /// <summary>
+        /// <para type="description">Set to provide an explicit security descriptor to a newly created object in SDDL format.</para>
+        /// </summary>
+        [Parameter]
+        public string Sddl
+        {
+            get => SecurityDescriptor?.ToSddl();
+            set => SecurityDescriptor = new SecurityDescriptor(value);
+        }
+
+        /// <summary>
+        /// <para type="description">Set to provide an explicit security quality of service when opening files/namedpipes.</para>
+        /// </summary>
+        [Parameter]
+        public SecurityQualityOfService SecurityQualityOfService { get; set; }
+
+        /// <summary>
+        /// Base constructor.
+        /// </summary>
+        protected NtObjectBaseNoPathCmdlet()
+        {
+            ObjectAttributes = AttributeFlags.CaseInsensitive;
+        }
+
+        /// <summary>
+        /// Method to create an object from a set of object attributes.
+        /// </summary>
+        /// <param name="obj_attributes">The object attributes to create/open from.</param>
+        /// <returns>The newly created object.</returns>
+        protected abstract object CreateObject(ObjectAttributes obj_attributes);
+
+        /// <summary>
+        /// Create object from components.
+        /// </summary>
+        /// <param name="path">The path to the object.</param>
+        /// <param name="attributes">The object attributes.</param>
+        /// <param name="root">The root object.</param>
+        /// <param name="security_quality_of_service">Security quality of service.</param>
+        /// <param name="security_descriptor">Security descriptor.</param>
+        /// <returns>The created object.</returns>
+        protected object CreateObject(string path, AttributeFlags attributes, NtObject root, 
+            SecurityQualityOfService security_quality_of_service, SecurityDescriptor security_descriptor)
+        {
+            if (Inherit)
+            {
+                attributes |= AttributeFlags.Inherit;
+            }
+            using (ObjectAttributes obja = new ObjectAttributes(path, attributes, root, 
+                security_quality_of_service, security_descriptor))
+            {
+                return CreateObject(obja);
+            }
+        }
+
+        /// <summary>
+        /// Overridden ProcessRecord method.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            WriteObject(CreateObject(null, ObjectAttributes, null, SecurityQualityOfService, SecurityDescriptor), true);
+        }
+
+        #region IDisposable Support
+        /// <summary>
+        /// Dispose object.
+        /// </summary>
+        protected virtual void Dispose(bool disposing)
+        {
+        }
+
+        /// <summary>
+        /// Finalizer.
+        /// </summary>
+        ~NtObjectBaseNoPathCmdlet()
+        {
+            Dispose(false);
+        }
+
+        /// <summary>
+        /// Dispose object.
+        /// </summary>
+        void IDisposable.Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+        #endregion
+    }
+
+    /// <summary>
+    /// Base object cmdlet.
+    /// </summary>
+    public abstract class NtObjectBaseCmdlet : NtObjectBaseNoPathCmdlet
     {
         /// <summary>
         /// <para type="description">The NT object manager path to the object to use.</para>
@@ -46,30 +158,6 @@ namespace NtObjectManager
         public SwitchParameter Win32Path { get; set; }
 
         /// <summary>
-        /// <para type="description">Object Attribute flags used during Open/Create calls.</para>
-        /// </summary>
-        [Parameter]
-        public AttributeFlags ObjectAttributes { get; set; }
-
-        /// <summary>
-        /// <para type="description">Set to provide an explicit security descriptor to a newly created object.</para>
-        /// </summary>
-        [Parameter]
-        public SecurityDescriptor SecurityDescriptor { get; set; }
-
-        /// <summary>
-        /// <para type="description">Set to provide an explicit security descriptor to a newly created object in SDDL format. Overriddes SecurityDescriptor.</para>
-        /// </summary>
-        [Parameter]
-        public string Sddl { get; set; }
-
-        /// <summary>
-        /// <para type="description">Set to provide an explicit security quality of service when opening files/namedpipes.</para>
-        /// </summary>
-        [Parameter]
-        public SecurityQualityOfService SecurityQualityOfService { get; set; }
-
-        /// <summary>
         /// <para type="description">Automatically close the Root object when this cmdlet finishes processing. Useful for pipelines.</para>
         /// </summary>
         [Parameter]
@@ -87,15 +175,7 @@ namespace NtObjectManager
         /// </summary>
         protected NtObjectBaseCmdlet()
         {
-            ObjectAttributes = AttributeFlags.CaseInsensitive;
         }
-
-        /// <summary>
-        /// Method to create an object from a set of object attributes.
-        /// </summary>
-        /// <param name="obj_attributes">The object attributes to create/open from.</param>
-        /// <returns>The newly created object.</returns>
-        protected abstract object CreateObject(ObjectAttributes obj_attributes);
 
         /// <summary>
         /// Verify the parameters, should throw an exception if parameters are invalid.
@@ -207,23 +287,6 @@ namespace NtObjectManager
         /// <returns>True if objects can be created.</returns>
         protected abstract bool CanCreateDirectories();
 
-        private object CreateObject(string path, AttributeFlags attributes, NtObject root, SecurityQualityOfService security_quality_of_service, SecurityDescriptor security_descriptor)
-        {
-            using (ObjectAttributes obja = new ObjectAttributes(path, attributes, root, security_quality_of_service, security_descriptor))
-            {
-                return CreateObject(obja);
-            }
-        }
-
-        private SecurityDescriptor GetSecurityDescriptor()
-        {
-            if (!String.IsNullOrEmpty(Sddl))
-            {
-                return new SecurityDescriptor(Sddl);
-            }
-            return SecurityDescriptor;
-        }
-
         private IEnumerable<NtObject> CreateDirectoriesAndObject()
         {
             DisposableList<NtObject> objects = new DisposableList<NtObject>();
@@ -255,7 +318,7 @@ namespace NtObjectManager
                     }
                     builder.Append(@"\");
                 }
-                objects.Add((NtObject)CreateObject(ResolvePath(), ObjectAttributes, Root, SecurityQualityOfService, GetSecurityDescriptor()));
+                objects.Add((NtObject)CreateObject(ResolvePath(), ObjectAttributes, Root, SecurityQualityOfService, SecurityDescriptor));
                 finished = true;
             }
             finally
@@ -272,12 +335,12 @@ namespace NtObjectManager
         /// <summary>
         /// Overridden ProcessRecord method.
         /// </summary>
-        protected override void ProcessRecord()
+        protected sealed override void ProcessRecord()
         {
             VerifyParameters();
             try
             {
-                WriteObject(CreateObject(ResolvePath(), ObjectAttributes, Root, SecurityQualityOfService, GetSecurityDescriptor()));
+                WriteObject(CreateObject(ResolvePath(), ObjectAttributes, Root, SecurityQualityOfService, SecurityDescriptor), true);
             }
             catch (NtException ex)
             {
@@ -296,7 +359,7 @@ namespace NtObjectManager
         /// <summary>
         /// Dispose object.
         /// </summary>
-        protected virtual void Dispose(bool disposing)
+        protected override void Dispose(bool disposing)
         {
             if (!disposedValue)
             {
@@ -310,23 +373,28 @@ namespace NtObjectManager
             }
         }
 
+        #endregion
+    }
+
+    /// <summary>
+    /// Base object cmdlet which has an access parameter.
+    /// </summary>
+    /// <typeparam name="T">The access enumeration type.</typeparam>
+    public abstract class NtObjectBaseNoPathCmdletWithAccess<T> : NtObjectBaseNoPathCmdlet where T : struct, IConvertible
+    {
         /// <summary>
-        /// Finalizer.
+        /// <para type="description">Specify the access rights for a new handle when creating/opening an object.</para>
         /// </summary>
-         ~NtObjectBaseCmdlet()
-        {
-            Dispose(false);
-        }
+        [Parameter]
+        public T Access { get; set; }
 
         /// <summary>
-        /// Dispose object.
+        /// Constructor.
         /// </summary>
-        void IDisposable.Dispose()
-        {            
-            Dispose(true);
-            GC.SuppressFinalize(this);
+        protected NtObjectBaseNoPathCmdletWithAccess()
+        {
+            Access = (T)Enum.ToObject(typeof(T), (uint)GenericAccessRights.MaximumAllowed);
         }
-        #endregion
     }
 
     /// <summary>
@@ -551,7 +619,7 @@ namespace NtObjectManager
     ///   <para>Gets information about a specific status code.</para>
     /// </example>
     [Cmdlet(VerbsCommon.Get, "NtStatus")]
-    public class GetNtStatusCmdlet : Cmdlet
+    public sealed class GetNtStatusCmdlet : Cmdlet
     {
         /// <summary>
         /// <para type="description">Specify a NTSTATUS code to retrieve.</para>
@@ -571,6 +639,141 @@ namespace NtObjectManager
             else
             {
                 WriteObject(new NtStatusResult(Status.Value));
+            }
+        }
+    }
+
+    /// <summary>
+    /// <para type="synopsis">Duplicate an object to a new handle. Optionally specify processes to duplicate to.</para>
+    /// <para type="description">This cmdlet duplicates an object either in the same process or between processes. If you duplicate to another process the cmdlet will return a handle value rather than an object.
+    /// </para>
+    /// </summary>
+    /// <example>
+    ///   <code>Copy-NtObject -Object $obj</code>
+    ///   <para>Duplicate an object to another in the current process with same access rights.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Copy-NtObject -Object $obj -DestinationProcess $proc</code>
+    ///   <para>Duplicate an object to another process. If the desintation process is the current process an object is returned, otherwise a handle is returned.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Copy-NtObject -Handle 1234 -SourceProcess $proc</code>
+    ///   <para>Duplicate an object from another process to the current process.</para>
+    /// </example>
+    [Cmdlet(VerbsCommon.Copy, "NtObject")]
+    [OutputType(typeof(NtObject))]
+    public sealed class CopyNtObjectCmdlet : PSCmdlet
+    {
+        /// <summary>
+        /// <para type="description">Specify the object to duplicate in the current process.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromObject")]
+        public NtObject Object { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the object to duplicate as a handle.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromHandle")]
+        public IntPtr SourceHandle { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the process to duplicate from.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromHandle")]
+        public NtProcess SourceProcess { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the process to duplicate to. Defaults to current process.</para>
+        /// </summary>
+        [Parameter]
+        public NtProcess DestinationProcess { get; set; }
+
+        /// <summary>
+        /// <para type="description">The desired access for the duplication.</para>
+        /// </summary>
+        [Parameter]
+        public GenericAccessRights? DesiredAccess { get; set; }
+
+        /// <summary>
+        /// <para type="description">The desired object attribute flags for the duplication.</para>
+        /// </summary>
+        [Parameter]
+        public AttributeFlags? ObjectAttributes { get; set; }
+
+        /// <summary>
+        /// <para type="description">Close the source handle.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromHandle")]
+        public SwitchParameter CloseSource { get; set; }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        public CopyNtObjectCmdlet()
+        {
+            SourceProcess = NtProcess.Current;
+            DestinationProcess = NtProcess.Current;
+        }
+
+        private DuplicateObjectOptions GetOptions()
+        {
+            DuplicateObjectOptions options = DuplicateObjectOptions.None;
+            if (!DesiredAccess.HasValue)
+            {
+                options |= DuplicateObjectOptions.SameAccess;
+            }
+
+            if (!ObjectAttributes.HasValue)
+            {
+                options |= DuplicateObjectOptions.SameAttributes;
+            }
+
+            if (CloseSource)
+            {
+                options |= DuplicateObjectOptions.CloseSource;
+            }
+
+            return options;
+        }
+
+        private NtObject GetObject()
+        {
+            if (ParameterSetName == "FromHandle")
+            {
+                using (var obj = NtGeneric.DuplicateFrom(SourceProcess, SourceHandle, DesiredAccess ?? 0, ObjectAttributes ?? 0, GetOptions()))
+                {
+                    return obj.ToTypedObject();
+                }
+            }
+            else
+            {
+                return Object.DuplicateObject(DesiredAccess ?? 0, ObjectAttributes ?? 0, GetOptions());
+            }
+        }
+
+        private IntPtr GetHandle()
+        {
+            IntPtr handle = SourceHandle;
+            if (ParameterSetName == "FromObject")
+            {
+                handle = Object.Handle.DangerousGetHandle();
+            }
+
+            return NtObject.DuplicateHandle(SourceProcess, handle, DestinationProcess, DesiredAccess ?? 0, ObjectAttributes ?? 0, GetOptions());
+        }
+
+        /// <summary>
+        /// Process record.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            if (DestinationProcess.SameObject(NtProcess.Current))
+            {
+                WriteObject(GetObject());
+            }
+            else
+            {
+                WriteObject(GetHandle());
             }
         }
     }

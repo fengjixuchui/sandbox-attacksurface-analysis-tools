@@ -97,11 +97,43 @@ namespace NtApiDotNet.Ndr
             return new RPC_VERSION() { MajorVersion = (ushort)version.Major, MinorVersion = (ushort)version.Minor };
         }
 
+        internal static int GetPrimitiveTypeSize<T>() where T : struct
+        {
+            if (!typeof(T).IsPrimitive)
+            {
+                throw new ArgumentException($"Type {typeof(T)} not primitive");
+            }
+
+            // The "native" size of a char is 1 due to defaulting to ANSI!
+            if (typeof(T) == typeof(char))
+            {
+                return 2;
+            }
+
+            return System.Runtime.InteropServices.Marshal.SizeOf(typeof(T));
+        }
+
+        internal static int CalculateAlignment(int offset, int alignment)
+        {
+            int result = alignment - (offset % alignment);
+            if (result < alignment)
+            {
+                return result;
+            }
+            return 0;
+        }
+
+        internal static U[] Cast<T, U>(this T[] array)
+        {
+            return (U[])(Array)array;
+        }
+
         internal static readonly Guid IID_IUnknown = new Guid("00000000-0000-0000-C000-000000000046");
         internal static readonly Guid IID_IDispatch = new Guid("00020400-0000-0000-C000-000000000046");
         internal static readonly Guid IID_IPSFactoryBuffer = new Guid("D5F569D0-593B-101A-B569-08002B2DBF7A");
         internal static readonly Guid DCE_TransferSyntax = new Guid("8A885D04-1CEB-11C9-9FE8-08002B104860");
         internal static readonly Guid NDR64_TransferSyntax = new Guid("71710533-BEBA-4937-8319-B5DBEF9CCC36");
+        internal static readonly Guid FakeNDR64_TransferSyntax = new Guid("B4537DA9-3D03-4F6B-B594-52B2874EE9D0");
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -117,14 +149,16 @@ namespace NtApiDotNet.Ndr
 
         public ProxyFileInfo Convert()
         {
-            ProxyFileInfo ret = new ProxyFileInfo();
-            ret.pProxyVtblList = pProxyVtblList.Convert();
-            ret.pStubVtblList = pStubVtblList.Convert();
-            ret.pNamesArray = pNamesArray.Convert();
-            ret.pDelegatedIIDs = pDelegatedIIDs.Convert();
-            ret.pIIDLookupRtn = pIIDLookupRtn.Convert();
-            ret.TableSize = TableSize;
-            ret.TableVersion = TableVersion;
+            ProxyFileInfo ret = new ProxyFileInfo
+            {
+                pProxyVtblList = pProxyVtblList.Convert(),
+                pStubVtblList = pStubVtblList.Convert(),
+                pNamesArray = pNamesArray.Convert(),
+                pDelegatedIIDs = pDelegatedIIDs.Convert(),
+                pIIDLookupRtn = pIIDLookupRtn.Convert(),
+                TableSize = TableSize,
+                TableVersion = TableVersion
+            };
             return ret;
         }
     }
@@ -166,11 +200,13 @@ namespace NtApiDotNet.Ndr
 
         public CInterfaceStubHeader Convert()
         {
-            CInterfaceStubHeader ret = new CInterfaceStubHeader();
-            ret.piid = piid.Convert();
-            ret.pServerInfo = pServerInfo.Convert();
-            ret.DispatchTableCount = DispatchTableCount;
-            ret.pDispatchTable = pDispatchTable.Convert();
+            CInterfaceStubHeader ret = new CInterfaceStubHeader
+            {
+                piid = piid.Convert(),
+                pServerInfo = pServerInfo.Convert(),
+                DispatchTableCount = DispatchTableCount,
+                pDispatchTable = pDispatchTable.Convert()
+            };
             return ret;
         }
     }
@@ -214,27 +250,29 @@ namespace NtApiDotNet.Ndr
         public IntPtr32 pExprInfo;
         public MIDL_STUB_DESC Convert()
         {
-            MIDL_STUB_DESC ret = new MIDL_STUB_DESC();
-            ret.RpcInterfaceInformation = RpcInterfaceInformation.Convert();
-            ret.pfnAllocate = pfnAllocate.Convert();
-            ret.pfnFree = pfnFree.Convert();
-            ret.pGenericBindingInfo = pGenericBindingInfo.Convert();
-            ret.apfnNdrRundownRoutines = apfnNdrRundownRoutines.Convert();
-            ret.aGenericBindingRoutinePairs = aGenericBindingRoutinePairs.Convert();
-            ret.apfnExprEval = apfnExprEval.Convert();
-            ret.aXmitQuintuple = aXmitQuintuple.Convert();
-            ret.pFormatTypes = pFormatTypes.Convert();
-            ret.fCheckBounds = fCheckBounds;
-            ret.Version = Version;
-            ret.pMallocFreeStruct = pMallocFreeStruct.Convert();
-            ret.MIDLVersion = MIDLVersion;
-            ret.CommFaultOffsets = CommFaultOffsets.Convert();
-            ret.aUserMarshalQuadruple = aUserMarshalQuadruple.Convert();
-            ret.NotifyRoutineTable = NotifyRoutineTable.Convert();
-            ret.mFlags = mFlags.Convert();
-            ret.CsRoutineTables = CsRoutineTables.Convert();
-            ret.ProxyServerInfo = ProxyServerInfo.Convert();
-            ret.pExprInfo = pExprInfo.Convert();
+            MIDL_STUB_DESC ret = new MIDL_STUB_DESC
+            {
+                RpcInterfaceInformation = RpcInterfaceInformation.Convert(),
+                pfnAllocate = pfnAllocate.Convert(),
+                pfnFree = pfnFree.Convert(),
+                pGenericBindingInfo = pGenericBindingInfo.Convert(),
+                apfnNdrRundownRoutines = apfnNdrRundownRoutines.Convert(),
+                aGenericBindingRoutinePairs = aGenericBindingRoutinePairs.Convert(),
+                apfnExprEval = apfnExprEval.Convert(),
+                aXmitQuintuple = aXmitQuintuple.Convert(),
+                pFormatTypes = pFormatTypes.Convert(),
+                fCheckBounds = fCheckBounds,
+                Version = Version,
+                pMallocFreeStruct = pMallocFreeStruct.Convert(),
+                MIDLVersion = MIDLVersion,
+                CommFaultOffsets = CommFaultOffsets.Convert(),
+                aUserMarshalQuadruple = aUserMarshalQuadruple.Convert(),
+                NotifyRoutineTable = NotifyRoutineTable.Convert(),
+                mFlags = mFlags.Convert(),
+                CsRoutineTables = CsRoutineTables.Convert(),
+                ProxyServerInfo = ProxyServerInfo.Convert(),
+                pExprInfo = pExprInfo.Convert()
+            };
             return ret;
         }
     }
@@ -252,15 +290,17 @@ namespace NtApiDotNet.Ndr
         public IntPtr32 pSyntaxInfo;
         public MIDL_SERVER_INFO Convert()
         {
-            MIDL_SERVER_INFO ret = new MIDL_SERVER_INFO();
-            ret.pStubDesc = pStubDesc.Convert();
-            ret.DispatchTable = DispatchTable.Convert();
-            ret.ProcString = ProcString.Convert();
-            ret.FmtStringOffset = FmtStringOffset.Convert();
-            ret.ThunkTable = ThunkTable.Convert();
-            ret.pTransferSyntax = pTransferSyntax.Convert();
-            ret.nCount = nCount.Convert();
-            ret.pSyntaxInfo = pSyntaxInfo.Convert();
+            MIDL_SERVER_INFO ret = new MIDL_SERVER_INFO
+            {
+                pStubDesc = pStubDesc.Convert(),
+                DispatchTable = DispatchTable.Convert(),
+                ProcString = ProcString.Convert(),
+                FmtStringOffset = FmtStringOffset.Convert(),
+                ThunkTable = ThunkTable.Convert(),
+                pTransferSyntax = pTransferSyntax.Convert(),
+                nCount = nCount.Convert(),
+                pSyntaxInfo = pSyntaxInfo.Convert()
+            };
             return ret;
         }
     }
@@ -273,10 +313,12 @@ namespace NtApiDotNet.Ndr
         public IntPtr32 Reserved;
         public RPC_DISPATCH_TABLE Convert()
         {
-            RPC_DISPATCH_TABLE ret = new RPC_DISPATCH_TABLE();
-            ret.DispatchTableCount = DispatchTableCount;
-            ret.DispatchTable = DispatchTable.Convert();
-            ret.Reserved = Reserved.Convert();
+            RPC_DISPATCH_TABLE ret = new RPC_DISPATCH_TABLE
+            {
+                DispatchTableCount = DispatchTableCount,
+                DispatchTable = DispatchTable.Convert(),
+                Reserved = Reserved.Convert()
+            };
             return ret;
         }
     }
@@ -295,16 +337,18 @@ namespace NtApiDotNet.Ndr
         public int Flags;
         public RPC_SERVER_INTERFACE Convert()
         {
-            RPC_SERVER_INTERFACE ret = new RPC_SERVER_INTERFACE();
-            ret.Length = Length;
-            ret.InterfaceId = InterfaceId;
-            ret.TransferSyntax = TransferSyntax;
-            ret.DispatchTable = DispatchTable.Convert();
-            ret.RpcProtseqEndpointCount = RpcProtseqEndpointCount;
-            ret.RpcProtseqEndpoint = RpcProtseqEndpoint.Convert();
-            ret.DefaultManagerEpv = DefaultManagerEpv.Convert();
-            ret.InterpreterInfo = InterpreterInfo.Convert();
-            ret.Flags = Flags;
+            RPC_SERVER_INTERFACE ret = new RPC_SERVER_INTERFACE
+            {
+                Length = Length,
+                InterfaceId = InterfaceId,
+                TransferSyntax = TransferSyntax,
+                DispatchTable = DispatchTable.Convert(),
+                RpcProtseqEndpointCount = RpcProtseqEndpointCount,
+                RpcProtseqEndpoint = RpcProtseqEndpoint.Convert(),
+                DefaultManagerEpv = DefaultManagerEpv.Convert(),
+                InterpreterInfo = InterpreterInfo.Convert(),
+                Flags = Flags
+            };
             return ret;
         }
     }
@@ -323,15 +367,17 @@ namespace NtApiDotNet.Ndr
 
         public MIDL_SYNTAX_INFO Convert()
         {
-            MIDL_SYNTAX_INFO ret = new MIDL_SYNTAX_INFO();
-            ret.TransferSyntax = TransferSyntax;
-            ret.DispatchTable = DispatchTable.Convert();
-            ret.ProcString = ProcString.Convert();
-            ret.FmtStringOffset = ProcString.Convert();
-            ret.TypeString = TypeString.Convert();
-            ret.aUserMarshalQuadruple = aUserMarshalQuadruple.Convert();
-            ret.pMethodProperties = pMethodProperties.Convert();
-            ret.pReserved2 = pReserved2.Convert();
+            MIDL_SYNTAX_INFO ret = new MIDL_SYNTAX_INFO
+            {
+                TransferSyntax = TransferSyntax,
+                DispatchTable = DispatchTable.Convert(),
+                ProcString = ProcString.Convert(),
+                FmtStringOffset = ProcString.Convert(),
+                TypeString = TypeString.Convert(),
+                aUserMarshalQuadruple = aUserMarshalQuadruple.Convert(),
+                pMethodProperties = pMethodProperties.Convert(),
+                pReserved2 = pReserved2.Convert()
+            };
             return ret;
         }
     }
@@ -347,6 +393,20 @@ namespace NtApiDotNet.Ndr
         public IntPtr aUserMarshalQuadruple; // const void* 
         public IntPtr pMethodProperties; // const MIDL_INTERFACE_METHOD_PROPERTIES* 
         public IntPtr pReserved2;
+    }
+
+    [Flags]
+    internal enum RpcFlags : uint
+    {
+        HasPipes = 0x0001,
+        Message = 0x01000000,
+        AutoComplete = 0x08000000,
+        LocalCall = 0x10000000,
+        InputSynchronous = 0x20000000,
+        Asynchronous = 0x40000000,
+        NonNdr = 0x80000000,
+        HasMultiSyntaxes = 0x02000000,
+        HasCallback = 0x04000000,
     }
 
     [StructLayout(LayoutKind.Sequential), CrossBitnessType(typeof(MIDL_STUB_DESC32))]
@@ -376,6 +436,20 @@ namespace NtApiDotNet.Ndr
         public IntPtr CsRoutineTables;
         public IntPtr ProxyServerInfo;
         public IntPtr pExprInfo;
+
+        public NDR_EXPR_DESC GetExprDesc(IMemoryReader reader)
+        {
+            if (pExprInfo != IntPtr.Zero)
+            {
+                return reader.ReadStruct<NDR_EXPR_DESC>(pExprInfo);
+            }
+            return new NDR_EXPR_DESC();
+        }
+
+        public RpcFlags GetFlags()
+        {
+            return (RpcFlags)(uint)mFlags.ToInt32();
+        }
     }
 
     [StructLayout(LayoutKind.Sequential), CrossBitnessType(typeof(MIDL_SERVER_INFO32))]
@@ -439,6 +513,12 @@ namespace NtApiDotNet.Ndr
     {
         public Guid SyntaxGUID;
         public RPC_VERSION SyntaxVersion;
+
+        public RPC_SYNTAX_IDENTIFIER(Guid guid, ushort major, ushort minor)
+        {
+            SyntaxGUID = guid;
+            SyntaxVersion = new RPC_VERSION() { MajorVersion = major, MinorVersion = minor };
+        }
     }
 
     [StructLayout(LayoutKind.Sequential), CrossBitnessType(typeof(RPC_DISPATCH_TABLE32))]
@@ -534,6 +614,44 @@ namespace NtApiDotNet.Ndr
             }
             return reader.ReadArray<RPC_PROTSEQ_ENDPOINT>(RpcProtseqEndpoint, RpcProtseqEndpointCount);
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct NDR_EXPR_DESC32 : IConvertToNative<NDR_EXPR_DESC>
+    {
+        public IntPtr32 pOffset;
+        public IntPtr32 pFormatExpr;
+
+        public NDR_EXPR_DESC Convert()
+        {
+            NDR_EXPR_DESC ret = new NDR_EXPR_DESC();
+            ret.pOffset = pOffset.Convert();
+            ret.pFormatExpr = pFormatExpr.Convert();
+            return ret;
+        }
+    }
+
+    [StructLayout(LayoutKind.Sequential), CrossBitnessType(typeof(NDR_EXPR_DESC32))]
+    internal struct NDR_EXPR_DESC
+    {
+        public IntPtr pOffset;
+        public IntPtr pFormatExpr;
+    }
+
+    [Flags]
+    internal enum MidlTypePicklingInfoFlags
+    {
+        None = 0,
+        NewCorrDesc = 0x1,
+        Oicf = 0x2,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct MIDL_TYPE_PICKLING_INFO
+    {
+        public int Version;
+        public MidlTypePicklingInfoFlags Flags;
+        // UINT_PTR Reserved[3];
     }
 
     [Flags]

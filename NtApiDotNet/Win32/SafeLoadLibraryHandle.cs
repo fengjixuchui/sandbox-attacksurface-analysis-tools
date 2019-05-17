@@ -39,25 +39,45 @@ namespace NtApiDotNet.Win32
         /// </summary>
         DontResolveDllReferences = 0x00000001,
         /// <summary>
-        /// Ignore code authz level.
-        /// </summary>
-        LoadIgnoreCodeAuthzLevel = 0x00000010,
-        /// <summary>
         /// Load library as a data file.
         /// </summary>
         LoadLibraryAsDataFile = 0x00000002,
         /// <summary>
-        /// Load library as a data file exclusively.
+        /// Load with an altered search path.
         /// </summary>
-        LoadLibraryAsDataFileExclusive = 0x00000040,
+        LoadWithAlteredSearchPath = 0x00000008,
+        /// <summary>
+        /// Ignore code authz level.
+        /// </summary>
+        LoadIgnoreCodeAuthzLevel = 0x00000010,
         /// <summary>
         /// Load library as an image resource.
         /// </summary>
         LoadLibraryAsImageResource = 0x00000020,
         /// <summary>
-        /// Load with an altered search path.
+        /// Load library as a data file exclusively.
         /// </summary>
-        LoadWithAlteredSearchPath = 0x00000008
+        LoadLibraryAsDataFileExclusive = 0x00000040,
+        /// <summary>
+        /// Add the DLL's directory temporarily to the search list.
+        /// </summary>
+        LoadLibrarySearchDllLoadDir = 0x00000100,
+        /// <summary>
+        /// Search application directory for the DLL.
+        /// </summary>
+        LoadLibrarySearchApplicationDir = 0x00000200,
+        /// <summary>
+        /// Search the user's directories for the DLL.
+        /// </summary>
+        LoadLibrarySearchUserDirs = 0x00000400,
+        /// <summary>
+        /// Search system32 for the DLL.
+        /// </summary>
+        LoadLibrarySearchSystem32 = 0x00000800,
+        /// <summary>
+        /// Search the default directories for the DLL.
+        /// </summary>
+        LoadLibrarySearchDefaultDirs = 0x00001000,
     }
 
     /// <summary>
@@ -379,8 +399,9 @@ namespace NtApiDotNet.Win32
         /// Get a delegate which points to an unmanaged function.
         /// </summary>
         /// <typeparam name="TDelegate">The delegate type. The name of the delegate is used to lookup the name of the function.</typeparam>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The delegate.</returns>
-        public TDelegate GetFunctionPointer<TDelegate>() where TDelegate : class
+        public TDelegate GetFunctionPointer<TDelegate>(bool throw_on_error) where TDelegate : class
         {
             if (!typeof(TDelegate).IsSubclassOf(typeof(Delegate)) ||
                 typeof(TDelegate).GetCustomAttribute<UnmanagedFunctionPointerAttribute>() == null)
@@ -391,10 +412,24 @@ namespace NtApiDotNet.Win32
             IntPtr proc = GetProcAddress(typeof(TDelegate).Name);
             if (proc == IntPtr.Zero)
             {
-                throw new Win32Exception();
+                if (throw_on_error)
+                {
+                    throw new Win32Exception();
+                }
+                return null;
             }
 
             return (TDelegate)(object)Marshal.GetDelegateForFunctionPointer(proc, typeof(TDelegate));
+        }
+
+        /// <summary>
+        /// Get a delegate which points to an unmanaged function.
+        /// </summary>
+        /// <typeparam name="TDelegate">The delegate type. The name of the delegate is used to lookup the name of the function.</typeparam>
+        /// <returns>The delegate.</returns>
+        public TDelegate GetFunctionPointer<TDelegate>() where TDelegate : class
+        {
+            return GetFunctionPointer<TDelegate>(true);
         }
 
         /// <summary>
@@ -438,22 +473,38 @@ namespace NtApiDotNet.Win32
         /// </summary>
         /// <param name="name">The path to the library.</param>
         /// <param name="flags">Additonal flags to pass to LoadLibraryEx</param>
-        /// <returns></returns>
-        public static SafeLoadLibraryHandle LoadLibrary(string name, LoadLibraryFlags flags)
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>Handle to the loaded library.</returns>
+        public static NtResult<SafeLoadLibraryHandle> LoadLibrary(string name, LoadLibraryFlags flags, bool throw_on_error)
         {
             SafeLoadLibraryHandle ret = Win32NativeMethods.LoadLibraryEx(name, IntPtr.Zero, flags);
             if (ret.IsInvalid)
             {
-                throw new SafeWin32Exception();
+                if (throw_on_error)
+                {
+                    throw new SafeWin32Exception();
+                }
+                return Win32Utils.GetLastWin32Error().CreateResultFromDosError<SafeLoadLibraryHandle>(false);
             }
-            return ret;
+            return ret.CreateResult();
         }
 
         /// <summary>
         /// Load a library into memory.
         /// </summary>
         /// <param name="name">The path to the library.</param>
-        /// <returns></returns>
+        /// <param name="flags">Additonal flags to pass to LoadLibraryEx</param>
+        /// <returns>Handle to the loaded library.</returns>
+        public static SafeLoadLibraryHandle LoadLibrary(string name, LoadLibraryFlags flags)
+        {
+            return LoadLibrary(name, flags, true).Result;
+        }
+
+        /// <summary>
+        /// Load a library into memory.
+        /// </summary>
+        /// <param name="name">The path to the library.</param>
+        /// <returns>Handle to the loaded library.</returns>
         public static SafeLoadLibraryHandle LoadLibrary(string name)
         {
             return LoadLibrary(name, LoadLibraryFlags.None);
@@ -465,6 +516,7 @@ namespace NtApiDotNet.Win32
         /// <param name="name">The name of the module.</param>
         /// <returns>The handle to the loaded library.</returns>
         /// <exception cref="SafeWin32Exception">Thrown if the module can't be found.</exception>
+        /// <remarks>This will take a reference on the library, you should dispose the handle after use.</remarks>
         public static SafeLoadLibraryHandle GetModuleHandle(string name)
         {
             if (Win32NativeMethods.GetModuleHandleEx(0, name, out SafeLoadLibraryHandle ret))
@@ -479,6 +531,7 @@ namespace NtApiDotNet.Win32
         /// </summary>
         /// <param name="name">The name of the module.</param>
         /// <returns>The handle to the loaded library. Returns Null if not found.</returns>
+        /// <remarks>This will take a reference on the library, you should dispose the handle after use.</remarks>
         public static SafeLoadLibraryHandle GetModuleHandleNoThrow(string name)
         {
             if (Win32NativeMethods.GetModuleHandleEx(0, name, out SafeLoadLibraryHandle ret))
@@ -493,6 +546,7 @@ namespace NtApiDotNet.Win32
         /// </summary>
         /// <param name="address">An address inside the module.</param>
         /// <returns>The handle to the loaded library, null if the address isn't inside a valid module.</returns>
+        /// <remarks>This will take a reference on the library, you should dispose the handle after use.</remarks>
         public static SafeLoadLibraryHandle GetModuleHandle(IntPtr address)
         {
             if (Win32NativeMethods.GetModuleHandleEx(Win32NativeMethods.GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, 
@@ -501,6 +555,46 @@ namespace NtApiDotNet.Win32
                 return ret;
             }
             return null;
+        }
+
+        /// <summary>
+        /// Pin the library into memory. This prevents FreeLibrary unloading the library until
+        /// the process exits.
+        /// </summary>
+        public void PinModule()
+        {
+            PinModule(DangerousGetHandle());
+        }
+
+        /// <summary>
+        /// Pin the library into memory. This prevents FreeLibrary unloading the library until
+        /// the process exits.
+        /// </summary>
+        /// <param name="name">The name of the module to pin.</param>
+        public static void PinModule(string name)
+        {
+            if (!Win32NativeMethods.GetModuleHandleEx(
+                Win32NativeMethods.GET_MODULE_HANDLE_EX_FLAG_PIN,
+                name, out SafeLoadLibraryHandle ret))
+            {
+                throw new SafeWin32Exception();
+            }
+        }
+
+        /// <summary>
+        /// Pin the library into memory. This prevents FreeLibrary unloading the library until
+        /// the process exits.
+        /// </summary>
+        /// <param name="address">The address of the module to pin.</param>
+        public static void PinModule(IntPtr address)
+        {
+            if (!Win32NativeMethods.GetModuleHandleEx(
+                           Win32NativeMethods.GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS
+                           | Win32NativeMethods.GET_MODULE_HANDLE_EX_FLAG_PIN,
+                            address, out SafeLoadLibraryHandle ret))
+            {
+                throw new SafeWin32Exception();
+            }
         }
 
         const ushort IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13;
@@ -615,7 +709,7 @@ namespace NtApiDotNet.Win32
             IntPtr header_ptr = Win32NativeMethods.ImageNtHeader(base_ptr);
             if (header_ptr == IntPtr.Zero)
             {
-                throw new SafeWin32Exception();
+                return IntPtr.Zero;
             }
             return header_ptr;
         }
@@ -671,6 +765,11 @@ namespace NtApiDotNet.Win32
             }
 
             IntPtr header_ptr = GetHeaderPointer(base_ptr);
+            if (header_ptr == IntPtr.Zero)
+            {
+                return;
+            }
+
             ImageNtHeaders header = (ImageNtHeaders)Marshal.PtrToStructure(header_ptr, typeof(ImageNtHeaders));
             var buffer = header_ptr + Marshal.SizeOf(header) + header.FileHeader.SizeOfOptionalHeader;
             ImageSectionHeader[] section_headers = new ImageSectionHeader[header.FileHeader.NumberOfSections];

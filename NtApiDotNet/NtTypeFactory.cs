@@ -22,7 +22,7 @@ namespace NtApiDotNet
     [AttributeUsage(AttributeTargets.Class, AllowMultiple = true)]
     internal sealed class NtTypeAttribute : Attribute
     {
-        public string TypeName { get; private set; }
+        public string TypeName { get; }
         public NtTypeAttribute(string type_name)
         {
             TypeName = type_name;
@@ -35,6 +35,7 @@ namespace NtApiDotNet
 
         public Type ObjectType { get; }
         public Type AccessRightsType { get; }
+        public Type ContainerAccessRightsType { get; }
         public bool CanOpen { get; }
 
         public virtual NtObject FromHandle(SafeKernelObjectHandle handle)
@@ -47,9 +48,10 @@ namespace NtApiDotNet
             return NtStatus.STATUS_NOT_IMPLEMENTED.CreateResultFromError<NtObject>(throw_on_error);
         }
 
-        internal NtTypeFactory(Type access_rights_type, Type object_type, bool can_open)
+        internal NtTypeFactory(Type access_rights_type, Type container_access_rights_type, Type object_type, bool can_open)
         {
             AccessRightsType = access_rights_type;
+            ContainerAccessRightsType = container_access_rights_type;
             ObjectType = object_type;
             CanOpen = can_open;
         }

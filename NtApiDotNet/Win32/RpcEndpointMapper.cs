@@ -169,6 +169,14 @@ namespace NtApiDotNet.Win32
             }
         }
 
+        public static string Compose(string objuuid, string protseq, string networkaddr, string endpoint, string options)
+        {
+            using (var binding = Create(objuuid, protseq, networkaddr, endpoint, options))
+            {
+                return binding.ToString();
+            }
+        }
+
         public override string ToString()
         {
             if (!IsInvalid && !IsClosed)
@@ -437,15 +445,58 @@ namespace NtApiDotNet.Win32
         }
 
         /// <summary>
-        /// Resolve the local binding string for this service from the local Endpoint Mapper.
+        /// Resolve the local binding string for this service from the local Endpoint Mapper and return the endpoint.
         /// </summary>
+        /// <param name="protocol_seq">The protocol sequence to lookup.</param>
+        /// <param name="interface_id">Interface UUID to lookup.</param>
+        /// <param name="interface_version">Interface version lookup.</param>
+        /// <returns>The mapped endpoint.</returns>
+        /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
+        public static RpcEndpoint MapServerToEndpoint(string protocol_seq, Guid interface_id, Version interface_version)
+        {
+            string binding = MapServerToBindingString(protocol_seq, interface_id, interface_version);
+            if (binding == null)
+            {
+                return null;
+            }
+
+            return new RpcEndpoint(interface_id, interface_version, binding, true);
+        }
+
+        /// <summary>
+        /// Resolve the local binding string for this service from the local Endpoint Mapper and return the ALPC port path.
+        /// </summary>
+        /// <param name="interface_id">Interface UUID to lookup.</param>
+        /// <param name="interface_version">Interface version lookup.</param>
+        /// <returns>The mapped endpoint.</returns>
+        /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
+        public static RpcEndpoint MapServerToAlpcEndpoint(Guid interface_id, Version interface_version)
+        {
+            return MapServerToEndpoint("ncalrpc", interface_id, interface_version);
+        }
+
+        /// <summary>
+        /// Resolve the local binding string for this service from the local Endpoint Mapper and return the ALPC port path.
+        /// </summary>
+        /// <param name="server_interface">The server interface.</param>
+        /// <returns>The mapped endpoint.</returns>
+        /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
+        public static RpcEndpoint MapServerToAlpcEndpoint(NdrRpcServerInterface server_interface)
+        {
+            return MapServerToAlpcEndpoint(server_interface.InterfaceId, server_interface.InterfaceVersion);
+        }
+
+        /// <summary>
+        /// Resolve the binding string for this service from the local Endpoint Mapper.
+        /// </summary>
+        /// <param name="protocol_seq">The protocol sequence to lookup.</param>
         /// <param name="interface_id">Interface UUID to lookup.</param>
         /// <param name="interface_version">Interface version lookup.</param>
         /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
         /// <returns>The RPC binding string. Empty string if it doesn't exist or the lookup failed.</returns>
-        public static string MapServerToBindingString(Guid interface_id, Version interface_version)
+        public static string MapServerToBindingString(string protocol_seq, Guid interface_id, Version interface_version)
         {
-            int result = Win32NativeMethods.RpcBindingFromStringBinding("ncalrpc:", out SafeRpcBindingHandle binding);
+            int result = Win32NativeMethods.RpcBindingFromStringBinding($"{protocol_seq}:", out SafeRpcBindingHandle binding);
             if (result != 0)
             {
                 return string.Empty;
@@ -465,28 +516,6 @@ namespace NtApiDotNet.Win32
 
                 return binding.ToString();
             }
-        }
-
-        /// <summary>
-        /// Resolve the local binding string for this service from the local Endpoint Mapper.
-        /// </summary>
-        /// <param name="server_interface">The server interface.</param>
-        /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
-        /// <returns>The RPC binding string. Empty string if it doesn't exist or the lookup failed.</returns>
-        public static string MapServerToBindingString(NdrRpcServerInterface server_interface)
-        {
-            return MapServerToBindingString(server_interface.InterfaceId, server_interface.InterfaceVersion);
-        }
-
-        /// <summary>
-        /// Resolve the local binding string for this service from the local Endpoint Mapper.
-        /// </summary>
-        /// <param name="endpoint">An existing endpoint used for lookup.</param>
-        /// <remarks>This only will return a valid value if the service is running and registered with the Endpoint Mapper. It can also hang.</remarks>
-        /// <returns>The RPC binding string. Empty string if it doesn't exist or the lookup failed.</returns>
-        public static string MapServerToBindingString(RpcEndpoint endpoint)
-        {
-            return MapServerToBindingString(endpoint.InterfaceId, endpoint.InterfaceVersion);
         }
     }
 }

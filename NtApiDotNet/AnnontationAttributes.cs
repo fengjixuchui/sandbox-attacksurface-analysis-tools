@@ -30,7 +30,8 @@ namespace NtApiDotNet
         Windows10_RS1,
         Windows10_RS2,
         Windows10_RS3,
-        Windows10_RS4
+        Windows10_RS4,
+        Windows10_RS5,
     }
 #pragma warning restore 1591
 
@@ -43,7 +44,7 @@ namespace NtApiDotNet
         /// <summary>
         /// The supported version.
         /// </summary>
-        public SupportedVersion Version { get; private set; }
+        public SupportedVersion Version { get; }
 
         /// <summary>
         /// Constructor

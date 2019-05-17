@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Win32.Rpc;
 using System;
 
 namespace NtApiDotNet.Win32
@@ -66,17 +67,20 @@ namespace NtApiDotNet.Win32
         /// </summary>
         public bool Registered { get; }
 
-        internal RpcEndpoint(RPC_IF_ID if_id, UUID uuid, SafeRpcStringHandle annotation, SafeRpcBindingHandle binding, bool registered)
+        private RpcEndpoint(Guid interface_id, Version interface_version, string annotation, string binding, bool registered)
         {
-            InterfaceId = if_id.Uuid;
-            InterfaceVersion = new Version(if_id.VersMajor, if_id.VersMinor);
-            ObjectUuid = uuid.Uuid;
-            Annotation = annotation?.ToString() ?? string.Empty;
+            InterfaceId = interface_id;
+            InterfaceVersion = interface_version;
+            CrackedBindingString cracked = new CrackedBindingString(binding);
+            Guid.TryParse(cracked.ObjUuid, out Guid guid);
+            ObjectUuid = guid;
+
+            Annotation = annotation ?? string.Empty;
             BindingString = binding.ToString();
-            ProtocolSequence = binding.Protseq;
-            NetworkAddress = binding.NetworkAddr;
-            Endpoint = binding.Endpoint;
-            NetworkOptions = binding.NetworkOptions;
+            ProtocolSequence = cracked.Protseq;
+            NetworkAddress = cracked.NetworkAddr;
+            Endpoint = cracked.Endpoint;
+            NetworkOptions = cracked.NetworkOptions;
             if (ProtocolSequence.Equals("ncalrpc", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(Endpoint))
             {
                 if (Endpoint.Contains(@"\"))
@@ -97,6 +101,16 @@ namespace NtApiDotNet.Win32
                 EndpointPath = string.Empty;
             }
             Registered = registered;
+        }
+
+        internal RpcEndpoint(Guid interface_id, Version interface_version, string string_binding, bool registered)
+            : this(interface_id, interface_version, null, string_binding, registered)
+        {
+        }
+
+        internal RpcEndpoint(RPC_IF_ID if_id, UUID uuid, SafeRpcStringHandle annotation, SafeRpcBindingHandle binding, bool registered)
+            : this(if_id.Uuid, new Version(if_id.VersMajor, if_id.VersMinor), annotation?.ToString(), binding.ToString(), registered)
+        {
         }
 
         /// <summary>

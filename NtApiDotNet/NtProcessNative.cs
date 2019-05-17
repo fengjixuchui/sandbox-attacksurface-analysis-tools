@@ -179,40 +179,6 @@ namespace NtApiDotNet
         public RtlDriveLetterCurDir[] DLCurrentDirectory;
     }
 
-    [Flags]
-    public enum SectionImageFlags : byte
-    {
-        ComPlusNativeReady = 1,
-        ComPlusILOnly = 2,
-        ImageDynamicallyRelocated = 4,
-        ImageMappedFlat = 8,
-        BaseBelow4gb = 16,
-        ComPlusPrefer32bit = 32
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct SectionImageInformation
-    {
-        public IntPtr TransferAddress;
-        public uint ZeroBits;
-        public IntPtr MaximumStackSize;
-        public IntPtr CommittedStackSize;
-        public uint SubSystemType;
-        public ushort SubSystemMinorVersion;
-        public ushort SubSystemMajorVersion;
-        public uint GpValue;
-        public ushort ImageCharacteristics;
-        public ushort DllCharacteristics;
-        public ushort Machine;
-        [MarshalAs(UnmanagedType.U1)]
-        public bool ImageContainsCode;
-        [MarshalAs(UnmanagedType.U1)]
-        public SectionImageFlags ImageFlags;
-        public uint LoaderFlags;
-        public uint ImageFileSize;
-        public uint CheckSum;
-    };
-
     public enum PsProtectedType
     {
         None,
@@ -236,7 +202,7 @@ namespace NtApiDotNet
     [StructLayout(LayoutKind.Sequential)]
     public struct PsProtection
     {
-        private byte level;
+        private readonly byte level;
 
         public PsProtection(PsProtectedType type, PsProtectedSigner signer, bool audit)
         {
@@ -264,6 +230,13 @@ namespace NtApiDotNet
             Size = size;
             ReturnLength = return_length;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential), DataStart("Attributes")]
+    public struct PsAttributeList
+    {
+        public IntPtr TotalLength;
+        public ProcessAttributeNative Attributes;
     }
 
     public enum ProcessAttributeNum
@@ -387,16 +360,16 @@ namespace NtApiDotNet
     [StructLayout(LayoutKind.Sequential)]
     public struct ProcessChildProcessRestricted
     {
-        public byte IsNoChildProcessRestricted;
-        public byte EnableAutomaticOverride;
+        public byte ProhibitChildProcesses;
+        public byte AlwaysAllowSecureChildProcess;
     }
 
     [StructLayout(LayoutKind.Sequential)]
     public struct ProcessChildProcessRestricted1709
     {
-        public byte IsNoChildProcessRestricted;
-        public byte EnableAutomaticOverride;
-        public byte Unknown2;
+        public byte ProhibitChildProcesses;
+        public byte AlwaysAllowSecureChildProcess;
+        public byte AuditProhibitChildProcesses;
     }
 
     public enum ProcessSubsystemInformationType
@@ -497,6 +470,16 @@ namespace NtApiDotNet
         ProcessEnableReadWriteVmLogging, // PROCESS_READWRITEVM_LOGGING_INFORMATION
         ProcessUptimeInformation, // PROCESS_UPTIME_INFORMATION
         ProcessImageSection,
+        ProcessDebugAuthInformation,
+        ProcessSystemResourceManagement,
+        ProcessSequenceNumber,
+        ProcessLoaderDetour,
+        ProcessSecurityDomainInformation,
+        ProcessCombineSecurityDomainsInformation,
+        ProcessEnableLogging,
+        ProcessLeapSecondInformation,
+        ProcessFiberShadowStackAllocation,
+        ProcessFreeFiberShadowStackAllocation
     }
 
     public enum ProcessMitigationPolicy
@@ -536,6 +519,27 @@ namespace NtApiDotNet
     {
         public IntPtr UniqueProcess;
         public IntPtr UniqueThread;
+
+        public ClientId()
+        {
+        }
+
+        public ClientId(int pid, int tid)
+        {
+            UniqueProcess = new IntPtr(pid);
+            UniqueThread = new IntPtr(tid);
+        }
+
+        public ClientId(ClientIdStruct cid)
+        {
+            UniqueProcess = cid.UniqueProcess;
+            UniqueThread = cid.UniqueThread;
+        }
+
+        public override string ToString()
+        {
+            return $"PID: {UniqueProcess.ToInt32()} - TID: {UniqueThread.ToInt32()}";
+        }
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -804,20 +808,36 @@ namespace NtApiDotNet
 
     };
 
-    [StructLayout(LayoutKind.Sequential)]
-    public sealed class ProcessAttributeList
+    public sealed class ProcessAttributeList : SafeStructureInOutBuffer<PsAttributeList>
     {
-        IntPtr TotalLength;
-        // Allocate upto 64 entries.
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
-        ProcessAttributeNative[] Attributes;
+        private ProcessAttributeList(ProcessAttributeNative[] attributes)
+            : base(Marshal.SizeOf(typeof(ProcessAttributeNative)) * attributes.Length, true)
+        {
+            var result = Result;
+            result.TotalLength = new IntPtr(Length);
+            Result = result;
+            Data.WriteArray(0, attributes, 0, attributes.Length);
+        }
+
+        private ProcessAttributeList(IntPtr buffer, int length, bool owns_handle)
+            : base(buffer, length, owns_handle)
+        {
+        }
 
         public ProcessAttributeList(IEnumerable<ProcessAttribute> attributes)
+            : this(attributes.Select(a => a.GetNativeAttribute()).ToArray())
         {
-            ProcessAttributeNative[] attrs = attributes.Select(a => a.GetNativeAttribute()).ToArray();
-            Attributes = new ProcessAttributeNative[64];
-            Array.Copy(attrs, Attributes, attrs.Length);
-            TotalLength = new IntPtr(IntPtr.Size + Marshal.SizeOf(typeof(ProcessAttributeNative)) * attrs.Length);
+        }
+
+        new public static ProcessAttributeList Null => new ProcessAttributeList(IntPtr.Zero, 0, false);
+
+        public static ProcessAttributeList Create(IEnumerable<ProcessAttribute> attributes)
+        {
+            if (attributes == null || !attributes.Any())
+            {
+                return Null;
+            }
+            return new ProcessAttributeList(attributes);
         }
     }
 
@@ -840,6 +860,7 @@ namespace NtApiDotNet
         PebFlags GetPebFlags();
         IntPtr GetImageBaseAddress();
         IntPtr GetProcessHeap();
+        IntPtr GetProcessParameters();
     }
 
     /// <summary>
@@ -858,6 +879,11 @@ namespace NtApiDotNet
         public IntPtr ProcessParameters; // PRTL_USER_PROCESS_PARAMETERS
         public IntPtr SubSystemData;
         public IntPtr ProcessHeap;
+
+        IntPtr IPeb.GetProcessParameters()
+        {
+            return ProcessParameters;
+        }
 
         IntPtr IPeb.GetImageBaseAddress()
         {
@@ -905,6 +931,11 @@ namespace NtApiDotNet
         IntPtr IPeb.GetProcessHeap()
         {
             return new IntPtr(ProcessHeap);
+        }
+
+        IntPtr IPeb.GetProcessParameters()
+        {
+            return new IntPtr(ProcessParameters);
         }
     }
 

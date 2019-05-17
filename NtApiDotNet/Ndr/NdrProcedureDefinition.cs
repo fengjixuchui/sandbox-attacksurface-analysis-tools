@@ -27,6 +27,7 @@ namespace NtApiDotNet.Ndr
 {
 #pragma warning disable 1591
     [Flags]
+    [Serializable]
     public enum NdrParamAttributes : ushort
     {
         MustSize = 0x0001,
@@ -56,29 +57,37 @@ namespace NtApiDotNet.Ndr
         NDR_CONTEXT_HANDLE_CANNOT_BE_NULL   = 0x01,
     }
 
+    [Serializable]
     public class NdrProcedureParameter
     {
         public NdrParamAttributes Attributes { get; }
         public NdrBaseTypeReference Type { get; }
         public int ServerAllocSize { get; }
         public int Offset { get; }
+        public string Name { get; set; }
+        public bool IsIn => Attributes.HasFlag(NdrParamAttributes.IsIn);
+        public bool IsOut => Attributes.HasFlag(NdrParamAttributes.IsOut);
+        public bool IsInOut => IsIn && IsOut;
+        public bool IsSimpleRef => Attributes.HasFlag(NdrParamAttributes.IsSimpleRef);
 
         private const ushort ServerAllocSizeMask = 0xe000;
 
-        internal NdrProcedureParameter(NdrParamAttributes attributes, int server_alloc_size, NdrBaseTypeReference type, int offset)
+        internal NdrProcedureParameter(NdrParamAttributes attributes, int server_alloc_size, NdrBaseTypeReference type, int offset, string name)
         {
             Attributes = attributes;
             ServerAllocSize = server_alloc_size;
             Type = type;
             Offset = offset;
+            Name = name;
         }
 
-        internal NdrProcedureParameter(NdrParseContext context, BinaryReader reader)
+        internal NdrProcedureParameter(NdrParseContext context, BinaryReader reader, string name)
         {
             ushort attr = reader.ReadUInt16();
             Attributes = (NdrParamAttributes)(attr & ~ServerAllocSizeMask);
             ServerAllocSize = (attr & ServerAllocSizeMask) >> 10;
             Offset = reader.ReadUInt16();
+            Name = name;
             if ((Attributes & NdrParamAttributes.IsBasetype) == 0)
             {
                 int type_ofs = reader.ReadUInt16();
@@ -86,7 +95,7 @@ namespace NtApiDotNet.Ndr
             }
             else
             {
-                Type = new NdrBaseTypeReference((NdrFormatCharacter)reader.ReadByte());
+                Type = new NdrSimpleTypeReference((NdrFormatCharacter)reader.ReadByte());
                 // Remove padding.
                 reader.ReadByte();
             }
@@ -109,11 +118,11 @@ namespace NtApiDotNet.Ndr
             }
 
             string type_format = (Attributes & NdrParamAttributes.IsSimpleRef) == 0
-                ? Type.FormatType(context) : String.Format("{0}*", Type.FormatType(context));
+                ? Type.FormatType(context) : string.Format("{0}*", Type.FormatType(context));
 
             if (attributes.Count > 0)
             {
-                return String.Format("[{0}] {1}", string.Join(", ", attributes), type_format);
+                return string.Format("[{0}] {1}", string.Join(", ", attributes), type_format);
             }
             else
             {
@@ -121,37 +130,51 @@ namespace NtApiDotNet.Ndr
             }
         }
 
+        internal string FormatName(int index)
+        {
+            if (!string.IsNullOrWhiteSpace(Name))
+            {
+                return Name;
+            }
+            return $"p{index}";
+        }
+
         public override string ToString()
         {
-            return String.Format("{0} - {1}", Type, Attributes);
+            return string.Format("{0} - {1}", Type, Attributes);
         }
     }
 
+    [Serializable]
     public class NdrProcedureHandleParameter : NdrProcedureParameter
     {
         NdrHandleParamFlags Flags { get; }
         public bool Explicit { get; }
+        public bool Generic { get; }
 
         internal NdrProcedureHandleParameter(NdrParamAttributes attributes, 
-            NdrBaseTypeReference type, int offset, bool explicit_handle, NdrHandleParamFlags flags) 
-            : base(attributes, 0, type, offset)
+            NdrBaseTypeReference type, int offset, bool explicit_handle, NdrHandleParamFlags flags, bool generic)
+            : base(attributes, 0, type, offset, string.Empty)
         {
             Flags = flags;
             Explicit = explicit_handle;
+            Generic = generic;
         }
     }
 
+    [Serializable]
     public class NdrProcedureDefinition
     {
-        public string Name { get; }
+        public string Name { get; set; }
         public IList<NdrProcedureParameter> Params { get; }
         public NdrProcedureParameter ReturnValue { get; }
         public NdrProcedureHandleParameter Handle { get; }
         public uint RpcFlags { get; }
         public int ProcNum { get; }
         public int StackSize { get; }
-        public bool HasAsyncHandle { get; }
+        public bool HasAsyncHandle => InterpreterFlags.HasFlag(NdrInterpreterOptFlags.HasAsyncHandle);
         public IntPtr DispatchFunction { get; }
+        public NdrInterpreterOptFlags InterpreterFlags { get; }
 
         internal string FormatProcedure(NdrFormatter context)
         {
@@ -170,14 +193,14 @@ namespace NtApiDotNet.Ndr
                 return_value = ReturnValue.Type.FormatType(context);
             }
 
-            return String.Format("{0} {1}({2});", return_value,
-                Name, string.Join(", ", Params.Select((p, i) => String.Format("{0} {1} p{2}", 
-                        context.FormatComment("Stack Offset: {0}", p.Offset), p.Format(context), i))));
+            return string.Format("{0} {1}({2});", return_value,
+                Name, string.Join(", ", Params.Select((p, i) => string.Format("{0} {1} {2}", 
+                        context.FormatComment("Stack Offset: {0}", p.Offset), p.Format(context), p.FormatName(i)))));
         }
 
         internal NdrProcedureDefinition(IMemoryReader mem_reader, NdrTypeCache type_cache, 
             ISymbolResolver symbol_resolver, MIDL_STUB_DESC stub_desc, 
-            IntPtr proc_desc, IntPtr type_desc, IntPtr dispatch_func,
+            IntPtr proc_desc, IntPtr type_desc, NDR_EXPR_DESC expr_desc, IntPtr dispatch_func,
             string name, NdrParserFlags parser_flags)
         {
             BinaryReader reader = mem_reader.GetReader(proc_desc);
@@ -212,7 +235,7 @@ namespace NtApiDotNet.Ndr
                 handle_type = (NdrFormatCharacter)reader.ReadByte();
                 NdrHandleParamFlags flags = (NdrHandleParamFlags)reader.ReadByte();
                 ushort handle_offset = reader.ReadUInt16();
-                NdrBaseTypeReference base_type = new NdrBaseTypeReference(handle_type);
+                NdrBaseTypeReference base_type = new NdrSimpleTypeReference(handle_type);
                 if (handle_type == NdrFormatCharacter.FC_BIND_PRIMITIVE)
                 {
                     flags = flags != 0 ? NdrHandleParamFlags.HANDLE_PARAM_IS_VIA_PTR : 0;
@@ -237,27 +260,26 @@ namespace NtApiDotNet.Ndr
                 }
                 Handle = new NdrProcedureHandleParameter(0, 
                         (flags & NdrHandleParamFlags.HANDLE_PARAM_IS_VIA_PTR) != 0 ? new NdrPointerTypeReference(base_type)
-                            : base_type, handle_offset, true, flags);
+                            : base_type, handle_offset, true, flags, handle_type == NdrFormatCharacter.FC_BIND_GENERIC);
             }
             else
             {
-                Handle = new NdrProcedureHandleParameter(0, new NdrBaseTypeReference(handle_type), 0, false, 0);
+                Handle = new NdrProcedureHandleParameter(0, new NdrSimpleTypeReference(handle_type), 0, false, 0, false);
             }
 
             ushort constant_client_buffer_size = reader.ReadUInt16();
             ushort constant_server_buffer_size = reader.ReadUInt16();
-            NdrInterpreterOptFlags oi2_flags = (NdrInterpreterOptFlags)reader.ReadByte();
+            InterpreterFlags = (NdrInterpreterOptFlags)reader.ReadByte();
             int number_of_params = reader.ReadByte();
-            HasAsyncHandle = (oi2_flags & NdrInterpreterOptFlags.HasAsyncHandle) != 0;
 
             NdrProcHeaderExts exts = new NdrProcHeaderExts();
-            if ((oi2_flags & NdrInterpreterOptFlags.HasExtensions) == NdrInterpreterOptFlags.HasExtensions)
+            if ((InterpreterFlags & NdrInterpreterOptFlags.HasExtensions) == NdrInterpreterOptFlags.HasExtensions)
             {
                 int ext_size = reader.ReadByte();
                 reader.BaseStream.Position -= 1;
                 // Read out extension bytes.
                 byte[] extension = reader.ReadAll(ext_size);
-                if (Marshal.SizeOf(typeof(NdrProcHeaderExts)) <= ext_size)
+                if (System.Runtime.InteropServices.Marshal.SizeOf(typeof(NdrProcHeaderExts)) <= ext_size)
                 {
                     using (var buffer = new SafeStructureInOutBuffer<NdrProcHeaderExts>(ext_size, false))
                     {
@@ -267,26 +289,17 @@ namespace NtApiDotNet.Ndr
                 }
             }
 
-            int desc_size = 4;
-            if ((exts.Flags2 & NdrInterpreterOptFlags2.HasNewCorrDesc) != 0)
-            {
-                desc_size = 6;
-                if ((exts.Flags2 & NdrInterpreterOptFlags2.ExtendedCorrDesc) != 0)
-                {
-                    desc_size = 16;
-                }
-            }
-            NdrParseContext context = new NdrParseContext(type_cache, symbol_resolver, stub_desc, type_desc, desc_size, mem_reader, parser_flags);
+            NdrParseContext context = new NdrParseContext(type_cache, symbol_resolver, stub_desc, type_desc, expr_desc, exts.Flags2, mem_reader, parser_flags);
             List<NdrProcedureParameter> ps = new List<NdrProcedureParameter>();
 
-            bool has_return = (oi2_flags & NdrInterpreterOptFlags.HasReturn) == NdrInterpreterOptFlags.HasReturn;
+            bool has_return = InterpreterFlags.HasFlag(NdrInterpreterOptFlags.HasReturn);
             int param_count = has_return ? number_of_params - 1 : number_of_params;
             for (int param = 0; param < param_count; ++param)
             {
-                ps.Add(new NdrProcedureParameter(context, reader));
+                ps.Add(new NdrProcedureParameter(context, reader, $"p{param}"));
             }
 
-            if (Handle.Explicit)
+            if (Handle.Explicit && !Handle.Generic)
             {
                 // Insert handle into parameter list at the best location.
                 int index = 0;
@@ -304,7 +317,7 @@ namespace NtApiDotNet.Ndr
             Params = ps.AsReadOnly();
             if (has_return)
             {
-                ReturnValue = new NdrProcedureParameter(context, reader);
+                ReturnValue = new NdrProcedureParameter(context, reader, "retval");
             }
             DispatchFunction = dispatch_func;
         }

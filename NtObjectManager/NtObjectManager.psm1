@@ -439,6 +439,14 @@ Specify the filter level for the Win32k filter.
 Specify a token to start the process with.
 .PARAMETER ProtectionLevel
 Specify the protection level when creating a protected process.
+.PARAMETER DebugObject
+Specify a debug object to run the process under. You need to also specify DebugProcess or DebugOnlyThisProcess flags as well.
+.PARAMETER NoTokenFallback
+Specify to not fallback to using CreateProcessWithLogon if CreateProcessAsUser fails.
+.PARAMETER AppContainerProfile
+Specify an app container profile to use.
+.PARAMETER ExtendedFlags
+ Specify extended creation flags.
 .INPUTS
 None
 .OUTPUTS
@@ -447,26 +455,30 @@ NtApiDotNet.Win32.Win32ProcessConfig
 function New-Win32ProcessConfig
 {
     Param(
-    [Parameter(Mandatory=$true, Position=0)]
-    [string]$CommandLine,
-    [string]$ApplicationName,
-    [NtApiDotNet.SecurityDescriptor]$ProcessSecurityDescriptor,
-    [NtApiDotNet.SecurityDescriptor]$ThreadSecurityDescriptor,
-    [NtApiDotNet.NtProcess]$ParentProcess,
-    [NtApiDotNet.Win32.CreateProcessFlags]$CreationFlags = 0,
-    [NtApiDotNet.Win32.ProcessMitigationOptions]$MitigationOptions = 0,
-    [switch]$TerminateOnDispose,
-    [byte[]]$Environment,
-    [string]$CurrentDirectory,
-    [string]$Desktop,
-    [string]$Title,
-    [switch]$InheritHandles,
-    [switch]$InheritProcessHandle,
-    [switch]$InheritThreadHandle,
-    [NtApiDotNet.Win32.Win32kFilterFlags]$Win32kFilterFlags = 0,
-    [int]$Win32kFilterLevel = 0,
-    [NtApiDotNet.NtToken]$Token,
-    [NtApiDotNet.Win32.ProtectionLevel]$ProtectionLevel = "WindowsPPL"
+        [Parameter(Mandatory=$true, Position=0)]
+        [string]$CommandLine,
+        [string]$ApplicationName,
+        [NtApiDotNet.SecurityDescriptor]$ProcessSecurityDescriptor,
+        [NtApiDotNet.SecurityDescriptor]$ThreadSecurityDescriptor,
+        [NtApiDotNet.NtProcess]$ParentProcess,
+        [NtApiDotNet.Win32.CreateProcessFlags]$CreationFlags = 0,
+        [NtApiDotNet.Win32.ProcessMitigationOptions]$MitigationOptions = 0,
+        [switch]$TerminateOnDispose,
+        [byte[]]$Environment,
+        [string]$CurrentDirectory,
+        [string]$Desktop,
+        [string]$Title,
+        [switch]$InheritHandles,
+        [switch]$InheritProcessHandle,
+        [switch]$InheritThreadHandle,
+        [NtApiDotNet.Win32.Win32kFilterFlags]$Win32kFilterFlags = 0,
+        [int]$Win32kFilterLevel = 0,
+        [NtApiDotNet.NtToken]$Token,
+        [NtApiDotNet.Win32.ProtectionLevel]$ProtectionLevel = "WindowsPPL",
+        [NtApiDotNet.NtDebug]$DebugObject,
+        [switch]$NoTokenFallback,
+        [NtApiDotNet.Win32.AppContainerProfile]$AppContainerProfile,
+        [NtApiDotNet.Win32.ProcessExtendedFlags]$ExtendedFlags = 0
     )
     $config = New-Object NtApiDotNet.Win32.Win32ProcessConfig
     $config.CommandLine = $CommandLine
@@ -500,6 +512,12 @@ function New-Win32ProcessConfig
     $config.Win32kFilterLevel = $Win32kFilterLevel
     $config.Token = $Token
     $config.ProtectionLevel = $ProtectionLevel
+    $config.DebugObject = $DebugObject
+    $config.NoTokenFallback = $NoTokenFallback
+    if ($AppContainerProfile -ne $null) {
+        $config.AppContainerSid = $AppContainerProfile.Sid
+    }
+    $config.ExtendedFlags = $ExtendedFlags
     return $config
 }
 
@@ -540,8 +558,14 @@ Switch to specify whether the thread handle is inheritable.
 Specify optional mitigation options.
 .PARAMETER ProtectionLevel
 Specify the protection level when creating a protected process.
+.PARAMETER DebugObject
+Specify a debug object to run the process under. You need to also specify DebugProcess or DebugOnlyThisProcess flags as well.
+.PARAMETER NoTokenFallback
+Specify to not fallback to using CreateProcessWithLogon if CreateProcessAsUser fails.
 .PARAMETER Token
 Specify an explicit token to create the new process with.
+.PARAMETER ExtendedFlags
+ Specify extended creation flags.
 .PARAMETER Config
 Specify the configuration for the new process.
 .INPUTS
@@ -553,42 +577,50 @@ function New-Win32Process
 {
   [CmdletBinding(DefaultParameterSetName = "FromArgs")]
     Param(
-    [Parameter(Mandatory=$true, Position=0, ParameterSetName = "FromArgs")]
-    [string]$CommandLine,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [string]$ApplicationName,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.SecurityDescriptor]$ProcessSecurityDescriptor,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.SecurityDescriptor]$ThreadSecurityDescriptor,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.NtProcess]$ParentProcess,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.Win32.CreateProcessFlags]$CreationFlags = 0,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.Win32.ProcessMitigationOptions]$MitigationOptions = 0,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [switch]$TerminateOnDispose,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [byte[]]$Environment,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [string]$CurrentDirectory,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [string]$Desktop,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [string]$Title,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [switch]$InheritHandles,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [switch]$InheritProcessHandle,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [switch]$InheritThreadHandle,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.NtToken]$Token,
-    [Parameter(ParameterSetName = "FromArgs")]
-    [NtApiDotNet.Win32.ProtectionLevel]$ProtectionLevel = "WindowsPPL",
-    [Parameter(Mandatory=$true, Position=0, ParameterSetName = "FromConfig")]
-    [NtApiDotNet.Win32.Win32ProcessConfig]$Config
+        [Parameter(Mandatory=$true, Position=0, ParameterSetName = "FromArgs")]
+        [string]$CommandLine,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [string]$ApplicationName,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.SecurityDescriptor]$ProcessSecurityDescriptor,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.SecurityDescriptor]$ThreadSecurityDescriptor,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.NtProcess]$ParentProcess,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.CreateProcessFlags]$CreationFlags = 0,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.ProcessMitigationOptions]$MitigationOptions = 0,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [switch]$TerminateOnDispose,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [byte[]]$Environment,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [string]$CurrentDirectory,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [string]$Desktop,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [string]$Title,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [switch]$InheritHandles,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [switch]$InheritProcessHandle,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [switch]$InheritThreadHandle,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.NtToken]$Token,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.ProtectionLevel]$ProtectionLevel = "WindowsPPL",
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.NtDebug]$DebugObject,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [switch]$NoTokenFallback,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.AppContainerProfile]$AppContainerProfile,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.ProcessExtendedFlags]$ExtendedFlags = 0,
+        [Parameter(Mandatory=$true, Position=0, ParameterSetName = "FromConfig")]
+        [NtApiDotNet.Win32.Win32ProcessConfig]$Config
     )
 
   if ($null -eq $Config) {
@@ -597,7 +629,8 @@ function New-Win32Process
     -ParentProcess $ParentProcess -CreationFlags $CreationFlags -TerminateOnDispose:$TerminateOnDispose `
     -Environment $Environment -CurrentDirectory $CurrentDirectory -Desktop $Desktop -Title $Title `
     -InheritHandles:$InheritHandles -InheritProcessHandle:$InheritProcessHandle -InheritThreadHandle:$InheritThreadHandle `
-    -MitigationOptions $MitigationOptions -Token $Token -ProtectionLevel $ProtectionLevel
+    -MitigationOptions $MitigationOptions -Token $Token -ProtectionLevel $ProtectionLevel -NoTokenFallback:$NoTokenFallback `
+    -DebugObject $DebugObject -AppContainerProfile $AppContainerProfile -ExtendedFlags $ExtendedFlags
   }
 
   [NtApiDotNet.Win32.Win32Process]::CreateProcess($config)
@@ -626,6 +659,7 @@ Get list of NT file paths from the pipeline.
 function Get-NtFilePath {
   [CmdletBinding()]
   Param(
+    [alias("Path")]
     [parameter(Mandatory=$true, Position=0, ValueFromPipeline, valueFromPipelineByPropertyName)]
     [string]$FullName,
     [switch]$Resolve
@@ -1118,6 +1152,174 @@ function Show-NtSecurityDescriptor {
         Start-Process -FilePath "$PSScriptRoot\ViewSecurityDescriptor.exe" -ArgumentList @("`"$Name`"", "`"$($SecurityDescriptor.ToSddl())`"","`"$($Type.Name)`"") -Wait:$Wait
     }
   }
+}
+
+function Format-NtAce {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position = 0, Mandatory = $true, ValueFromPipeline)]
+        [NtApiDotNet.Ace]$Ace,
+        [Parameter(Position = 1, Mandatory = $true)]
+        [NtApiDotNet.NtType]$Type,
+        [switch]$MapGeneric
+    )
+
+    PROCESS {
+        $mask = $ace.Mask
+        if ($MapGeneric) {
+            $mask = $Type.MapGenericRights($mask)
+        }
+
+        $access_name = "Access"
+        $mask_str = if ($ace.Type -eq "MandatoryLabel") {
+            $mask.ToMandatoryLabelPolicy().ToString()
+            $access_name = "Policy"
+        } else {
+            $Type.AccessMaskToString($mask, $MapGeneric)
+        }
+
+        Write-Output " - Type  : $($ace.Type)"
+        Write-Output " - Name  : $($ace.Sid.Name)"
+        Write-Output " - SID   : $($ace.Sid)"
+        Write-Output " - Mask  : 0x$($mask.ToString("X08"))"
+        Write-Output " - $($access_name): $mask_str"
+        Write-Output " - Flags : $($ace.Flags)"
+        if ($ace.IsConditionalAce) {
+            Write-Output " - Condition: $($ace.Condition)"
+        }
+        Write-Output ""
+    }
+}
+
+function Format-NtAcl {
+    Param(
+        [Parameter(Position = 0, Mandatory = $true)]
+        [NtApiDotNet.Acl]$Acl,
+        [Parameter(Position = 1, Mandatory = $true)]
+        [NtApiDotNet.NtType]$Type,
+        [Parameter(Mandatory = $true)]
+        [switch]$MapGeneric,
+        [switch]$AuditOnly
+    )
+
+    if ($Acl.NullAcl) {
+        Write-Output " - <NULL>"
+    } else {
+        if ($AuditOnly) {
+            $Acl | ? IsAuditAce | Format-NtAce -Type $Type -MapGeneric:$MapGeneric
+        } else {
+            $Acl | Format-NtAce -Type $Type -MapGeneric:$MapGeneric
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Formats an object's security descriptor as text.
+.DESCRIPTION
+This cmdlet formats the security descriptor to text for display in the console or piped to a file.
+.PARAMETER Object
+Specify an object to use for the security descriptor.
+.PARAMETER SecurityDescriptor
+Specify a security descriptor.
+.PARAMETER Type
+Specify the NT object type for the security descriptor.
+.PARAMETER Path
+Specify the path to an NT object for the security descriptor.
+.PARAMETER SecurityInformation
+Specify what parts of the security descriptor to format.
+.PARAMETER MapGeneric
+Specify to map access masks back to generic access rights for the object type.
+.OUTPUTS
+None
+.EXAMPLE
+Format-NtSecurityDescriptor -Object $obj
+Format the security descriptor of an object.
+.EXAMPLE
+Format-NtSecurityDescriptor -SecurityDescriptor $obj.SecurityDescriptor -Type $obj.NtType
+Format the security descriptor for an object via it's properties.
+.EXAMPLE
+Format-NtSecurityDescriptor -Path \BaseNamedObjects
+Format the security descriptor for an object from a path.
+#>
+function Format-NtSecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName = "FromObject")]
+    Param(
+        [Parameter(Position = 0, ParameterSetName = "FromObject", Mandatory = $true, ValueFromPipeline)]
+        [NtApiDotNet.NtObject]$Object,
+        [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true, ValueFromPipeline)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position = 1, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true)]
+        [NtApiDotNet.NtType]$Type,
+        [Parameter(Position = 0, ParameterSetName = "FromPath", Mandatory = $true, ValueFromPipeline)]
+        [string]$Path,
+        [NtApiDotNet.SecurityInformation]$SecurityInformation = "AllBasic",
+        [switch]$MapGeneric
+    )
+
+    PROCESS {
+        try {
+            $sd, $t,$n = switch($PsCmdlet.ParameterSetName) {
+                "FromObject" {
+                    if (!$Object.IsAccessMaskGranted([NtApiDotNet.GenericAccessRights]::ReadControl)) {
+                        Write-Error "Object doesn't have Read Control access."
+                        return
+                    }
+                    ($Object.GetSecurityDescriptor($SecurityInformation), $Object.NtType, $Object.FullPath)
+                }
+                "FromPath" {
+                    $access = "ReadControl"
+                    if (($SecurityInformation -band "Sacl") -ne 0) {
+                        $access += ", AccessSystemSecurity"
+                    }
+                    Use-NtObject($obj = Get-NtObject -Path $Path -Access $access) {
+                        ($obj.GetSecurityDescriptor($SecurityInformation), $obj.NtType, $obj.FullPath)
+                    }
+                }
+                "FromSecurityDescriptor" {
+                    ($SecurityDescriptor, $Type, "UNKNOWN")
+                }
+            }
+
+            Write-Output "Path: $n"
+            Write-Output "Type: $($t.Name)"
+
+            if ($sd.Owner -ne $null -and (($SecurityInformation -band "Owner") -ne 0)) {
+                Write-Output "<Owner>"
+                Write-Output " - Name     : $($sd.Owner.Sid.Name)"
+                Write-Output " - Sid      : $($sd.Owner.Sid)"
+                Write-Output " - Defaulted: $($sd.Owner.Defaulted)"
+                Write-Output ""
+            }
+            if ($sd.Group -ne $null -and (($SecurityInformation -band "Group") -ne 0)) {
+                Write-Output "<Group>"
+                Write-Output " - Name     : $($sd.Group.Sid.Name)"
+                Write-Output " - Sid      : $($sd.Group.Sid)"
+                Write-Output " - Defaulted: $($sd.Group.Defaulted)"
+                Write-Output ""
+            }
+            if ($sd.Dacl -ne $null -and (($SecurityInformation -band "Dacl") -ne 0)) {
+                Write-Output "<DACL>"
+                Format-NtAcl $sd.Dacl $t -MapGeneric:$MapGeneric
+            }
+            if ($sd.Sacl -ne $null  -and (($SecurityInformation -band "Sacl") -ne 0)) {
+                Write-Output "<SACL>"
+                Format-NtAcl $sd.Sacl $t -MapGeneric:$MapGeneric -AuditOnly
+            }
+            $label = $sd.GetMandatoryLabel()
+            if ($label -ne $null -and (($SecurityInformation -band "Label") -ne 0)) {
+                Write-Output "<Mandatory Label>" 
+                Format-NtAce -Ace $label -Type $t
+            }
+            $trust = $sd.ProcessTrustLabel
+            if ($trust -ne $null -and (($SecurityInformation -band "ProcessTrustLabel") -ne 0)) {
+                Write-Output "<Process Trust Label>"
+                Format-NtAce -Ace $trust -Type $t
+            }
+        } catch {
+            Write-Error $_
+        }
+    }
 }
 
 <#
@@ -2307,7 +2509,7 @@ string - The formatted complex type.
 Format-NdrComplexType $type
 Format a complex type.
 .EXAMPLE
-$ndr.ComplexTypes = | Format-NdrComplexType
+$ndr.ComplexTypes | Format-NdrComplexType
 Format a list of complex types from a pipeline.
 .EXAMPLE
 Format-NdrComplexType $type -IidToName @{"00000000-0000-0000-C000-000000000046"="IUnknown";}
@@ -2317,7 +2519,7 @@ function Format-NdrComplexType {
   [CmdletBinding()]
     Param(
     [parameter(Mandatory, Position=0, ValueFromPipeline)]
-    [NtApiDotNet.Ndr.NdrComplexTypeReference]$ComplexType,
+    [NtApiDotNet.Ndr.NdrComplexTypeReference[]]$ComplexType,
     [Hashtable]$IidToName
     )
 
@@ -2327,8 +2529,9 @@ function Format-NdrComplexType {
   }
 
   PROCESS {
-    $fmt = $formatter.FormatComplexType($ComplexType)
-    Write-Output $fmt
+    foreach($t in $ComplexType) {
+        $formatter.FormatComplexType($t) | Write-Output
+    }
   }
 }
 
@@ -2868,6 +3071,10 @@ Return the results as text rather than objects.
 When outputing as text remove comments from the output.
 .PARAMETER ParseClients
 Also parse client interface information, otherwise only servers are returned.
+.PARAMETER IgnoreSymbols
+Don't resolve any symbol information.
+.PARAMETER SerializedPath
+Path to a serialized representation of the RPC servers.
 .INPUTS
 string[] List of paths to DLLs.
 .OUTPUTS
@@ -2887,17 +3094,30 @@ Get the list of RPC servers from rpcss.dll, specifying a different DBGHELP for s
 .EXAMPLE
 Get-RpcServer c:\windows\system32\rpcss.dll -SymbolPath c:\symbols
 Get the list of RPC servers from rpcss.dll, specifying a different symbol path.
+.EXAMPLE
+Get-RpcServer -SerializedPath rpc.bin
+Get the list of RPC servers from the serialized file rpc.bin.
 #>
 function Get-RpcServer {
-  [CmdletBinding()]
+  [CmdletBinding(DefaultParameterSetName="FromDll")]
   Param(
-    [parameter(Mandatory=$true, Position=0, ValueFromPipeline, ValueFromPipelineByPropertyName)]
+    [parameter(Mandatory=$true, Position=0, ValueFromPipeline, ValueFromPipelineByPropertyName, ParameterSetName="FromDll")]
+    [alias("Path")]
     [string]$FullName,
+    [parameter(ParameterSetName="FromDll")]
     [string]$DbgHelpPath,
+    [parameter(ParameterSetName="FromDll")]
     [string]$SymbolPath,
+    [parameter(ParameterSetName="FromDll")]
     [switch]$AsText,
+    [parameter(ParameterSetName="FromDll")]
     [switch]$RemoveComments,
-    [switch]$ParseClients
+    [parameter(ParameterSetName="FromDll")]
+    [switch]$ParseClients,
+    [parameter(ParameterSetName="FromDll")]
+    [switch]$IgnoreSymbols,
+    [parameter(Mandatory=$true, ParameterSetName="FromSerialized")]
+    [string]$SerializedPath
   )
 
   BEGIN {
@@ -2913,16 +3133,76 @@ function Get-RpcServer {
   }
 
   PROCESS {
-    Write-Progress -Activity "Parsing RPC Servers" -CurrentOperation "$FullName"
-    $servers = [NtApiDotNet.Win32.RpcServer]::ParsePeFile($FullName, $DbgHelpPath, $SymbolPath, $ParseClients)
-    if ($AsText) {
-        foreach($server in $servers) {
-            $text = $server.FormatAsText($RemoveComments)
-            Write-Output $text
+    try {
+        if ($PSCmdlet.ParameterSetName -eq "FromDll") {
+            $FullName = Resolve-Path -LiteralPath $FullName -ErrorAction Stop
+            Write-Progress -Activity "Parsing RPC Servers" -CurrentOperation "$FullName"
+            $servers = [NtApiDotNet.Win32.RpcServer]::ParsePeFile($FullName, $DbgHelpPath, $SymbolPath, $ParseClients, $IgnoreSymbols)
+            if ($AsText) {
+                foreach($server in $servers) {
+                    $text = $server.FormatAsText($RemoveComments)
+                    Write-Output $text
+                }
+            } else {
+                Write-Output $servers
+            }
+        } else {
+            $FullName = Resolve-Path -LiteralPath $SerializedPath -ErrorAction Stop
+            Use-NtObject($stm = [System.IO.File]::OpenRead($FullName)) {
+                while($stm.Position -lt $stm.Length) {
+                    [NtApiDotNet.Win32.RpcServer]::Deserialize($stm) | Write-Output
+                }
+            }
         }
-    } else {
-        Write-Output $servers
+    } catch {
+        Write-Error $_
     }
+  }
+}
+
+<#
+.SYNOPSIS
+Set a list RPC servers to a file for storage.
+.DESCRIPTION
+This cmdlet serializes a list of RPC servers to a file. This can be restored using Get-RpcServer -SerializedPath.
+.PARAMETER Path
+The path to the output file.
+.PARAMETER Server
+The list of servers to serialize.
+.INPUTS
+RpcServer[] List of paths to DLLs.
+.OUTPUTS
+None
+.EXAMPLE
+Set-RpcServer -Server $server -Path rpc.bin
+Serialize servers to file rpc.bin.
+#>
+function Set-RpcServer {
+  Param(
+    [parameter(Mandatory=$true, Position=0, ValueFromPipeline)]
+    [NtApiDotNet.Win32.RpcServer[]]$Server,
+    [parameter(Mandatory=$true, Position=1)]
+    [string]$Path
+  )
+
+  BEGIN {
+    "" | Set-Content -Path $Path
+    $Path = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+    $stm = [System.IO.File]::Create($Path)
+  }
+
+  PROCESS {
+    try {
+        foreach($s in $Server) {
+            $s.Serialize($stm)
+        }
+    } catch {
+        Write-Error $_
+    }
+  }
+
+  END {
+    $stm.Close()
   }
 }
 
@@ -3094,6 +3374,10 @@ If specified will duplicate the token as an impersonation token.
 If specified will duplicate the token as a primary token.
 .PARAMETER Access
 Specify the access to the new token object.
+.PARAMETER Inherit
+Specify the token handle is inheritable.
+.PARAMETER SecurityDescriptor
+Specify the new token's security descriptor.
 .INPUTS
 None
 .OUTPUTS
@@ -3116,7 +3400,9 @@ function Copy-NtToken {
         [NtApiDotNet.SecurityImpersonationLevel]$ImpersonationLevel,
         [parameter(Mandatory, ParameterSetName="Primary")]
         [switch]$Primary,
-        [NtApiDotNet.TokenAccessRights]$Access = "MaximumAllowed"
+        [NtApiDotNet.TokenAccessRights]$Access = "MaximumAllowed",
+        [switch]$Inherit,
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
     )
 
     switch($PSCmdlet.ParameterSetName) {
@@ -3135,8 +3421,13 @@ function Copy-NtToken {
         $Token = $Token.Duplicate()
     }
 
+    $attributes = "None"
+    if ($Inherit) {
+        $attributes = "Inherit"
+    }
+
     Use-NtObject($Token) {
-        $Token.DuplicateToken($tokentype, $ImpersonationLevel, $Access)
+        $Token.DuplicateToken($tokentype, $ImpersonationLevel, $Access, $attributes, $SecurityDescriptor)
     }
 }
 
@@ -3462,4 +3753,576 @@ function Set-NtObjectInformation {
             $Object.SetBuffer($InformationClass, $Buffer)
         }
     }
+}
+
+<#
+.SYNOPSIS
+Get a specified mitigation policy value for a process.
+.DESCRIPTION
+This cmdlet queries for a specific mitigation policy value from a process. The result is an enumeration or a raw value depending on the request.
+.PARAMETER Process
+Specify the process to query. Defaults to the current process.
+.PARAMETER Policy
+Specify the mitigation policy.
+.PARAMETER AsRaw
+Specify the query the policy as a raw integer.
+.INPUTS
+None
+.OUTPUTS
+An enumerated value or an integer.
+.EXAMPLE
+Get-NtProcessMitigationPolicy Signature
+Query the signature mitigation policy for the current process.
+.EXAMPLE
+Get-NtProcessMitigationPolicy Signature -Process $p
+Query the signature mitigation policy for a specified process.
+.EXAMPLE
+Get-NtProcessMitigationPolicy Signature -Process-AsRaw
+Query the signature mitigation policy for the current process as a raw integer.
+#>
+function Get-NtProcessMitigationPolicy {
+  [CmdletBinding()]
+  Param(
+    [parameter(Mandatory, Position = 0)]
+    [NtApiDotNet.ProcessMitigationPolicy]$Policy,
+    [parameter(ValueFromPipeline)]
+    [NtApiDotNet.NtProcess]$Process,
+    [switch]$AsRaw
+    )
+
+    PROCESS {
+        if ($null -eq $Process) {
+            $Process = Get-NtProcess -Current
+        }
+        if ($AsRaw) {
+            $Process.GetRawMitigationPolicy($Policy) | Write-Output
+        } else {
+            $Process.GetMitigationPolicy($Policy) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Set a specified mitigation policy value for a process.
+.DESCRIPTION
+This cmdlet sets a specific mitigation policy value for a process. The policy value can either be an explicit enumeration or a raw value.
+.PARAMETER Process
+Specify the process to set. Defaults to the current process and the majority of policies can't be set externally.
+.PARAMETER Policy
+Specify the mitigation policy when setting a raw value.
+.PARAMETER RawValue
+Specify the raw value to set.
+.PARAMETER ImageLoad,
+Specify policy flags for image load mitigation.
+.PARAMETER Signature,
+Specify policy flags for signature mitigation policy.
+.PARAMETER SystemCallDisable,
+Specify policy flags for system call disable mitigation policy.
+.PARAMETER DynamicCode,
+Specify policy flags for dynamic code mitigation policy.
+.PARAMETER ExtensionPointDisable,
+Specify policy flags for extension point disable mitigation policy.
+.PARAMETER FontDisable,
+Specify policy flags for font disable mitigation policy.
+.PARAMETER ControlFlowGuard,
+Specify policy flags for control flow guard mitigation policy.
+.PARAMETER StrictHandleCheck,
+Specify policy flags for strict handle check mitigation policy.
+.PARAMETER ChildProcess,
+Specify policy flags for child process mitigation policy.
+.PARAMETER PayloadRestriction,
+Specify policy flags for payload restrictions mitigation policy.
+.PARAMETER SystemCallFilter,
+Specify policy flags for system call filter mitigation policy.
+.PARAMETER SideChannelIsolation,
+Specify policy flags for side channel isolation mitigation policy.
+.PARAMETER Aslr
+Specify policy flags for ASLR mitigation policy.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtProcessMitigationPolicy -Policy Signature -RawValue 1
+Set the signature mitigation policy for the current process with a raw value of 1.
+.EXAMPLE
+Set-NtProcessMitigationPolicy -Signature MicrosoftSignedOnly
+Set mitigation signed only signature policy for the current process.
+.EXAMPLE
+Set-NtProcessMitigationPolicy -Signature MicrosoftSignedOnly -Process $p
+Set mitigation signed only signature policy for a specified process.
+#>
+function Set-NtProcessMitigationPolicy {
+  [CmdletBinding()]
+  Param(
+    [parameter(ValueFromPipeline)]
+    [NtApiDotNet.NtProcess]$Process,
+    [parameter(Mandatory, ParameterSetName="FromRaw")]
+    [int]$RawValue,
+    [parameter(Mandatory, ParameterSetName="FromRaw")]
+    [NtApiDotNet.ProcessMitigationPolicy]$Policy,
+    [parameter(Mandatory, ParameterSetName="FromImageLoad")]
+    [NtApiDotNet.ProcessMitigationImageLoadPolicy]$ImageLoad,
+    [parameter(Mandatory, ParameterSetName="FromSignature")]
+    [NtApiDotNet.ProcessMitigationBinarySignaturePolicy]$Signature,
+    [parameter(Mandatory, ParameterSetName="FromSystemCallDisable")]
+    [NtApiDotNet.ProcessMitigationSystemCallDisablePolicy]$SystemCallDisable,
+    [parameter(Mandatory, ParameterSetName="FromDynamicCode")]
+    [NtApiDotNet.ProcessMitigationDynamicCodePolicy]$DynamicCode,
+    [parameter(Mandatory, ParameterSetName="FromExtensionPointDisable")]
+    [NtApiDotNet.ProcessMitigationExtensionPointDisablePolicy]$ExtensionPointDisable,
+    [parameter(Mandatory, ParameterSetName="FromFontDisable")]
+    [NtApiDotNet.ProcessMitigationFontDisablePolicy]$FontDisable,
+    [parameter(Mandatory, ParameterSetName="FromControlFlowGuard")]
+    [NtApiDotNet.ProcessMitigationControlFlowGuardPolicy]$ControlFlowGuard,
+    [parameter(Mandatory, ParameterSetName="FromStrictHandleCheck")]
+    [NtApiDotNet.ProcessMitigationStrictHandleCheckPolicy]$StrictHandleCheck,
+    [parameter(Mandatory, ParameterSetName="FromChildProcess")]
+    [NtApiDotNet.ProcessMitigationChildProcessPolicy]$ChildProcess,
+    [parameter(Mandatory, ParameterSetName="FromPayloadRestriction")]
+    [NtApiDotNet.ProcessMitigationPayloadRestrictionPolicy]$PayloadRestriction,
+    [parameter(Mandatory, ParameterSetName="FromSystemCallFilter")]
+    [NtApiDotNet.ProcessMitigationSystemCallFilterPolicy]$SystemCallFilter,
+    [parameter(Mandatory, ParameterSetName="FromSideChannelIsolation")]
+    [NtApiDotNet.ProcessMitigationSideChannelIsolationPolicy]$SideChannelIsolation,
+    [parameter(Mandatory, ParameterSetName="FromAslr")]
+    [NtApiDotNet.ProcessMitigationAslrPolicy]$Aslr
+    )
+
+    BEGIN {
+        $Value = 0
+        $FromRaw = $false
+        switch($PsCmdlet.ParameterSetName) {
+            "FromRaw" { $Value = $RawValue; $FromRaw = $true }
+            "FromImageLoad" { $Policy = "ImageLoad"; $Value = $ImageLoad }
+            "FromSignature" { $Policy = "Signature"; $Value = $Signature }
+            "FromSystemCallDisable" { $Policy = "SystemCallDisable"; $Value = $SystemCallDisable }
+            "FromDynamicCode" { $Policy = "DynamicCode"; $Value = $DynamicCode }
+            "FromExtensionPointDisable" { $Policy = "ExtensionPointDisable"; $Value = $ExtensionPointDisable }
+            "FromFontDisable" { $Policy = "FontDisable"; $Value = $FontDisable }
+            "FromControlFlowGuard" { $Policy = "ControlFlowGuard"; $Value = $ControlFlowGuard }
+            "FromStrictHandleCheck" { $Policy = "StrictHandleCheck"; $Value = $StrictHandleCheck }
+            "FromChildProcess" { $Policy = "ChildProcess"; $Value = $ChildProcess }
+            "FromPayloadRestriction" { $Policy = "PayloadRestriction"; $Value = $PayloadRestriction }
+            "FromSystemCallFilter" { $Policy = "SystemCallFilter"; $Value = $SystemCallFilter }
+            "FromSideChannelIsolation" { $Policy = "SideChannelIsolation"; $Value = $SideChannelIsolation }
+            "FromAslr" { $Policy = "ASLR"; $Value = $Aslr }
+        }
+    }
+
+    PROCESS {
+        if ($null -eq $Process) {
+            $Process = Get-NtProcess -Current
+        }
+
+        if ($FromRaw) {
+            $Process.SetRawMitigationPolicy($Policy, $Value)
+        } else {
+            $Process.SetMitigationPolicy($Policy, $Value)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get an appcontainer profile for a specified package name.
+.DESCRIPTION
+This cmdlet gets an appcontainer profile for a specified package name.
+.PARAMETER Name
+Specify appcontainer name to use for the profile.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.AppContainerProfile
+.EXAMPLE
+Get-AppContainerProfile
+Get appcontainer profiles for all installed packages.
+.EXAMPLE
+Get-AppContainerProfile -Name Package_aslkjdskjds
+Get an appcontainer profile from a package name.
+#>
+function Get-AppContainerProfile {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [parameter(ParameterSetName="All")]
+        [switch]$AllUsers,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName", ValueFromPipelineByPropertyName, ValueFromPipeline)]
+        [string]$Name
+    )
+
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "All" {
+                Get-AppxPackage | Select @{Name="Name"; Expression = {"$($_.Name)_$($_.PublisherId)"}} | Get-AppContainerProfile
+            }
+            "FromName" {
+                [NtApiDotNet.Win32.AppContainerProfile]::Open($Name) | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Create a new appcontainer profile for a specified package name.
+.DESCRIPTION
+This cmdlet create a new appcontainer profile for a specified package name. If the profile already exists it'll open it.
+.PARAMETER Name
+Specify appcontainer name to use for the profile.
+.PARAMETER DisplayName
+Specify the profile display name.
+.PARAMETER Description
+Specify the profile description.
+.PARAMETER DeleteOnClose
+Specify the profile should be deleted when closed.
+.PARAMETER TemporaryProfile
+Specify to create a temporary profile. Close the profile after use to delete it.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.AppContainerProfile
+.EXAMPLE
+New-AppContainerProfile -Name Package_aslkjdskjds
+Create a new AppContainer profile with a specified name.
+.EXAMPLE
+Get-AppContainerProfile -TemporaryProfile
+Create a new temporary profile.
+#>
+function New-AppContainerProfile {
+    [CmdletBinding(DefaultParameterSetName="FromName")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name,
+        [parameter(Position = 1, ParameterSetName="FromName")]
+        [string]$DisplayName = "DisplayName",
+        [parameter(Position = 2, ParameterSetName="FromName")]
+        [string]$Description = "Description",
+        [parameter(ParameterSetName="FromName")]
+        [NtApiDotNet.Sid[]]$Capabilities,
+        [parameter(ParameterSetName="FromName")]
+        [switch]$DeleteOnClose,
+        [parameter(Mandatory, ParameterSetName="FromTemp")]
+        [switch]$TemporaryProfile
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            $prof = [NtApiDotNet.Win32.AppContainerProfile]::Create($Name, $DisplayName, $Description, $Capabilities)
+            if ($null -ne $prof) {
+                $prof.DeleteOnClose = $DeleteOnClose
+                Write-Output $prof
+            }
+        }
+        "FromTemp" {
+            [NtApiDotNet.Win32.AppContainerProfile]::CreateTemporary() | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get a RPC client object based on a parsed RPC server.
+.DESCRIPTION
+This cmdlet creates a new RPC client from a parsed RPC server. The client object contains methods
+to call RPC methods. The client starts off disconnected. You need to pass the client to Connect-RpcClient to
+connect to the server. If you specify an interface ID and version then a generic client will be created which 
+allows simple calls to be made without requiring the NDR data.
+.PARAMETER Server
+Specify the RPC server to base the client on.
+.PARAMETER NamespaceName
+Specify the name of the compiled namespace for the client.
+.PARAMETER ClientName
+Specify the class name of the compiled client.
+.PARAMETER IgnoreCache
+Specify to ignore the compiled client cache and regenerate the source code.
+.PARAMETER InterfaceId
+Specify the interface ID for a generic client.
+.PARAMETER InterfaceVersion
+Specify the interface version for a generic client.
+.PARAMETER Provider
+Specify a Code DOM provider. Defaults to C#.
+.PARAMETER Flags
+Specify optional flags for the built client class.
+.PARAMETER EnableDebugging
+Specify to enable debugging on the compiled code.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Rpc.RpcClientBase
+.EXAMPLE
+Get-RpcClient -Server $Server
+Create a new RPC client from a parsed RPC server.
+#>
+function Get-RpcClient {
+    [CmdletBinding(DefaultParameterSetName="FromServer")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromServer")]
+        [NtApiDotNet.Win32.RpcServer]$Server,
+        [parameter(ParameterSetName = "FromServer")]
+        [string]$NamespaceName,
+        [parameter(ParameterSetName = "FromServer")]
+        [string]$ClientName,
+        [parameter(ParameterSetName = "FromServer")]
+        [switch]$IgnoreCache,
+        [parameter(Mandatory, Position=0, ParameterSetName = "FromIdAndVersion")]
+        [string]$InterfaceId,
+        [parameter(Mandatory, Position=1, ParameterSetName = "FromIdAndVersion")]
+        [Version]$InterfaceVersion,
+        [parameter(ParameterSetName = "FromServer")]
+        [System.CodeDom.Compiler.CodeDomProvider]$Provider,
+        [parameter(ParameterSetName = "FromServer")]
+        [NtApiDotNet.Win32.Rpc.RpcClientBuilderFlags]$Flags = "GenerateConstructorProperties, StructureReturn, HideWrappedMethods, UnsignedChar, NoNamespace",
+        [switch]$EnableDebugging
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromServer") {
+        $args = [NtApiDotNet.Win32.Rpc.RpcClientBuilderArguments]::new();
+        $args.NamespaceName = $NamespaceName
+        $args.ClientName = $ClientName
+        $args.Flags = $Flags
+        $args.EnableDebugging = $EnableDebugging
+
+        [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::CreateClient($Server, $args, $IgnoreCache, $Provider)
+    } else {
+        [NtApiDotNet.Win32.RpcClient]::new($InterfaceId, $InterfaceVersion)
+    }
+}
+
+<#
+.SYNOPSIS
+Connects a RPC client to an endpoint.
+.DESCRIPTION
+This cmdlet connects a RPC client to an endpoint. You can specify what transport to use based on the protocol sequence.
+.PARAMETER Client
+Specify the RPC client to connect.
+.PARAMETER ProtocolSequence
+Specify the RPC protocol sequence this client will connect through.
+.PARAMETER EndpointPath
+Specify the endpoint string. If not specified this will lookup the endpoint from the endpoint mapper.
+.PARAMETER SecurityQualityOfService
+Specify the security quality of service for the connection.
+.PARAMETER PassThru
+Specify to the pass the client object to the output.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Connect-RpcClient -Client $Client
+Connect an RPC ALPC client, looking up the path using the endpoint mapper.
+.EXAMPLE
+Connect-RpcClient -Client $Client -EndpointPath "\RPC Control\ABC"
+Connect an RPC ALPC client with an explicit path.
+.EXAMPLE
+Connect-RpcClient -Client $Client -SecurityQualityOfService $(New-NtSecurityQualityOfService -ImpersonationLevel Anonymous)
+Connect an RPC ALPC client with anonymous impersonation level.
+.EXAMPLE
+Connect-RpcClient -Client $Client -ProtocolSequence "ncalrpc"
+Connect an RPC ALPC client from a specific protocol sequence.
+.EXAMPLE
+Connect-RpcClient -Client $Client -Endpoint $ep
+Connect an RPC client to a specific endpoint.
+#>
+function Connect-RpcClient {
+    [CmdletBinding(DefaultParameterSetName="FromProtocol")]
+    Param(
+        [parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [NtApiDotNet.Win32.Rpc.RpcClientBase]$Client,
+        [parameter(Position = 1, ParameterSetName="FromProtocol")]
+        [string]$EndpointPath,
+        [parameter(ParameterSetName="FromProtocol")]
+        [string]$ProtocolSequence = "ncalrpc",
+        [parameter(Position = 1, Mandatory, ParameterSetName="FromEndpoint")]
+        [NtApiDotNet.Win32.RpcEndpoint]$Endpoint,
+        [NtApiDotNet.SecurityQualityOfService]$SecurityQualityOfService,
+        [switch]$PassThru
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromProtocol") {
+        $Client.Connect($ProtocolSequence, $EndpointPath, $SecurityQualityOfService)
+    } else {
+        $Client.Connect($Endpoint, $SecurityQualityOfService)
+    }
+    if ($PassThru) {
+        $Client | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Format a RPC client as source code based on a parsed RPC server.
+.DESCRIPTION
+This cmdlet gets source code for a RPC client from a parsed RPC server.
+.PARAMETER Server
+Specify the RPC server to base the client on.
+.PARAMETER NamespaceName
+Specify the name of the compiled namespace for the client.
+.PARAMETER ClientName
+Specify the class name of the compiled client.
+.PARAMETER Flags
+Specify to flags for the source creation.
+.PARAMETER Provider
+Specify a Code DOM provider. Defaults to C#.
+.PARAMETER Options
+Specify optional options for the code generation if Provider is also specified.
+.INPUTS
+None
+.OUTPUTS
+string
+.EXAMPLE
+Format-RpcClient -Server $Server
+Get the source code for a RPC client from a parsed RPC server.
+.EXAMPLE
+$servers | Format-RpcAlpcClient
+Get the source code for a RPC client from a list of parsed RPC server.
+#>
+function Format-RpcClient {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [NtApiDotNet.Win32.RpcServer[]]$Server,
+        [string]$NamespaceName,
+        [string]$ClientName,
+        [NtApiDotNet.Win32.Rpc.RpcClientBuilderFlags]$Flags = 0,
+        [System.CodeDom.Compiler.CodeDomProvider]$Provider,
+        [System.CodeDom.Compiler.CodeGeneratorOptions]$Options
+    )
+
+    PROCESS {
+        $args = [NtApiDotNet.Win32.Rpc.RpcClientBuilderArguments]::new();
+        $args.NamespaceName = $NamespaceName
+        $args.ClientName = $ClientName
+        $args.Flags = $Flags
+
+        foreach($s in $Server) {
+            if ($Provider -eq $null) {
+                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args) | Write-Output
+            } else {
+                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args, $Provider, $Options) | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Format RPC complex types to an encoder/decoder source code file.
+.DESCRIPTION
+This cmdlet gets source code for encoding and decoding RPC complex types.
+.PARAMETER ComplexType
+Specify the list of complex types to format.
+.PARAMETER Server
+Specify the server containing the list of complex types to format.
+.PARAMETER NamespaceName
+Specify the name of the compiled namespace for the client.
+.PARAMETER EncoderName
+Specify the class name of the encoder.
+.PARAMETER DecoderName
+Specify the class name of the decoder.
+.PARAMETER Provider
+Specify a Code DOM provider. Defaults to C#.
+.PARAMETER Options
+Specify optional options for the code generation if Provider is also specified.
+.INPUTS
+None
+.OUTPUTS
+string
+.EXAMPLE
+Format-RpcComplexType -Server $Server
+Get the source code for RPC complex types client from a parsed RPC server.
+.EXAMPLE
+Format-RpcComplexType -ComplexType $ComplexTypes
+Get the source code for RPC complex types client from a list of types.
+#>
+function Format-RpcComplexType {
+    [CmdletBinding(DefaultParameterSetName="FromTypes")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromTypes")]
+        [NtApiDotNet.Ndr.NdrComplexTypeReference[]]$ComplexType,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromServer")]
+        [NtApiDotNet.Win32.RpcServer]$Server,
+        [string]$NamespaceName,
+        [string]$EncoderName,
+        [string]$DecoderName,
+        [NtApiDotNet.Win32.Rpc.RpcClientBuilderFlags]$Flags = 0,
+        [System.CodeDom.Compiler.CodeDomProvider]$Provider,
+        [System.CodeDom.Compiler.CodeGeneratorOptions]$Options
+    )
+
+    PROCESS {
+        $types = switch($PsCmdlet.ParameterSetName) {
+            "FromTypes" { $ComplexType }
+            "FromServer" { $Server.ComplexTypes }
+        }
+        if ($Provider -eq $null) {
+            [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource([NtApiDotNet.Ndr.NdrComplexTypeReference[]]$types, $EncoderName, $DecoderName, $NamespaceName) | Write-Output
+        } else {
+            [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource([NtApiDotNet.Ndr.NdrComplexTypeReference[]]$types, $EncoderName, $DecoderName, $NamespaceName, $Provider, $Options) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get a new RPC context handle.
+.DESCRIPTION
+This cmdlet creates a new RPC context handle for calling RPC APIs.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Ndr.NdrContextHandle
+.EXAMPLE
+New-RpcContextHandle 
+Creates a new RPC context handle.
+#>
+function New-RpcContextHandle {
+    New-Object "NtApiDotNet.Ndr.NdrContextHandle"
+}
+
+<#
+.SYNOPSIS
+Open a file using the Win32 CreateFile API.
+.DESCRIPTION
+This cmdlet opens a file using the Win32 CreateFile API rather than the native APIs.
+.PARAMETER Path
+Specify the path to open. Note that the function doesn't resolve relative paths from the PS working directory.
+.PARAMETER DesiredAccess
+Specify the desired access for the handle.
+.PARAMETER ShareMode
+Specify the share mode for the file.
+.PARAMETER SecurityDescriptor
+Specify an optional security descriptor.
+.PARAMETER InheritHandle
+Specify that the file handle should be inheritable.
+.PARAMETER Disposition
+Specify the file open disposition.
+.PARAMETER FlagsAndAttributes
+Specify flags and attributes for the open.
+.PARAMETER TemplateFile
+Specify a template file to copy certain properties from.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtFile
+.EXAMPLE
+Get-Win32File -Path c:\abc\xyz.txt
+Open the existing file c:\abc\xyz.txt
+#>
+function Get-Win32File {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$Path,
+        [NtApiDotNet.FileAccessRights]$DesiredAccess = "MaximumAllowed",
+        [NtApiDotNet.FileShareMode]$ShareMode = 0,
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [switch]$InheritHandle,
+        [NtApiDotNet.Win32.CreateFileDisposition]$Disposition = "OpenExisting",
+        [NtApiDotNet.Win32.CreateFileFlagsAndAttributes]$FlagsAndAttributes = 0,
+        [NtApiDotNet.NtFile]$TemplateFile
+    )
+
+    [NtApiDotNet.Win32.Win32Utils]::CreateFile($Path, $DesiredAccess, $ShareMode, `
+            $SecurityDescriptor, $InheritHandle, $Disposition, $FlagsAndAttributes, $TemplateFile)
 }

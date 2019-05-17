@@ -18,10 +18,7 @@
 RootModule = 'NtObjectManager.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.1.19'
-
-# Supported PSEditions
-# CompatiblePSEditions = @()
+ModuleVersion = '1.1.22'
 
 # ID used to uniquely identify this module
 GUID = 'ac251c97-67a6-4bc4-bb8a-5ae300e93030'
@@ -64,7 +61,10 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Format-NdrRpcServerInterface', 'Get-NtMappedSection', 'Get-NtWnf', 'Get-NtCachedSigningLevel', 'Add-NtSecurityDescriptorDaclAce',
           'Get-NtFilePathType', 'New-NtType', 'Get-NtAlpcServer', 'Get-RpcEndpoint', 'Get-RpcServer', 'Set-GlobalSymbolResolver',
           'Get-RunningService', 'Copy-NtToken', 'Get-RpcAlpcServer', 'Get-NtObjectFromHandle', 'Start-Win32ChildProcess', 'Get-NtKeyValue',
-          'Start-NtFileOplock', 'Format-RpcServer', 'Get-NtObjectInformation', 'Set-NtObjectInformation'
+          'Start-NtFileOplock', 'Format-RpcServer', 'Get-NtObjectInformation', 'Set-NtObjectInformation', 'Get-NtProcessMitigationPolicy',
+          'Set-NtProcessMitigationPolicy', 'Format-NtSecurityDescriptor', 'Get-AppContainerProfile', 'New-AppContainerProfile',
+          'Get-RpcClient', 'Format-RpcClient', 'Set-RpcServer', 'Connect-RpcClient', 'New-RpcContextHandle', 'Format-RpcComplexType',
+          'Get-Win32File'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -84,7 +84,16 @@ CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile',
                'Remove-NtFile', 'Get-NtDirectoryChild', 'Get-NtKeyChild', 'Add-DosDevice', 
                'Remove-DosDevice', 'Get-NtFileChild', 'Set-NtFileReparsePoint',
                'Get-NtPartition', 'New-NtPartition', 'Get-NtWaitTimeout', 'New-NtTransaction', 
-               'Get-NtTransaction', 'New-NtTransactionManager', 'Get-NtTransactionManager'
+               'Get-NtTransaction', 'New-NtTransactionManager', 'Get-NtTransactionManager',
+               'Connect-NtAlpcClient', 'New-NtAlpcServer', 'New-NtAlpcPortAttributes',
+               'New-NtAlpcMessage', 'Send-NtAlpcMessage', 'Receive-NtAlpcMessage',
+               'Connect-NtAlpcServer', 'New-NtAlpcReceiveAttributes', 'New-NtAlpcSendAttributes',
+               'New-NtAlpcPortSection', 'New-NtAlpcDataView', 'New-NtAlpcSecurityContext',
+               'New-NtDebug', 'Get-NtDebug', 'Start-NtDebugWait', 'Add-NtDebugProcess',
+               'Remove-NtDebugProcess', 'Copy-NtObject', 'New-NtResourceManager',
+               'Get-NtResourceManager', 'Get-NtTransactionGuid', 'Get-NtEnlistment',
+               'New-NtEnlistment', 'Get-RpcServerName', 'Set-RpcServerName',
+               'Set-NtFileHardlink', 'Test-NetworkAccess'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = @()
@@ -101,31 +110,15 @@ PrivateData = @{
         LicenseUri = 'http://www.apache.org/licenses/LICENSE-2.0.html'
 
         # A URL to the main website for this project.
-        ProjectUri = 'https://github.com/google/sandbox-attacksurface-analysis-tools'
+        ProjectUri = 'https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools'
 
         # ReleaseNotes of this module
-        ReleaseNotes = '1.1.19
+        ReleaseNotes = '1.1.22
 --------
-* Fix for bug in NtWaitTimeout not creating infinite waits.
-* Added some new NTSTATUS codes and break apart the status.
-* Added some new FSCTL codes.
-
-1.1.18.1
---------
-* Added missing release notes.
-
-1.1.18
-------
-* Added better support for transaction objects including some cmdlets.
-* Added general QueryInformation and SetInformation methods to a number of objects.
-* Added side channel isolation mitigation policy.
-* Added more FS volume information classes.
-* Added extended section/memory functions.
-* Added a few missing NDR type formats.
-* Added BNO isolation process attribute.
-* Added new types to separate out named pipes from normal files.
-* Added Start-NtFileOplock.
-* Added support for absolute security descriptors.
+* Removed old standalone utilities, everything should be accessible from PowerShell.
+* Added Test-NetworkAccess cmdlet to replace CheckNetworkAccess utility.
+* Added Set-NtFileHardlink cmdlet.
+* Various fixes for RPC client code.
 '
 
         # External dependent modules of this module

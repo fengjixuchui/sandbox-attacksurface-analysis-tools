@@ -18,209 +18,6 @@ using System.Runtime.InteropServices;
 
 namespace NtApiDotNet
 {
-#pragma warning disable 1591
-    [Flags]
-    public enum ResourceManagerAccessRights : uint
-    {
-        QueryInformation = 1,
-        SetInformation = 2,
-        Recover = 4,
-        Enlist = 8,
-        GetNotification = 0x10,
-        RegisterProtocol = 0x20,
-        CompletePropagation = 0x40,
-        GenericRead = GenericAccessRights.GenericRead,
-        GenericWrite = GenericAccessRights.GenericWrite,
-        GenericExecute = GenericAccessRights.GenericExecute,
-        GenericAll = GenericAccessRights.GenericAll,
-        Delete = GenericAccessRights.Delete,
-        ReadControl = GenericAccessRights.ReadControl,
-        WriteDac = GenericAccessRights.WriteDac,
-        WriteOwner = GenericAccessRights.WriteOwner,
-        Synchronize = GenericAccessRights.Synchronize,
-        MaximumAllowed = GenericAccessRights.MaximumAllowed,
-        AccessSystemSecurity = GenericAccessRights.AccessSystemSecurity
-    }
-
-    public enum ResourceManagerCreateOptions
-    {
-        None = 0,
-        Volatile = 1,
-        Communication = 2,
-    }
-
-    [Flags]
-    public enum TransactionNotificationMask : uint
-    {
-        PrePrepare = 0x00000001,
-        Prepare = 0x00000002,
-        Commit = 0x00000004,
-        Rollback = 0x00000008,
-        PrePrepareComplete = 0x00000010,
-        PrepareComplete = 0x00000020,
-        CommitComplete = 0x00000040,
-        RollbackComplete = 0x00000080,
-        Recover = 0x00000100,
-        SinglePhaseCommit = 0x00000200,
-        DelegateCommit = 0x00000400,
-        RecoverQuery = 0x00000800,
-        EnlistPrePrepare = 0x00001000,
-        LastRecover = 0x00002000,
-        InDoubt = 0x00004000,
-        PropagatePull = 0x00008000,
-        PropagatePush = 0x00010000,
-        Marshal = 0x00020000,
-        EnlistMask = 0x00040000,
-        RmDisconnected = 0x01000000,
-        TmOnline = 0x02000000,
-        CommitRequest = 0x04000000,
-        Promote = 0x08000000,
-        PromoteNew = 0x10000000,
-        RequestOutcome = 0x20000000,
-    }
-
-    [Flags]
-    public enum RegisterProtocolCreateOptions
-    {
-        None = 0,
-        ExplicitMarshalOnly = 1,
-        DynamicMarshalInfo = 2,
-    }
-
-    [StructLayout(LayoutKind.Sequential), DataStart("ArgumentData")]
-    public struct TransactionNotificationData
-    {
-        public IntPtr TransactionKey;
-        public TransactionNotificationMask TransactionNotification;
-        public LargeIntegerStruct TmVirtualClock;
-        public int ArgumentLength;
-        public byte ArgumentData;
-    }
-
-    public class TransactionNotification
-    {
-        public IntPtr Key { get; }
-        public TransactionNotificationMask Mask { get; }
-        public long VirtualClock { get; }
-        public byte[] Argument { get; }
-
-        internal TransactionNotification(SafeStructureInOutBuffer<TransactionNotificationData> buffer)
-        {
-            var result = buffer.Result;
-            Key = result.TransactionKey;
-            Mask = result.TransactionNotification;
-            VirtualClock = result.TmVirtualClock.QuadPart;
-            Argument = new byte[result.ArgumentLength];
-            buffer.Data.ReadArray(0, Argument, 0, Argument.Length);
-        }
-    }
-
-    public enum ResourceManagerInformationClass
-    {
-        ResourceManagerBasicInformation,
-        ResourceManagerCompletionInformation
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode), 
-        DataStart("Description", IncludeDataField = true)]
-    public struct ResourceManagerBasicInformation
-    {
-        public Guid ResourceManagerId;
-        public int DescriptionLength;
-        public char Description;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct ResourceManagerCompletionInformation
-    {
-        public IntPtr IoCompletionPortHandle;
-        public IntPtr CompletionKey;
-    }
-
-    public static partial class NtSystemCalls
-    {
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCreateResourceManager(
-            out SafeKernelObjectHandle ResourceManagerHandle,
-            ResourceManagerAccessRights DesiredAccess,
-            SafeKernelObjectHandle TmHandle,
-            ref Guid RmGuid,
-            ObjectAttributes ObjectAttributes,
-            ResourceManagerCreateOptions CreateOptions,
-            UnicodeString Description
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtOpenResourceManager(
-            out SafeKernelObjectHandle ResourceManagerHandle,
-            ResourceManagerAccessRights DesiredAccess,
-            SafeKernelObjectHandle TmHandle,
-            OptionalGuid ResourceManagerGuid,
-            ObjectAttributes ObjectAttributes
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtQueryInformationResourceManager(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            ResourceManagerInformationClass ResourceManagerInformationClass,
-            SafeBuffer ResourceManagerInformation,
-            int ResourceManagerInformationLength,
-            out int ReturnLength
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtSetInformationResourceManager(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            ResourceManagerInformationClass ResourceManagerInformationClass,
-            SafeBuffer ResourceManagerInformation,
-            int ResourceManagerInformationLength
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRecoverResourceManager(
-            SafeKernelObjectHandle ResourceManagerHandle
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtGetNotificationResourceManager(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            SafeBuffer TransactionNotification, // Allocated TransactionNotificationData
-            int NotificationLength,
-            LargeInteger Timeout,
-            out int ReturnLength,
-            int Asynchronous,
-            IntPtr AsynchronousContext
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtRegisterProtocolAddressInformation(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            ref Guid ProtocolId,
-            int ProtocolInformationSize,
-            SafeBuffer ProtocolInformation,
-            RegisterProtocolCreateOptions CreateOptions);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtPropagationComplete(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            uint RequestCookie,
-            int BufferLength,
-            SafeBuffer Buffer);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtPropagationFailed(
-            SafeKernelObjectHandle ResourceManagerHandle,
-            uint RequestCookie,
-            NtStatus PropStatus);
-    }
-
-    public static class NtResourceManagerKnownProtocolId
-    {
-        public static readonly Guid PromotingProtocolId = new Guid("AC06CC84-1465-428B-A398-0AAEEFB4599B");
-        public static readonly Guid OleTxProtocolId = new Guid("88288CD9-A6D0-494B-8072-FF9BE190D691");
-    }
-
-#pragma warning restore 1591
     /// <summary>
     /// Class to represent a transaction resource manager.
     /// </summary>
@@ -398,7 +195,6 @@ namespace NtApiDotNet
             return CreateVolatile(path, null, ResourceManagerAccessRights.MaximumAllowed, transaction_manager);
         }
 
-
         /// <summary>
         /// Create a new volatile resource manager object.
         /// </summary>
@@ -428,18 +224,18 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="object_attributes">The object attributes</param>
         /// <param name="desired_access">Desired access for the handle</param>
-        /// <param name="transaction_manager">Optional transaction manager which contains the resource manager.</param>
-        /// <param name="resource_manager_guid">Optional resource manager GUID.</param>
+        /// <param name="transaction_manager">Transaction manager which contains the resource manager.</param>
+        /// <param name="resource_manager_guid">Resource manager GUID.</param>
         /// <param name="throw_on_error">True to throw an exception on error.</param>
         /// <returns>The NT status code and object result.</returns>
         public static NtResult<NtResourceManager> Open(ObjectAttributes object_attributes,
                 ResourceManagerAccessRights desired_access,
                 NtTransactionManager transaction_manager,
-                Guid? resource_manager_guid,
+                Guid resource_manager_guid,
                 bool throw_on_error)
         {
             return NtSystemCalls.NtOpenResourceManager(out SafeKernelObjectHandle handle,
-                desired_access, transaction_manager.GetHandle(), resource_manager_guid.ToOptional(),
+                desired_access, transaction_manager.GetHandle(), ref resource_manager_guid,
                 object_attributes).CreateResult(throw_on_error, () => new NtResourceManager(handle));
         }
 
@@ -448,14 +244,14 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="object_attributes">The object attributes</param>
         /// <param name="desired_access">Desired access for the handle</param>
-        /// <param name="transaction_manager">Optional transaction manager which contains the resource manager.</param>
-        /// <param name="resource_manager_guid">Optional resource manager GUID.</param>
+        /// <param name="transaction_manager">Transaction manager which contains the resource manager.</param>
+        /// <param name="resource_manager_guid">Resource manager GUID.</param>
         /// <returns>The object result.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
         public static NtResourceManager Open(ObjectAttributes object_attributes,
                 ResourceManagerAccessRights desired_access,
                 NtTransactionManager transaction_manager,
-                Guid? resource_manager_guid)
+                Guid resource_manager_guid)
         {
             return Open(object_attributes, desired_access, transaction_manager,
                 resource_manager_guid, true).Result;
@@ -621,14 +417,25 @@ namespace NtApiDotNet
         /// <summary>
         /// Get a list of all accessible enlistment objects owned by this resource manager.
         /// </summary>
+        /// <param name="object_attributes">The object attributes</param>
         /// <param name="desired_access">The access for the enlistment objects.</param>
         /// <returns>The list of all accessible enlistment objects.</returns>
-        public IEnumerable<NtEnlistment> GetAccessibleEnlistment(EnlistmentAccessRights desired_access)
+        public IEnumerable<NtEnlistment> GetAccessibleEnlistment(ObjectAttributes object_attributes, EnlistmentAccessRights desired_access)
         {
             return NtTransactionManagerUtils.GetAccessibleTransactionObjects(
                 Handle,
                 KtmObjectType.Enlistment,
-                id => NtEnlistment.Open(null, desired_access, this, id, false));
+                id => NtEnlistment.Open(object_attributes, desired_access, this, id, false));
+        }
+
+        /// <summary>
+        /// Get a list of all accessible enlistment objects owned by this resource manager.
+        /// </summary>
+        /// <param name="desired_access">The access for the enlistment objects.</param>
+        /// <returns>The list of all accessible enlistment objects.</returns>
+        public IEnumerable<NtEnlistment> GetAccessibleEnlistment(EnlistmentAccessRights desired_access)
+        {
+            return GetAccessibleEnlistment(null, desired_access);
         }
 
         /// <summary>

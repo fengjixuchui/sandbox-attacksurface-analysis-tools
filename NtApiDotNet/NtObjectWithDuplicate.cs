@@ -26,8 +26,13 @@ namespace NtApiDotNet
     {
         internal abstract class NtTypeFactoryImplBase : NtTypeFactory
         {
-            protected NtTypeFactoryImplBase(bool can_open) 
-                : base(typeof(A), typeof(O), can_open)
+            protected NtTypeFactoryImplBase(Type container_access_rights_type, bool can_open) 
+                : base(typeof(A), container_access_rights_type, typeof(O), can_open)
+            {
+            }
+
+            protected NtTypeFactoryImplBase(bool can_open)
+                : this(typeof(A), can_open)
             {
             }
 
@@ -264,6 +269,39 @@ namespace NtApiDotNet
         public static O FromHandle(IntPtr handle)
         {
             return FromHandle(handle, false);
+        }
+
+        /// <summary>
+        /// Duplicate an instance from a process
+        /// </summary>
+        /// <param name="process">The process (with DupHandle access)</param>
+        /// <param name="handle">The handle value to duplicate</param>
+        /// <param name="access">The access rights to duplicate with</param>
+        /// <param name="options">The options for duplication.</param>
+        /// <param name="attributes">The attribute flags for the new object.</param>
+        /// <param name="throw_on_error">True to throw an exception on error.</param>
+        /// <returns>The NT status code and object result.</returns>
+        public static NtResult<O> DuplicateFrom(NtProcess process, IntPtr handle,
+            A access, AttributeFlags attributes, DuplicateObjectOptions options, bool throw_on_error)
+        {
+            return NtObject.DuplicateHandle(process, new SafeKernelObjectHandle(handle, false),
+                NtProcess.Current, ToGenericAccess(access), AttributeFlags.None,
+                options, throw_on_error).Map(h => FromHandle(h));
+        }
+
+        /// <summary>
+        /// Duplicate an instance from a process
+        /// </summary>
+        /// <param name="process">The process (with DupHandle access)</param>
+        /// <param name="handle">The handle value to duplicate</param>
+        /// <param name="access">The access rights to duplicate with</param>
+        /// <param name="options">The options for duplication.</param>
+        /// <param name="attributes">The attribute flags for the new object.</param>
+        /// <returns>The NT status code and object result.</returns>
+        public static O DuplicateFrom(NtProcess process, IntPtr handle,
+            A access, AttributeFlags attributes, DuplicateObjectOptions options)
+        {
+            return DuplicateFrom(process, handle, access, attributes, options, true).Result;
         }
 
         /// <summary>

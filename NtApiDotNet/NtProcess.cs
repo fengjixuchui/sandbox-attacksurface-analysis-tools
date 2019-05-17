@@ -66,6 +66,57 @@ namespace NtApiDotNet
         {
             return GetExtendedBasicInfo(true).BasicInfo;
         }
+
+        private static Enum ConvertPolicyToEnum(ProcessMitigationPolicy policy, int value)
+        {
+            switch (policy)
+            {
+                case ProcessMitigationPolicy.ImageLoad:
+                    return (ProcessMitigationImageLoadPolicy)value;
+                case ProcessMitigationPolicy.Signature:
+                    return (ProcessMitigationBinarySignaturePolicy)value;
+                case ProcessMitigationPolicy.ControlFlowGuard:
+                    return (ProcessMitigationControlFlowGuardPolicy)value;
+                case ProcessMitigationPolicy.DynamicCode:
+                    return (ProcessMitigationDynamicCodePolicy)value;
+                case ProcessMitigationPolicy.ExtensionPointDisable:
+                    return (ProcessMitigationExtensionPointDisablePolicy)value;
+                case ProcessMitigationPolicy.FontDisable:
+                    return (ProcessMitigationFontDisablePolicy)value;
+                case ProcessMitigationPolicy.StrictHandleCheck:
+                    return (ProcessMitigationStrictHandleCheckPolicy)value;
+                case ProcessMitigationPolicy.SystemCallDisable:
+                    return (ProcessMitigationSystemCallDisablePolicy)value;
+                case ProcessMitigationPolicy.ChildProcess:
+                    return (ProcessMitigationChildProcessPolicy)value;
+                case ProcessMitigationPolicy.PayloadRestriction:
+                    return (ProcessMitigationPayloadRestrictionPolicy)value;
+                case ProcessMitigationPolicy.SystemCallFilter:
+                    return (ProcessMitigationSystemCallFilterPolicy)value;
+                case ProcessMitigationPolicy.SideChannelIsolation:
+                    return (ProcessMitigationSideChannelIsolationPolicy)value;
+                case ProcessMitigationPolicy.ASLR:
+                    return (ProcessMitigationAslrPolicy)value;
+                default:
+                    return (ProcessMitigationUnknownPolicy)value;
+            }
+        }
+
+        private T QueryToken<T>(TokenAccessRights desired_access, Func<NtToken, T> callback, T default_value)
+        {
+            return NtToken.OpenProcessToken(this, desired_access, false).RunAndDispose(callback, default_value);
+        }
+
+        private T QueryToken<T>(Func<NtToken, T> callback, T default_value)
+        {
+            return QueryToken(TokenAccessRights.Query, callback, default_value);
+        }
+
+        private T QueryToken<T>(Func<NtToken, T> callback)
+        {
+            return QueryToken(TokenAccessRights.Query, callback, default(T));
+        }
+
         #endregion
 
         #region Constructors
@@ -373,7 +424,7 @@ namespace NtApiDotNet
         /// <param name="policy">The policy to get</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The raw policy value</returns>
-        public NtResult<int> GetProcessMitigationPolicy(ProcessMitigationPolicy policy, bool throw_on_error)
+        public NtResult<int> GetRawMitigationPolicy(ProcessMitigationPolicy policy, bool throw_on_error)
         {
             switch (policy)
             {
@@ -395,7 +446,7 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="policy">The policy to get</param>
         /// <returns>The raw policy value</returns>
-        public int GetProcessMitigationPolicy(ProcessMitigationPolicy policy)
+        public int GetRawMitigationPolicy(ProcessMitigationPolicy policy)
         {
             switch (policy)
             {
@@ -409,7 +460,7 @@ namespace NtApiDotNet
                 Policy = policy
             };
 
-            var result = GetProcessMitigationPolicy(policy, false);
+            var result = GetRawMitigationPolicy(policy, false);
             switch (result.Status)
             {
                 case NtStatus.STATUS_INVALID_PARAMETER:
@@ -422,13 +473,57 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get a mitigation policy as an enumeration.
+        /// </summary>
+        /// <param name="policy">The policy to get.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The mitigation policy value</returns>
+        public NtResult<Enum> GetMitigationPolicy(ProcessMitigationPolicy policy, bool throw_on_error)
+        {
+            return GetRawMitigationPolicy(policy, throw_on_error).Map(i => ConvertPolicyToEnum(policy, i));
+        }
+
+        /// <summary>
+        /// Get a mitigation policy as an enumeration.
+        /// </summary>
+        /// <param name="policy">The policy to get.</param>
+        /// <returns>The mitigation policy value</returns>
+        public Enum GetMitigationPolicy(ProcessMitigationPolicy policy)
+        {
+            return GetMitigationPolicy(policy, true).Result;
+        }
+
+        /// <summary>
+        /// Get a mitigation policy raw value
+        /// </summary>
+        /// <param name="policy">The policy to get</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The raw policy value</returns>
+        [Obsolete("Use GetRawMitigationPolicy or GetMitigationPolicy")]
+        public NtResult<int> GetProcessMitigationPolicy(ProcessMitigationPolicy policy, bool throw_on_error)
+        {
+            return GetRawMitigationPolicy(policy, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get a mitigation policy raw value
+        /// </summary>
+        /// <param name="policy">The policy to get</param>
+        /// <returns>The raw policy value</returns>
+        [Obsolete("Use GetRawMitigationPolicy or GetMitigationPolicy")]
+        public int GetProcessMitigationPolicy(ProcessMitigationPolicy policy)
+        {
+            return GetRawMitigationPolicy(policy);
+        }
+
+        /// <summary>
         /// Set a mitigation policy raw value
         /// </summary>
         /// <param name="policy">The policy to set</param>
         /// <param name="value">The value to set</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The NT status code.</returns>
-        public NtStatus SetProcessMitigationPolicy(ProcessMitigationPolicy policy, int value, bool throw_on_error)
+        public NtStatus SetRawMitigationPolicy(ProcessMitigationPolicy policy, int value, bool throw_on_error)
         {
             switch (policy)
             {
@@ -451,9 +546,55 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="policy">The policy to set</param>
         /// <param name="value">The value to set</param>
+        public void SetRawMitigationPolicy(ProcessMitigationPolicy policy, int value)
+        {
+            SetRawMitigationPolicy(policy, value, true);
+        }
+
+        /// <summary>
+        /// Set a mitigation policy value from an enum.
+        /// </summary>
+        /// <param name="policy">The policy to set</param>
+        /// <param name="value">The value to set</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetMitigationPolicy(ProcessMitigationPolicy policy, Enum value, bool throw_on_error)
+        {
+            return SetRawMitigationPolicy(policy, Convert.ToInt32(value), throw_on_error);
+        }
+
+        /// <summary>
+        /// Set a mitigation policy value from an enum.
+        /// </summary>
+        /// <param name="policy">The policy to set</param>
+        /// <param name="value">The value to set</param>
+        public void SetMitigationPolicy(ProcessMitigationPolicy policy, Enum value)
+        {
+            SetMitigationPolicy(policy, value, true);
+        }
+
+        /// <summary>
+        /// Set a mitigation policy raw value
+        /// </summary>
+        /// <param name="policy">The policy to set</param>
+        /// <param name="value">The value to set</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        [Obsolete("Use SetMitigationPolicy or SetRawMitigationPolicy")]
+        public NtStatus SetProcessMitigationPolicy(ProcessMitigationPolicy policy, int value, bool throw_on_error)
+        {
+            return SetRawMitigationPolicy(policy, value, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set a mitigation policy raw value
+        /// </summary>
+        /// <param name="policy">The policy to set</param>
+        /// <param name="value">The value to set</param>
+        [Obsolete("Use SetMitigationPolicy or SetRawMitigationPolicy")]
         public void SetProcessMitigationPolicy(ProcessMitigationPolicy policy, int value)
         {
-            SetProcessMitigationPolicy(policy, value, true);
+            SetRawMitigationPolicy(policy, value);
         }
 
         /// <summary>
@@ -466,7 +607,7 @@ namespace NtApiDotNet
                 throw new InvalidOperationException("Must have Debug privilege to disable code policy");
             }
 
-            SetProcessMitigationPolicy(ProcessMitigationPolicy.DynamicCode, 0);
+            SetRawMitigationPolicy(ProcessMitigationPolicy.DynamicCode, 0);
         }
 
         /// <summary>
@@ -830,9 +971,9 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="device_map">The device map directory to set.</param>
         /// <remarks>Note that due to a bug in the Wow64 layer this won't work in a 32 bit process on a 64 bit system.</remarks>
-        public void SetProcessDeviceMap(NtDirectory device_map)
+        public void SetDeviceMap(NtDirectory device_map)
         {
-            SetProcessDeviceMap(device_map, true);
+            SetDeviceMap(device_map, true);
         }
 
         /// <summary>
@@ -841,7 +982,7 @@ namespace NtApiDotNet
         /// <param name="device_map">The device map directory to set.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <remarks>Note that due to a bug in the Wow64 layer this won't work in a 32 bit process on a 64 bit system.</remarks>
-        public NtStatus SetProcessDeviceMap(NtDirectory device_map, bool throw_on_error)
+        public NtStatus SetDeviceMap(NtDirectory device_map, bool throw_on_error)
         {
             var device_map_set = new ProcessDeviceMapInformationSet
             {
@@ -849,6 +990,29 @@ namespace NtApiDotNet
             };
 
             return Set(ProcessInformationClass.ProcessDeviceMap, device_map_set, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the process device map.
+        /// </summary>
+        /// <param name="device_map">The device map directory to set.</param>
+        /// <remarks>Note that due to a bug in the Wow64 layer this won't work in a 32 bit process on a 64 bit system.</remarks>
+        [Obsolete("Use SetDeviceMap")]
+        public void SetProcessDeviceMap(NtDirectory device_map)
+        {
+            SetDeviceMap(device_map);
+        }
+
+        /// <summary>
+        /// Set the process device map.
+        /// </summary>
+        /// <param name="device_map">The device map directory to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <remarks>Note that due to a bug in the Wow64 layer this won't work in a 32 bit process on a 64 bit system.</remarks>
+        [Obsolete("Use SetDeviceMap")]
+        public NtStatus SetProcessDeviceMap(NtDirectory device_map, bool throw_on_error)
+        {
+            return SetDeviceMap(device_map, throw_on_error);
         }
 
         /// <summary>
@@ -1057,6 +1221,48 @@ namespace NtApiDotNet
         public NtSection OpenImageSection()
         {
             return OpenImageSection(true).Result;
+        }
+
+        /// <summary>
+        /// Unmap a section.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="flags">Flags for unmapping memory.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus Unmap(IntPtr base_address, MemUnmapFlags flags, bool throw_on_error)
+        {
+            return NtSection.Unmap(this, base_address, flags, throw_on_error);
+        }
+
+        /// <summary>
+        /// Unmap a section.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus Unmap(IntPtr base_address, bool throw_on_error)
+        {
+            return Unmap(base_address, MemUnmapFlags.None, throw_on_error);
+        }
+
+        /// <summary>
+        /// Unmap a section.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="flags">Flags for unmapping memory.</param>
+        public void Unmap(IntPtr base_address, MemUnmapFlags flags)
+        {
+            Unmap(base_address, flags, true);
+        }
+
+        /// <summary>
+        /// Unmap a section.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        public void Unmap(IntPtr base_address)
+        {
+            Unmap(base_address, true);
         }
 
         /// <summary>
@@ -1450,8 +1656,7 @@ namespace NtApiDotNet
         {
             get
             {
-                return NtToken.OpenProcessToken(this,
-                    TokenAccessRights.Query, false).RunAndDispose(token => token.IsSandbox);
+                return QueryToken(token => token.IsSandbox);
             }
         }
 
@@ -1486,7 +1691,7 @@ namespace NtApiDotNet
         {
             get
             {
-                int policy = GetProcessMitigationPolicy(ProcessMitigationPolicy.ChildProcess);
+                int policy = GetRawMitigationPolicy(ProcessMitigationPolicy.ChildProcess);
                 if (policy != 0)
                 {
                     return (policy & 1) == 1;
@@ -1495,12 +1700,12 @@ namespace NtApiDotNet
                 var result = Query(ProcessInformationClass.ProcessChildProcessInformation, new ProcessChildProcessRestricted(), false);
                 if (result.IsSuccess)
                 {
-                    return result.Result.IsNoChildProcessRestricted != 0;
+                    return result.Result.ProhibitChildProcesses != 0;
                 }
                 var result_1709 = Query(ProcessInformationClass.ProcessChildProcessInformation, new ProcessChildProcessRestricted1709(), false);
                 if (result_1709.IsSuccess)
                 {
-                    return result_1709.Result.IsNoChildProcessRestricted != 0;
+                    return result_1709.Result.ProhibitChildProcesses != 0;
                 }
                 return false;
             }
@@ -1575,6 +1780,11 @@ namespace NtApiDotNet
                 return Query<IntPtr>(ProcessInformationClass.ProcessConsoleHostProcess).ToInt32();
             }
         }
+
+        /// <summary>
+        /// Query the process token's full package name.
+        /// </summary>
+        public string PackageFullName => QueryToken(t => t.PackageFullName, string.Empty);
 
         #endregion
 

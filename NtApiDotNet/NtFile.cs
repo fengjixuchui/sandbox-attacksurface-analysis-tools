@@ -25,8 +25,6 @@ using System.Threading.Tasks;
 
 namespace NtApiDotNet
 {
-
-
     /// <summary>
     /// Class representing a NT File object
     /// </summary>
@@ -48,7 +46,7 @@ namespace NtApiDotNet
 
         internal sealed class NtTypeFactoryImpl : NtTypeFactoryImplBase
         {
-            public NtTypeFactoryImpl() : base(true)
+            public NtTypeFactoryImpl() : base(typeof(FileDirectoryAccessRights), true)
             {
             }
 
@@ -174,7 +172,7 @@ namespace NtApiDotNet
             }
         }
 
-        private NtStatus DoRenameEx(string filename, NtFile root, FileRenameInformationExFlags flags, bool throw_on_error)
+        private NtStatus DoRenameEx(string filename, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
         {
             FileRenameInformationEx information = new FileRenameInformationEx
             {
@@ -190,7 +188,7 @@ namespace NtApiDotNet
             }
         }
 
-        private NtStatus DoLinkRename(FileInformationClass file_info, string linkname, NtFile root, bool replace_if_exists, bool throw_on_error)
+        private NtStatus DoLinkRename(FileInformationClass file_info, string linkname, NtObject root, bool replace_if_exists, bool throw_on_error)
         {
             FileLinkRenameInformation link = new FileLinkRenameInformation
             {
@@ -355,9 +353,56 @@ namespace NtApiDotNet
             return pages.Select(p => new FileSegmentElement() { Buffer = new IntPtr(p) }).Concat(new[] { new FileSegmentElement() }).ToArray();
         }
 
+        private NtResult<FileBasicInformation> QueryBasicInformation(bool throw_on_error)
+        {
+            return Query(FileInformationClass.FileBasicInformation, new FileBasicInformation(), throw_on_error);
+        }
+
         #endregion
 
         #region Static Methods
+
+        /// <summary>
+        /// Create a new file
+        /// </summary>
+        /// <param name="obj_attributes">The object attributes</param>
+        /// <param name="desired_access">Desired access for the file</param>
+        /// <param name="file_attributes">Attributes for the file</param>
+        /// <param name="share_access">Share access for the file</param>
+        /// <param name="open_options">Open options for file</param>
+        /// <param name="disposition">Disposition when opening the file</param>
+        /// <param name="ea_buffer">Extended Attributes buffer</param>
+        /// <param name="allocation_size">Optional allocation size.</param>
+        /// <param name="throw_on_error">True to throw an exception on error.</param>
+        /// <returns>The NT status code and object result.</returns>
+        public static NtResult<NtFile> Create(ObjectAttributes obj_attributes, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
+            FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer, long? allocation_size, bool throw_on_error)
+        {
+            IoStatus iostatus = new IoStatus();
+            byte[] buffer = ea_buffer?.ToByteArray();
+            return NtSystemCalls.NtCreateFile(out SafeKernelObjectHandle handle, desired_access, obj_attributes, iostatus, allocation_size.ToLargeInteger(), file_attributes,
+                share_access, disposition, open_options,
+                buffer, buffer != null ? buffer.Length : 0).CreateResult(throw_on_error, () => CreateFileObject(handle, iostatus));
+        }
+
+        /// <summary>
+        /// Create a new file
+        /// </summary>
+        /// <param name="obj_attributes">The object attributes</param>
+        /// <param name="desired_access">Desired access for the file</param>
+        /// <param name="file_attributes">Attributes for the file</param>
+        /// <param name="share_access">Share access for the file</param>
+        /// <param name="open_options">Open options for file</param>
+        /// <param name="disposition">Disposition when opening the file</param>
+        /// <param name="ea_buffer">Extended Attributes buffer</param>
+        /// <param name="allocation_size">Optional allocation size.</param>
+        /// <returns>The created/opened file object.</returns>
+        public static NtFile Create(ObjectAttributes obj_attributes, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
+            FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer, long? allocation_size)
+        {
+            return Create(obj_attributes, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer, allocation_size, true).Result;
+        }
+
         /// <summary>
         /// Create a new file
         /// </summary>
@@ -373,11 +418,8 @@ namespace NtApiDotNet
         public static NtResult<NtFile> Create(ObjectAttributes obj_attributes, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
             FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer, bool throw_on_error)
         {
-            IoStatus iostatus = new IoStatus();
-            byte[] buffer = ea_buffer?.ToByteArray();
-            return NtSystemCalls.NtCreateFile(out SafeKernelObjectHandle handle, desired_access, obj_attributes, iostatus, null, FileAttributes.Normal,
-                share_access, disposition, open_options,
-                buffer, buffer != null ? buffer.Length : 0).CreateResult(throw_on_error, () => CreateFileObject(handle, iostatus));
+            return Create(obj_attributes, desired_access, file_attributes, 
+                share_access, open_options, disposition, ea_buffer, null, throw_on_error);
         }
 
         /// <summary>
@@ -394,13 +436,35 @@ namespace NtApiDotNet
         public static NtFile Create(ObjectAttributes obj_attributes, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
             FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer)
         {
-            return Create(obj_attributes, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer, true).Result;
+            return Create(obj_attributes, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer, null);
         }
 
         /// <summary>
         /// Create a new file
         /// </summary>
-        /// <param name="name">The path to the file</param>
+        /// <param name="path">The path to the file</param>
+        /// <param name="root">A root object to parse relative filenames</param>
+        /// <param name="desired_access">Desired access for the file</param>
+        /// <param name="file_attributes">Attributes for the file</param>
+        /// <param name="share_access">Share access for the file</param>
+        /// <param name="open_options">Open options for file</param>
+        /// <param name="disposition">Disposition when opening the file</param>
+        /// <param name="ea_buffer">Extended Attributes buffer</param>
+        /// <param name="throw_on_error">True to throw an exception on error.</param>
+        /// <returns>The created/opened file object.</returns>
+        public static NtResult<NtFile> Create(string path, NtObject root, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
+            FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer, bool throw_on_error)
+        {
+            using (ObjectAttributes obja = new ObjectAttributes(path, AttributeFlags.CaseInsensitive, root))
+            {
+                return Create(obja, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Create a new file
+        /// </summary>
+        /// <param name="path">The path to the file</param>
         /// <param name="root">A root object to parse relative filenames</param>
         /// <param name="desired_access">Desired access for the file</param>
         /// <param name="file_attributes">Attributes for the file</param>
@@ -409,29 +473,26 @@ namespace NtApiDotNet
         /// <param name="disposition">Disposition when opening the file</param>
         /// <param name="ea_buffer">Extended Attributes buffer</param>
         /// <returns>The created/opened file object.</returns>
-        public static NtFile Create(string name, NtObject root, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
+        public static NtFile Create(string path, NtObject root, FileAccessRights desired_access, FileAttributes file_attributes, FileShareMode share_access,
             FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer)
         {
-            using (ObjectAttributes obja = new ObjectAttributes(name, AttributeFlags.CaseInsensitive, root))
-            {
-                return Create(obja, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer);
-            }
+            return Create(path, root, desired_access, file_attributes, share_access, open_options, disposition, ea_buffer, true).Result;
         }
 
         /// <summary>
         /// Create a new file
         /// </summary>
-        /// <param name="name">The path to the file</param>
+        /// <param name="path">The path to the file</param>
         /// <param name="desired_access">Desired access for the file</param>
         /// <param name="share_access">Share access for the file</param>
         /// <param name="open_options">Open options for file</param>
         /// <param name="disposition">Disposition when opening the file</param>
         /// <param name="ea_buffer">Extended Attributes buffer</param>
         /// <returns>The created/opened file object.</returns>
-        public static NtFile Create(string name, FileAccessRights desired_access, FileShareMode share_access,
+        public static NtFile Create(string path, FileAccessRights desired_access, FileShareMode share_access,
             FileOpenOptions open_options, FileDisposition disposition, EaBuffer ea_buffer)
         {
-            return Create(name, null, desired_access, FileAttributes.Normal, share_access, open_options, disposition, ea_buffer);
+            return Create(path, null, desired_access, FileAttributes.Normal, share_access, open_options, disposition, ea_buffer);
         }
 
         /// <summary>
@@ -492,7 +553,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Create a new named pipe file
         /// </summary>
-        /// <param name="name">The path to the pipe file</param>
+        /// <param name="path">The path to the pipe file</param>
         /// <param name="root">A root object to parse relative filenames</param>
         /// <param name="desired_access">Desired access for the file</param>
         /// <param name="share_access">Share access for the file</param>
@@ -508,12 +569,12 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw an exception on error.</param>
         /// <returns>The file instance for the pipe.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtResult<NtNamedPipeFile> CreateNamedPipe(string name, NtObject root, FileAccessRights desired_access,
+        public static NtResult<NtNamedPipeFile> CreateNamedPipe(string path, NtObject root, FileAccessRights desired_access,
             FileShareMode share_access, FileOpenOptions open_options, FileDisposition disposition, NamedPipeType pipe_type,
             NamedPipeReadMode read_mode, NamedPipeCompletionMode completion_mode, int maximum_instances, int input_quota,
             int output_quota, NtWaitTimeout default_timeout, bool throw_on_error)
         {
-            using (ObjectAttributes obj_attributes = new ObjectAttributes(name, AttributeFlags.CaseInsensitive, root))
+            using (ObjectAttributes obj_attributes = new ObjectAttributes(path, AttributeFlags.CaseInsensitive, root))
             {
                 return CreateNamedPipe(obj_attributes, desired_access, share_access, open_options, disposition, pipe_type,
                     read_mode, completion_mode, maximum_instances, input_quota, output_quota, default_timeout, throw_on_error);
@@ -523,7 +584,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Create a new named pipe file
         /// </summary>
-        /// <param name="name">The path to the pipe file</param>
+        /// <param name="path">The path to the pipe file</param>
         /// <param name="root">A root object to parse relative filenames</param>
         /// <param name="desired_access">Desired access for the file</param>
         /// <param name="share_access">Share access for the file</param>
@@ -538,12 +599,12 @@ namespace NtApiDotNet
         /// <param name="read_mode">Pipe read mode</param>
         /// <returns>The file instance for the pipe.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtNamedPipeFile CreateNamedPipe(string name, NtObject root, FileAccessRights desired_access,
+        public static NtNamedPipeFile CreateNamedPipe(string path, NtObject root, FileAccessRights desired_access,
             FileShareMode share_access, FileOpenOptions open_options, FileDisposition disposition, NamedPipeType pipe_type,
             NamedPipeReadMode read_mode, NamedPipeCompletionMode completion_mode, int maximum_instances, int input_quota,
             int output_quota, NtWaitTimeout default_timeout)
         {
-            return CreateNamedPipe(name, root, desired_access, share_access, open_options, disposition, pipe_type,
+            return CreateNamedPipe(path, root, desired_access, share_access, open_options, disposition, pipe_type,
                   read_mode, completion_mode, maximum_instances, input_quota, output_quota, default_timeout, true).Result;
         }
 
@@ -619,7 +680,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Create a new named mailslot file
         /// </summary>
-        /// <param name="name">The path to the mailslot file</param>
+        /// <param name="path">The path to the mailslot file</param>
         /// <param name="root">A root object to parse relative filenames</param>
         /// <param name="desired_access">Desired access for the file</param>
         /// <param name="open_options">Open options for file</param>
@@ -628,11 +689,11 @@ namespace NtApiDotNet
         /// <param name="default_timeout">Timeout in MS ( &lt;0 is infinite)</param>
         /// <returns>The file instance for the mailslot.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtFile CreateMailslot(string name, NtObject root, FileAccessRights desired_access,
+        public static NtFile CreateMailslot(string path, NtObject root, FileAccessRights desired_access,
             FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
             long default_timeout)
         {
-            using (ObjectAttributes obj_attributes = new ObjectAttributes(name, AttributeFlags.CaseInsensitive, root))
+            using (ObjectAttributes obj_attributes = new ObjectAttributes(path, AttributeFlags.CaseInsensitive, root))
             {
                 return CreateMailslot(obj_attributes, desired_access, open_options, maximum_message_size, mailslot_quota, default_timeout);
             }
@@ -1231,7 +1292,7 @@ namespace NtApiDotNet
         /// <exception cref="NtException">Thrown on error.</exception>
         public NtResult<NtFile> ReOpen(FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
         {
-            using (ObjectAttributes obj_attributes = new ObjectAttributes(String.Empty, AttributeFlags.CaseInsensitive, this))
+            using (ObjectAttributes obj_attributes = new ObjectAttributes(string.Empty, AttributeFlags.CaseInsensitive, this))
             {
                 return Open(obj_attributes, desired_access, share_access, open_options, throw_on_error);
             }
@@ -1324,7 +1385,7 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The NT status code.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public NtStatus CreateHardlink(string linkname, NtFile root, bool replace_if_exists, bool throw_on_error)
+        public NtStatus CreateHardlink(string linkname, NtObject root, bool replace_if_exists, bool throw_on_error)
         {
             return DoLinkRename(FileInformationClass.FileLinkInformation, linkname, root, replace_if_exists, throw_on_error);
         }
@@ -1338,7 +1399,7 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The NT status code.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public NtStatus Rename(string new_name, NtFile root, bool replace_if_exists, bool throw_on_error)
+        public NtStatus Rename(string new_name, NtObject root, bool replace_if_exists, bool throw_on_error)
         {
             return DoLinkRename(FileInformationClass.FileRenameInformation, new_name, root, replace_if_exists, true);
         }
@@ -1350,7 +1411,7 @@ namespace NtApiDotNet
         /// <param name="root">The root directory if new_name is relative</param>
         /// <param name="replace_if_exists">If TRUE, replaces the target file if it exists. If FALSE, fails if the target file already exists.</param>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public void Rename(string new_name, NtFile root, bool replace_if_exists)
+        public void Rename(string new_name, NtObject root, bool replace_if_exists)
         {
             DoLinkRename(FileInformationClass.FileRenameInformation, new_name, root, replace_if_exists, true);
         }
@@ -1396,7 +1457,7 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The NT status code.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public NtStatus RenameEx(string new_name, NtFile root, FileRenameInformationExFlags flags, bool throw_on_error)
+        public NtStatus RenameEx(string new_name, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
         {
             return DoRenameEx(new_name, root, flags, throw_on_error);
         }
@@ -1408,7 +1469,7 @@ namespace NtApiDotNet
         /// <param name="root">The root directory if new_name is relative</param>
         /// <param name="flags">The flags associated to FileRenameInformationEx.</param>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public void RenameEx(string new_name, NtFile root, FileRenameInformationExFlags flags)
+        public void RenameEx(string new_name, NtObject root, FileRenameInformationExFlags flags)
         {
             DoRenameEx(new_name, root, flags, true);
         }
@@ -1467,9 +1528,8 @@ namespace NtApiDotNet
         {
             using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(16 * 1024))
             {
-                FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT, null, buffer);
-
-                return ReparseBuffer.FromByteArray(buffer.ToArray(), opaque_buffer);
+                int res = FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT, null, buffer);
+                return ReparseBuffer.FromByteArray(buffer.ReadBytes(res), opaque_buffer);
             }
         }
 
@@ -1488,7 +1548,7 @@ namespace NtApiDotNet
         /// <returns>The original reparse buffer.</returns>
         public ReparseBuffer DeleteReparsePoint()
         {
-            ReparseBuffer reparse = GetReparsePoint();
+            ReparseBuffer reparse = GetReparsePoint(true);
             using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(new OpaqueReparseBuffer(reparse.Tag, new byte[0]).ToByteArray()))
             {
                 FsControl(NtWellKnownIoControlCodes.FSCTL_DELETE_REPARSE_POINT, buffer, null);
@@ -2823,7 +2883,7 @@ namespace NtApiDotNet
                     {
                         var entry_buffer = buffer.Data.GetStructAtOffset<FileLinkEntryInformation>(ofs);
                         var entry = entry_buffer.Result;
-                        string parent_path = String.Empty;
+                        string parent_path = string.Empty;
 
                         using (var parent = OpenFileById(this, NtFileUtils.FileIdToString(entry.ParentFileId),
                             FileAccessRights.ReadAttributes, FileShareMode.None, FileOpenOptions.None, false))
@@ -3161,7 +3221,14 @@ namespace NtApiDotNet
             {
                 if (!_is_directory.HasValue)
                 {
-                    _is_directory = (FileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
+                    if (IsAccessGranted(FileAccessRights.ReadAttributes))
+                    {
+                        _is_directory = (FileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
+                    }
+                    else
+                    {
+                        _is_directory = false;
+                    }
                 }
                 return _is_directory.Value;
             }
@@ -3221,7 +3288,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the Win32 path name for the file.
         /// </summary>
-        /// <returns>The path, String.Empty on error.</returns>
+        /// <returns>The path, string.Empty on error.</returns>
         public string Win32PathName
         {
             get
@@ -3465,6 +3532,36 @@ namespace NtApiDotNet
             set
             {
                 Set(FileInformationClass.FileStorageReserveIdInformation, new FileStorageReserveIdInformation() { StorageReserveId = value });
+            }
+        }
+
+        /// <summary>
+        /// Returns whether this object is a container.
+        /// </summary>
+        public override bool IsContainer => IsDirectory;
+
+        /// <summary>
+        /// Get or set the read only status of the file.
+        /// </summary>
+        public bool ReadOnly
+        {
+            get => (FileAttributes & FileAttributes.ReadOnly) != 0;
+            set
+            {
+                var current_attributes = FileAttributes;
+                if (value)
+                {
+                    current_attributes |= FileAttributes.ReadOnly;
+                }
+                else
+                {
+                    current_attributes &= ~FileAttributes.ReadOnly;
+                    if (current_attributes == 0)
+                    {
+                        current_attributes = FileAttributes.Normal;
+                    }
+                }
+                FileAttributes = current_attributes;
             }
         }
 

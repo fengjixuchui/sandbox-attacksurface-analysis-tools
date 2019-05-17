@@ -7,34 +7,18 @@
     <authors>James Forshaw</authors>
     <owners>James Forshaw</owners>
     <license type="expression">Apache-2.0</license>
-    <projectUrl>https://github.com/google/sandbox-attacksurface-analysis-tools</projectUrl>
+    <projectUrl>https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools</projectUrl>
     <requireLicenseAcceptance>false</requireLicenseAcceptance>
     <description>A .NET class library to access native NT API system calls</description>
     <releaseNotes>
-1.1.19
+1.1.22
 --------
-* Fix for bug in NtWaitTimeout not creating infinite waits.
-* Added some new NTSTATUS codes and break apart the status.
-* Added some new FSCTL codes.
-
-1.1.18.1
---------
-* Added missing release notes.
-
-1.1.18
-------
-* Added better support for transaction objects including some cmdlets.
-* Added general QueryInformation and SetInformation methods to a number of objects.
-* Added side channel isolation mitigation policy.
-* Added more FS volume information classes.
-* Added extended section/memory functions.
-* Added a few missing NDR type formats.
-* Added BNO isolation process attribute.
-* Added new types to separate out named pipes from normal files.
-* Added Start-NtFileOplock.
-* Added support for absolute security descriptors.
+* Removed old standalone utilities, everything should be accessible from PowerShell.
+* Added Test-NetworkAccess cmdlet to replace CheckNetworkAccess utility.
+* Added Set-NtFileHardlink cmdlet.
+* Various fixes for RPC client code.
 </releaseNotes>
-    <copyright>Copyright Google Inc. 2017</copyright>
+    <copyright>Copyright Google Inc. 2017, 2018, 2019</copyright>
     <tags>syscalls</tags>
   </metadata>
 </package>

@@ -13,480 +13,10 @@
 //  limitations under the License.
 
 using System;
-using System.IO;
 using System.Runtime.InteropServices;
 
 namespace NtApiDotNet
 {
-#pragma warning disable 1591
-
-    [Flags]
-    public enum SectionAttributes : uint
-    {
-        None = 0,
-        PartitionOwnerHandle = 0x00040000,
-        Pages64k = 0x00080000,
-        Unknown100000 = 0x00100000,
-        Based = 0x00200000,
-        NoChange = 0x00400000,
-        File = 0x00800000,
-        Image = 0x01000000,
-        ProtectedImage = 0x02000000,
-        Reserve = 0x04000000,
-        Commit = 0x08000000,
-        NoCache = 0x10000000,
-        WriteCombine = 0x40000000,
-        LargePages = 0x80000000,
-        ImageNoExecute = Image | NoCache
-    }
-
-    [Flags]
-    public enum SectionAccessRights : uint
-    {
-        Query = 0x0001,
-        MapWrite = 0x0002,
-        MapRead = 0x0004,
-        MapExecute = 0x0008,
-        ExtendSize = 0x0010,
-        MapExecuteExplicit = 0x0020,
-        GenericRead = GenericAccessRights.GenericRead,
-        GenericWrite = GenericAccessRights.GenericWrite,
-        GenericExecute = GenericAccessRights.GenericExecute,
-        GenericAll = GenericAccessRights.GenericAll,
-        Delete = GenericAccessRights.Delete,
-        ReadControl = GenericAccessRights.ReadControl,
-        WriteDac = GenericAccessRights.WriteDac,
-        WriteOwner = GenericAccessRights.WriteOwner,
-        Synchronize = GenericAccessRights.Synchronize,
-        MaximumAllowed = GenericAccessRights.MaximumAllowed,
-        AccessSystemSecurity = GenericAccessRights.AccessSystemSecurity
-    }
-
-
-    [Flags]
-    public enum ImageCharacteristics : ushort
-    {
-        None = 0,
-        RelocsStripped = 0x0001,
-        ExecutableImage = 0x0002,
-        LineNumsStripped = 0x0004,
-        LocalSymsStripped = 0x0008,
-        AggresiveWsTrim = 0x0010,
-        LargeAddressAware = 0x0020,
-        FileBytesReservedLo = 0x0080,
-        Image32BitMachine = 0x0100,
-        DebugStripped = 0x0200,
-        RemovableRunFromSwap = 0x0400,
-        NetRunFromSwap = 0x0800,
-        System = 0x1000,
-        Dll = 0x2000,
-        UpSystemOnly = 0x4000,
-        BytesReservedHi = 0x8000,
-    }
-
-    public enum SectionInherit
-    {
-        ViewShare = 1,
-        ViewUnmap = 2
-    }
-
-    [Flags]
-    public enum AllocationType
-    {
-        None = 0,
-        Commit = 0x00001000,
-        Reserve = 0x00002000,
-        ReplacePlaceholder = 0x00004000,
-        Reset = 0x00080000,
-        ResetUndo = 0x1000000,
-        LargePages = 0x20000000,
-        Physical = 0x00400000,
-        TopDown = 0x00100000,
-        WriteWatch = 0x00200000,
-    }
-
-    [Flags]
-    public enum MemUnmapFlags
-    {
-        None = 0,
-        WriteTransientBoost = 0x00000001,
-        PreservePlaceholder = 0x00000002
-    }
-
-    public enum SectionInformationClass
-    {
-        SectionBasicInformation,
-        SectionImageInformation,
-        SectionRelocationInformation,
-        SectionOriginalBaseInformation,
-        SectionInternalImageInformation
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct SectionBasicInformation
-    {
-        public IntPtr BaseAddress;
-        public SectionAttributes Attributes;
-        public LargeIntegerStruct Size;
-    }
-
-    public enum MemExtendedParameterType : long
-    {
-        MemExtendedParameterInvalidType,
-        MemExtendedParameterAddressRequirements,
-        MemExtendedParameterNumaNode,
-        MemExtendedParameterPartitionHandle,
-        MemExtendedParameterUserPhysicalHandle,
-        MemExtendedParameterAttributeFlags,
-        MemExtendedParameterMax
-    }
-
-    public enum MemSectionExtendedParameterType
-    {
-        MemSectionExtendedParameterInvalidType,
-        MemSectionExtendedParameterUserPhysicalFlags,
-        MemSectionExtendedParameterNumaNode,
-        MemSectionExtendedParameterMax
-    }
-
-    [StructLayout(LayoutKind.Explicit)]
-    public struct MemExtendedParameterValue
-    {
-        [FieldOffset(0)]
-        public ulong ULong64;
-        [FieldOffset(0)]
-        public IntPtr Pointer;
-        [FieldOffset(0)]
-        public IntPtr Size;
-        [FieldOffset(0)]
-        public IntPtr Handle;
-        [FieldOffset(0)]
-        public uint ULong;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MemSectionExtendedParameter
-    {
-        public MemSectionExtendedParameterType Type;
-        public MemExtendedParameterValue Value;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MemExtendedParameter
-    {
-        public MemExtendedParameterType Type;
-        public MemExtendedParameterValue Value;
-    }
-
-    public static partial class NtSystemCalls
-    {
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCreateSection(out SafeKernelObjectHandle SectionHandle, 
-            SectionAccessRights DesiredAccess,
-            [In] ObjectAttributes ObjectAttributes, [In] LargeInteger SectionSize,
-            MemoryAllocationProtect Protect, SectionAttributes Attributes,
-            SafeHandle FileHandle);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtCreateSectionEx(out SafeKernelObjectHandle SectionHandle,
-            SectionAccessRights DesiredAccess,
-            [In] ObjectAttributes ObjectAttributes, [In] LargeInteger SectionSize,
-            MemoryAllocationProtect Protect, SectionAttributes Attributes,
-            SafeHandle FileHandle, 
-            MemSectionExtendedParameter[] ExtendedParameters, int ExtendedParameterCount);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtOpenSection(out SafeKernelObjectHandle SectionHandle,
-            SectionAccessRights DesiredAccess,
-            [In] ObjectAttributes ObjectAttributes);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtQuerySection(SafeKernelObjectHandle SectionHandle,
-             SectionInformationClass SectionInformationClass,
-             SafeBuffer SectionInformation,
-             int SectionInformationLength,
-             out int ResultLength);
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtMapViewOfSection(
-            SafeKernelObjectHandle SectionHandle,
-            SafeKernelObjectHandle ProcessHandle,
-            ref IntPtr BaseAddress,
-            IntPtr ZeroBits,
-            IntPtr CommitSize,
-            [In, Out] LargeInteger SectionOffset,
-            ref IntPtr ViewSize,
-            SectionInherit InheritDisposition,
-            AllocationType AllocationType,
-            MemoryAllocationProtect Win32Protect
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtMapViewOfSectionEx(
-            SafeKernelObjectHandle SectionHandle,
-            SafeKernelObjectHandle ProcessHandle,
-            ref IntPtr BaseAddress,
-            IntPtr ZeroBits,
-            IntPtr CommitSize,
-            [In, Out] LargeInteger SectionOffset,
-            ref IntPtr ViewSize,
-            SectionInherit InheritDisposition,
-            AllocationType AllocationType,
-            MemoryAllocationProtect Win32Protect,
-            MemExtendedParameter[] ExtendedParameters,
-            int ExtendedParameterCount
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtUnmapViewOfSection(
-            SafeKernelObjectHandle ProcessHandle,
-            IntPtr BaseAddress
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtUnmapViewOfSectionEx(
-            SafeKernelObjectHandle ProcessHandle,
-            IntPtr BaseAddress,
-            MemUnmapFlags Flas
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtExtendSection(
-            SafeKernelObjectHandle SectionHandle,
-            [In, Out] LargeInteger SectionSize
-        );
-
-        [DllImport("ntdll.dll")]
-        public static extern NtStatus NtAreMappedFilesTheSame(
-            IntPtr Mapped1,
-            IntPtr Mapped2
-        );
-    }
-#pragma warning restore 1591
-
-    /// <summary>
-    /// Class representing a mapped section
-    /// </summary>
-    public sealed class NtMappedSection : SafeBuffer
-    {
-        /// <summary>
-        /// The process which the section is mapped into
-        /// </summary>
-        public NtProcess Process { get; private set; }
-
-        /// <summary>
-        /// The length of the mapped section
-        /// </summary>
-        public long Length { get; private set; }
-
-        /// <summary>
-        /// The valid length of the mapped section from the current position.
-        /// </summary>
-        /// <remarks>This doesn't take into account the possibility of fragmented commits.</remarks>
-        public long ValidLength
-        {
-            get
-            {
-                var mem_info = NtVirtualMemory.QueryMemoryInformation(NtProcess.Current.Handle, handle.ToInt64());
-                if (mem_info.State == MemoryState.Commit)
-                {
-                    return mem_info.RegionSize;
-                }
-                return 0;
-            }
-        }
-
-        /// <summary>
-        /// Get full path for mapped section.
-        /// </summary>
-        public string FullPath
-        {
-            get
-            {
-                var name = NtVirtualMemory.QuerySectionName(Process.Handle, DangerousGetHandle().ToInt64(), false);
-                if (name.IsSuccess)
-                {
-                    return name.Result;
-                }
-                return String.Empty;
-            }
-        }
-
-        /// <summary>
-        /// Query the memory protection setting for this mapping.
-        /// </summary>
-        public MemoryAllocationProtect Protection
-        {
-            get
-            {
-                return NtVirtualMemory.QueryMemoryInformation(Process.Handle, DangerousGetHandle().ToInt64()).Protect;
-            }
-        }
-
-        /// <summary>
-        /// Get image signing level.
-        /// </summary>
-        public SigningLevel ImageSigningLevel => NtVirtualMemory.QueryImageInformation(Process.Handle, DangerousGetHandle().ToInt64()).ImageSigningLevel;
-
-        internal NtMappedSection(IntPtr pointer, long size, NtProcess process, bool writable) : base(true)
-        {
-            SetHandle(pointer); 
-            Initialize((ulong)size);
-            Length = size;
-            if (process.Handle.IsInvalid)
-            {
-                // No point duplicating an invalid handle. 
-                // Also covers case of pseudo current process handle.
-                Process = process;
-            }
-            else
-            {
-                Process = process.Duplicate();
-            }
-            _writable = writable;
-        }
-
-        /// <summary>
-        /// Release the internal handle
-        /// </summary>
-        /// <returns></returns>
-        protected override bool ReleaseHandle()
-        {
-            bool ret = false;
-            if (!Process.Handle.IsClosed)
-            {
-                using (Process)
-                {
-                    ret = NtSystemCalls.NtUnmapViewOfSection(Process.Handle, handle).IsSuccess();
-                }
-            }
-            handle = IntPtr.Zero;
-            return ret;
-        }
-
-        /// <summary>
-        /// Get the mapped section as a memory stream
-        /// </summary>
-        /// <returns></returns>
-        public UnmanagedMemoryStream GetStream()
-        {
-            return new UnmanagedMemoryStream(this, 0, (long)ByteLength, _writable ? FileAccess.ReadWrite : FileAccess.Read);
-        }
-
-        /// <summary>
-        /// Read a NUL terminated string for the byte offset.
-        /// </summary>
-        /// <param name="byte_offset">The byte offset to read from.</param>
-        /// <returns>The string read from the buffer without the NUL terminator</returns>
-        public string ReadNulTerminatedUnicodeString(ulong byte_offset)
-        {
-            return BufferUtils.ReadNulTerminatedUnicodeString(this, byte_offset);
-        }
-
-        /// <summary>
-        /// Read a NUL terminated string
-        /// </summary>
-        /// <returns>The string read from the buffer without the NUL terminator</returns>
-        public string ReadNulTerminatedUnicodeString()
-        {
-            return ReadNulTerminatedUnicodeString(0);
-        }
-
-        /// <summary>
-        /// Read a Unicode string string with length.
-        /// </summary>
-        /// <param name="count">The number of characters to read.</param>
-        /// <param name="byte_offset">The byte offset to read from.</param>
-        /// <returns>The string read from the buffer without the NUL terminator</returns>
-        public string ReadUnicodeString(ulong byte_offset, int count)
-        {
-            return BufferUtils.ReadUnicodeString(this, byte_offset, count);
-        }
-
-        /// <summary>
-        /// Read a Unicode string string with length.
-        /// </summary>
-        /// <param name="count">The number of characters to read.</param>
-        /// <returns>The string read from the buffer without the NUL terminator</returns>
-        public string ReadUnicodeString(int count)
-        {
-            return ReadUnicodeString(0, count);
-        }
-
-        /// <summary>
-        /// Write unicode string.
-        /// </summary>
-        /// <param name="byte_offset">The byte offset to write to.</param>
-        /// <param name="value">The string value to write.</param>
-        public void WriteUnicodeString(ulong byte_offset, string value)
-        {
-            BufferUtils.WriteUnicodeString(this, byte_offset, value);
-        }
-
-        /// <summary>
-        /// Write unicode string.
-        /// </summary>
-        /// <param name="value">The string value to write.</param>
-        public void WriteUnicodeString(string value)
-        {
-            WriteUnicodeString(0, value);
-        }
-
-        /// <summary>
-        /// Read bytes from buffer.
-        /// </summary>
-        /// <param name="byte_offset">The byte offset to read from.</param>
-        /// <param name="count">The number of bytes to read.</param>
-        /// <returns>The byte array.</returns>
-        public byte[] ReadBytes(ulong byte_offset, int count)
-        {
-            return BufferUtils.ReadBytes(this, byte_offset, count);
-        }
-
-        /// <summary>
-        /// Read bytes from buffer.
-        /// </summary>
-        /// <param name="count">The number of bytes to read.</param>
-        /// <returns>The byte array.</returns>
-        public byte[] ReadBytes(int count)
-        {
-            return ReadBytes(0, count);
-        }
-
-        /// <summary>
-        /// Write bytes to a buffer.
-        /// </summary>
-        /// <param name="byte_offset">The byte offset to write to.</param>
-        /// <param name="data">The data to write.</param>
-        public void WriteBytes(ulong byte_offset, byte[] data)
-        {
-            BufferUtils.WriteBytes(this, byte_offset, data);
-        }
-
-        /// <summary>
-        /// Write bytes to a buffer.
-        /// </summary>
-        /// <param name="data">The data to write.</param>
-        public void WriteBytes(byte[] data)
-        {
-            WriteBytes(0, data);
-        }
-
-        /// <summary>
-        /// Get a structure buffer at a specific offset.
-        /// </summary>
-        /// <typeparam name="T">The type of structure.</typeparam>
-        /// <param name="offset">The offset into the buffer.</param>
-        /// <returns>The structure buffer.</returns>
-        /// <remarks>The returned buffer is not owned, therefore you need to maintain the original buffer while operating on this buffer.</remarks>
-        public SafeStructureInOutBuffer<T> GetStructAtOffset<T>(int offset) where T : new()
-        {
-            return BufferUtils.GetStructAtOffset<T>(this, offset);
-        }
-
-        private readonly bool _writable;
-    }
-
     /// <summary>
     /// Class to represent a NT Section object
     /// </summary>
@@ -696,6 +226,78 @@ namespace NtApiDotNet
                 return Open(obja, desired_access);
             }
         }
+
+        /// <summary>
+        /// Unmap a section in a specified process.
+        /// </summary>
+        /// <param name="process">The process to unmap the section.</param>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="flags">Flags for unmapping memory.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus Unmap(NtProcess process, IntPtr base_address, MemUnmapFlags flags, bool throw_on_error)
+        {
+            if (flags == MemUnmapFlags.None)
+            {
+                return NtSystemCalls.NtUnmapViewOfSection(process.Handle, base_address).ToNtException(throw_on_error);
+            }
+            
+            return NtSystemCalls.NtUnmapViewOfSectionEx(process.Handle, base_address, flags).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Unmap a section in a specified process.
+        /// </summary>
+        /// <param name="process">The process to unmap the section.</param>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus Unmap(NtProcess process, IntPtr base_address, bool throw_on_error)
+        {
+            return Unmap(process, base_address, MemUnmapFlags.None, throw_on_error);
+        }
+
+        /// <summary>
+        /// Unmap a section in the current process.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus Unmap(IntPtr base_address, bool throw_on_error)
+        {
+            return Unmap(NtProcess.Current, base_address, throw_on_error);
+        }
+
+        /// <summary>
+        /// Unmap a section in a specified process.
+        /// </summary>
+        /// <param name="process">The process to unmap the section.</param>
+        /// <param name="base_address">The base address to unmap.</param>
+        /// <param name="flags">Flags for unmapping memory.</param>
+        public static void Unmap(NtProcess process, IntPtr base_address, MemUnmapFlags flags)
+        {
+            Unmap(process, base_address, flags, true);
+        }
+
+        /// <summary>
+        /// Unmap a section in a specified process.
+        /// </summary>
+        /// <param name="process">The process to unmap the section.</param>
+        /// <param name="base_address">The base address to unmap.</param>
+        public static void Unmap(NtProcess process, IntPtr base_address)
+        {
+            Unmap(process, base_address, true);
+        }
+
+        /// <summary>
+        /// Unmap a section in the current process.
+        /// </summary>
+        /// <param name="base_address">The base address to unmap.</param>
+        public static void Unmap(IntPtr base_address)
+        {
+            Unmap(base_address, true);
+        }
+
         #endregion
 
         #region Public Methods
@@ -821,13 +423,24 @@ namespace NtApiDotNet
         /// Extend the section to a new size.
         /// </summary>
         /// <param name="new_size">The new size to extend to.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The new size.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtResult<long> Extend(long new_size, bool throw_on_error)
+        {
+            LargeInteger size = new LargeInteger(new_size);
+            return NtSystemCalls.NtExtendSection(Handle, size).CreateResult(throw_on_error, () => size.QuadPart);
+        }
+
+        /// <summary>
+        /// Extend the section to a new size.
+        /// </summary>
+        /// <param name="new_size">The new size to extend to.</param>
         /// <returns>The new size.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
         public long Extend(long new_size)
         {
-            LargeInteger size = new LargeInteger(new_size);
-            NtSystemCalls.NtExtendSection(Handle, size).ToNtException();
-            return size.QuadPart;
+            return Extend(new_size, true).Result;
         }
 
         /// <summary>
@@ -847,7 +460,6 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the size of the section
         /// </summary>
-        /// <returns>The size</returns>
         public long Size
         {
             get
@@ -860,7 +472,6 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the attributes of the section
         /// </summary>
-        /// <returns>The section attributes</returns>
         public SectionAttributes Attributes
         {
             get
@@ -869,6 +480,22 @@ namespace NtApiDotNet
                 return info.Attributes;
             }
         }
+
+        /// <summary>
+        /// Get section image information.
+        /// </summary>
+        public SectionImageInformation ImageInformation => Query<SectionImageInformation>(SectionInformationClass.SectionImageInformation);
+
+        /// <summary>
+        /// Get original section base address.
+        /// </summary>
+        public long OriginalBaseAddress => Query<IntPtr>(SectionInformationClass.SectionOriginalBaseInformation).ToInt64();
+
+        /// <summary>
+        /// Get relocation address.
+        /// </summary>
+        public long RelocationAddress => Query<IntPtr>(SectionInformationClass.SectionRelocationInformation).ToInt64();
+
         #endregion
     }
 }

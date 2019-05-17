@@ -19,6 +19,7 @@ using System.Runtime.InteropServices;
 using System.Linq;
 using NtApiDotNet.Win32;
 using System.Threading.Tasks;
+using System.Reflection;
 
 namespace NtApiDotNet
 {
@@ -66,6 +67,21 @@ namespace NtApiDotNet
                 throw new EndOfStreamException();
             }
             return ret;
+        }
+
+        internal static byte[] ReadToEnd(this BinaryReader reader)
+        {
+            return reader.ReadBytes(int.MaxValue);
+        }
+
+        internal static long RemainingLength(this Stream stm)
+        {
+            return stm.Length - stm.Position;
+        }
+
+        internal static long RemainingLength(this BinaryReader reader)
+        {
+            return reader.BaseStream.RemainingLength();
         }
 
         /// <summary>
@@ -356,7 +372,7 @@ namespace NtApiDotNet
                 return "Full Access";
             }
 
-            return NtObjectUtils.AccessRightsToString(enum_type, mapped_access);
+            return AccessRightsToString(enum_type, mapped_access);
         }
 
         /// <summary>
@@ -377,18 +393,33 @@ namespace NtApiDotNet
         /// <typeparam name="S">The result of the function.</typeparam>
         /// <param name="result">The result.</param>
         /// <param name="func">The function to call.</param>
+        /// <param name="default_value">The default value to return if an error occurred.</param>
+        /// <returns>The result of func.</returns>
+        /// <remarks>If result is not a success then the function is not called.</remarks>
+        public static S RunAndDispose<T, S>(this NtResult<T> result, Func<T, S> func, S default_value) where T : NtObject
+        {
+            using (result)
+            {
+                if (!result.IsSuccess)
+                {
+                    return default_value;
+                }
+                return func(result.Result);
+            }
+        }
+
+        /// <summary>
+        /// Run a function on an NtResult and dispose the result afterwards.
+        /// </summary>
+        /// <typeparam name="T">The underlying result type.</typeparam>
+        /// <typeparam name="S">The result of the function.</typeparam>
+        /// <param name="result">The result.</param>
+        /// <param name="func">The function to call.</param>
         /// <returns>The result of func.</returns>
         /// <remarks>If result is not a success then the function is not called.</remarks>
         public static S RunAndDispose<T, S>(this NtResult<T> result, Func<T, S> func) where T : NtObject
         {
-            if (!result.IsSuccess)
-            {
-                return default(S);
-            }
-            using (result)
-            {
-                return func(result.Result);
-            }
+            return RunAndDispose(result, func, default(S));
         }
 
         /// <summary>
@@ -441,13 +472,59 @@ namespace NtApiDotNet
             }
         }
 
-        internal static NtStatus MapDosErrorToStatus(Win32Error dos_error)
+        /// <summary>
+        /// Convert a handle to a known object type.
+        /// </summary>
+        /// <param name="handle">The handle.</param>
+        /// <returns>The object type.</returns>
+        public static NtObject FromHandle(SafeKernelObjectHandle handle)
+        {
+            return NtType.GetTypeByName(handle.NtTypeName, true).FromHandle(handle);
+        }
+
+        /// <summary>
+        /// Convert a handle to a known object type.
+        /// </summary>
+        /// <param name="handle">The handle.</param>
+        /// <param name="owns_handle">True to own the handle.</param>
+        /// <returns>The object type.</returns>
+        public static NtObject FromHandle(IntPtr handle, bool owns_handle)
+        {
+            return FromHandle(new SafeKernelObjectHandle(handle, owns_handle));
+        }
+
+        /// <summary>
+        /// Convert a handle to a known object type.
+        /// </summary>
+        /// <param name="handle">The handle.</param>
+        /// <param name="owns_handle">True to own the handle.</param>
+        /// <returns>The object type.</returns>
+        public static NtObject FromHandle(int handle, bool owns_handle)
+        {
+            return FromHandle(new IntPtr(handle), owns_handle);
+        }
+
+        internal static NtStatus MapDosErrorToStatus(this Win32Error dos_error)
         {
             return MapDosErrorToStatus((int)dos_error);
         }
 
+        internal static void ToNtException(this Win32Error dos_error)
+        {
+            ToNtException(dos_error, true);
+        }
+
+        internal static NtStatus ToNtException(this Win32Error dos_error, bool throw_on_error)
+        {
+            return ToNtException(MapDosErrorToStatus((int)dos_error), throw_on_error);
+        }
+
         internal static NtStatus MapDosErrorToStatus(int dos_error)
         {
+            if (dos_error == 0)
+            {
+                return NtStatus.STATUS_SUCCESS;
+            }
             return BuildStatus(NtStatusSeverity.STATUS_SEVERITY_WARNING, false, false, 
                 NtStatusFacility.FACILITY_NTWIN32, dos_error);
         }
@@ -544,7 +621,7 @@ namespace NtApiDotNet
             return new NtResult<T>(status, default(T));
         }
 
-        internal static NtResult<T> CreateResultFromDosError<T>(int error, bool throw_on_error)
+        internal static NtResult<T> CreateResultFromDosError<T>(this Win32Error error, bool throw_on_error)
         {
             NtStatus status = MapDosErrorToStatus(error);
             if (throw_on_error)
@@ -553,6 +630,11 @@ namespace NtApiDotNet
             }
 
             return new NtResult<T>(status, default(T));
+        }
+
+        internal static NtResult<T> CreateResultFromDosError<T>(int error, bool throw_on_error)
+        {
+            return CreateResultFromDosError<T>((Win32Error)error, throw_on_error);
         }
 
         internal static IEnumerable<T> SelectValidResults<T>(this IEnumerable<NtResult<T>> iterator)
@@ -596,6 +678,17 @@ namespace NtApiDotNet
             {
                 return Environment.OSVersion.Version < new Version(6, 4);
             }
+        }
+
+        private static Lazy<string> _assembly_version = new Lazy<string>(() =>
+        {
+            Assembly asm = Assembly.GetCallingAssembly();
+            return asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>().InformationalVersion;
+        });
+
+        internal static string GetVersion()
+        {
+            return _assembly_version.Value;
         }
 
         internal static string GetFileName(string full_path)
@@ -642,6 +735,24 @@ namespace NtApiDotNet
         internal static int GetLength(this SafeBuffer buffer)
         {
             return (int)buffer.ByteLength;
+        }
+
+        internal static OptionalInt32 GetOptionalInt32(this SafeBuffer buffer)
+        {
+            if (buffer == null || buffer.IsInvalid)
+            {
+                return null;
+            }
+            return new OptionalInt32(buffer.GetLength());
+        }
+
+        internal static OptionalLength GetOptionalLength(this SafeBuffer buffer)
+        {
+            if (buffer == null || buffer.IsInvalid)
+            {
+                return null;
+            }
+            return new OptionalLength(buffer.GetLength());
         }
 
         internal static async Task<T> UnwrapNtResultAsync<T>(this Task<NtResult<T>> task)
