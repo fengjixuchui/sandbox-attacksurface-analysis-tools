@@ -42,9 +42,9 @@ namespace NtApiDotNet
         FILE_PLACEHOLDER = 0x80000015,
         DFM = 0x80000016,
         WOF = 0x80000017,
+        WCI = 0x80000018,
+        WCI_1 = 0x90001018,
         GLOBAL_REPARSE = 0xA0000019,
-        APPEXECLINK = 0x8000001B,
-        AFUNIX = 0x80000023,
         CLOUD = 0x9000001A,
         CLOUD_1 = 0x9000101A,
         CLOUD_2 = 0x9000201A,
@@ -62,13 +62,25 @@ namespace NtApiDotNet
         CLOUD_E = 0x9000E01A,
         CLOUD_F = 0x9000F01A,
         CLOUD_MASK = 0x0000F000,
-        GVFS = 0x9000001C,
-        WSL_SYMLINK = 0xA000001D,
+        APPEXECLINK = 0x8000001B,
+        PROJFS = 0x9000001C,
+        LX_SYMLINK = 0xA000001D,
         STORAGE_SYNC = 0x8000001E,
         WCI_TOMBSTONE = 0xA000001F,
         UNHANDLED = 0x80000020,
         ONEDRIVE = 0x80000021,
-        GVFS_TOMBSTONE = 0xA0000022,
+        PROJFS_TOMBSTONE = 0xA0000022,
+        AF_UNIX = 0x80000023,
+        LX_FIFO = 0x80000024,
+        LX_CHR = 0x80000025,
+        LX_BLK = 0x80000026,
+    }
+
+    [Flags]
+    public enum ReparseBufferExFlags
+    {
+        None = 0,
+        GivenTagOrNone = 1,
     }
 
 #pragma warning restore 1591
@@ -108,9 +120,68 @@ namespace NtApiDotNet
         /// Get a reparse buffer from a byte array.
         /// </summary>
         /// <param name="ba">The byte array to parse</param>
+        /// <returns>The reparse buffer.</returns>
+        public static ReparseBuffer FromByteArray(byte[] ba)
+        {
+            BinaryReader reader = new BinaryReader(new MemoryStream(ba), Encoding.Unicode);
+            ReparseTag tag = (ReparseTag)reader.ReadUInt32();
+            int data_length = reader.ReadUInt16();
+            // Reserved
+            reader.ReadUInt16();
+
+            ReparseBuffer buffer = null;
+
+            long remaining_length = reader.RemainingLength();
+            long expected_length = data_length;
+            if (!NtFileUtils.IsReparseTagMicrosoft(tag))
+            {
+                expected_length += 16;
+            }
+
+            if (remaining_length != expected_length)
+            {
+                // Corrupted buffer. Return an opaque buffer with all the data until the end.
+                return new OpaqueReparseBuffer(tag, reader.ReadToEnd());
+            }
+
+            switch (tag)
+            {
+                case ReparseTag.MOUNT_POINT:
+                    buffer = new MountPointReparseBuffer();
+                    break;
+                case ReparseTag.SYMLINK:
+                    buffer = new SymlinkReparseBuffer(false);
+                    break;
+                case ReparseTag.GLOBAL_REPARSE:
+                    buffer = new SymlinkReparseBuffer(true);
+                    break;
+                case ReparseTag.APPEXECLINK:
+                    buffer = new ExecutionAliasReparseBuffer();
+                    break;
+                default:
+                    if (NtFileUtils.IsReparseTagMicrosoft(tag))
+                    {
+                        buffer = new OpaqueReparseBuffer(tag);
+                    }
+                    else
+                    {
+                        buffer = new GenericReparseBuffer(tag);
+                    }
+                    break;
+            }
+
+            buffer.ParseBuffer(data_length, reader);
+            return buffer;
+        }
+
+        /// <summary>
+        /// Get a reparse buffer from a byte array.
+        /// </summary>
+        /// <param name="ba">The byte array to parse</param>
         /// <param name="opaque_buffer">True to return an opaque buffer if 
         /// the tag isn't known, otherwise try and parse as a generic buffer</param>
         /// <returns>The reparse buffer.</returns>
+        [Obsolete("Opaque buffer now automatically determined, use FromByteArray without the parameter")]
         public static ReparseBuffer FromByteArray(byte[] ba, bool opaque_buffer)
         {
             BinaryReader reader = new BinaryReader(new MemoryStream(ba), Encoding.Unicode);
@@ -121,7 +192,7 @@ namespace NtApiDotNet
 
             ReparseBuffer buffer = null;
 
-            if (data_length > reader.RemainingLength())
+            if (data_length != reader.RemainingLength())
             {
                 // Possibly corrupted. Return an opaque buffer with all the data until the end.
                 return new OpaqueReparseBuffer(tag, reader.ReadToEnd());
@@ -141,8 +212,8 @@ namespace NtApiDotNet
                 case ReparseTag.APPEXECLINK:
                     buffer = new ExecutionAliasReparseBuffer();
                     break;
-                case ReparseTag.AFUNIX:
-                    buffer = new OpaqueReparseBuffer(ReparseTag.AFUNIX);
+                case ReparseTag.AF_UNIX:
+                    buffer = new OpaqueReparseBuffer(ReparseTag.AF_UNIX);
                     break;
                 default:
                     if (opaque_buffer || reader.RemainingLength() < 16)
@@ -161,9 +232,9 @@ namespace NtApiDotNet
         }
 
         /// <summary>
-        /// Convert reparse buffer to a byte array.
+        /// Convert reparse buffer to a byte array in REPARSE_DATA_BUFFER format.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>The reparse buffer as a byte array.</returns>
         public byte[] ToByteArray()
         {
             byte[] buffer = GetBuffer();
@@ -177,6 +248,30 @@ namespace NtApiDotNet
             writer.Write((ushort)buffer.Length);
             writer.Write((ushort)0);
             writer.Write(buffer);
+            return stm.ToArray();
+        }
+
+        /// <summary>
+        /// Convert reparse buffer to a byte array in the REPARSE_DATA_BUFFER_EX format.
+        /// </summary>
+        /// <param name="flags">Flags for the buffer.</param>
+        /// <param name="existing_guid">Existing GUID to match against.</param>
+        /// <param name="existing_tag">Existing tag to matcha against.</param>
+        /// <returns>The reparse buffer as a byte array.</returns>
+        public byte[] ToByteArray(ReparseBufferExFlags flags, ReparseTag existing_tag, Guid existing_guid)
+        {
+            MemoryStream stm = new MemoryStream();
+            BinaryWriter writer = new BinaryWriter(stm);
+            // Flags.
+            writer.Write((int)flags);
+            // Existing tag.
+            writer.Write((uint)existing_tag);
+            // Existing GUID for non-Microsoft tags.
+            writer.Write(existing_guid.ToByteArray());
+            // Reserved (64 bit)
+            writer.Write(0L);
+            // The original reparse buffer.
+            writer.Write(ToByteArray());
             return stm.ToArray();
         }
 
