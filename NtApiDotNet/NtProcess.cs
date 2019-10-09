@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Win32;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -243,27 +244,84 @@ namespace NtApiDotNet
         /// <summary>
         /// Create a new process
         /// </summary>
-        /// <param name="ParentProcess">The parent process</param>
-        /// <param name="Flags">Creation flags</param>
-        /// <param name="SectionHandle">Handle to the executable image section</param>
+        /// <param name="desired_access">Desired access for the new process.</param>
+        /// <param name="object_attributes">Optional object attributes.</param>
+        /// <param name="parent_process">The parent process</param>
+        /// <param name="flags">Creation flags</param>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <param name="debug_port">Debug port for the new process.</param>
+        /// <param name="token">Access token for the new process.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The created process</returns>
-        public static NtProcess CreateProcessEx(NtProcess ParentProcess, ProcessCreateFlags Flags, NtSection SectionHandle)
+        public static NtResult<NtProcess> CreateProcessEx(ProcessAccessRights desired_access, ObjectAttributes object_attributes, 
+            NtProcess parent_process, ProcessCreateFlags flags, NtSection section_handle, NtDebug debug_port, NtToken token, bool throw_on_error)
         {
-            SafeHandle parent_process = ParentProcess != null ? ParentProcess.Handle : Current.Handle;
-            SafeHandle section = SectionHandle?.Handle;
-            NtSystemCalls.NtCreateProcessEx(out SafeKernelObjectHandle process, ProcessAccessRights.MaximumAllowed,
-                new ObjectAttributes(), parent_process, Flags, section, null, null, 0).ToNtException();
-            return new NtProcess(process);
+            return NtSystemCalls.NtCreateProcessEx(out SafeKernelObjectHandle process, desired_access,
+                object_attributes, parent_process?.Handle ?? Current.Handle, flags, section_handle.GetHandle(), debug_port.GetHandle(),
+                token.GetHandle(), 0).CreateResult(throw_on_error, () => new NtProcess(process));
         }
 
         /// <summary>
         /// Create a new process
         /// </summary>
-        /// <param name="SectionHandle">Handle to the executable image section</param>
+        /// <param name="desired_access">Desired access for the new process.</param>
+        /// <param name="object_attributes">Optional object attributes.</param>
+        /// <param name="parent_process">The parent process</param>
+        /// <param name="flags">Creation flags</param>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <param name="debug_port">Debug port for the new process.</param>
+        /// <param name="token">Access token for the new process.</param>
         /// <returns>The created process</returns>
-        public static NtProcess CreateProcessEx(NtSection SectionHandle)
+        public static NtProcess CreateProcessEx(ObjectAttributes object_attributes, ProcessAccessRights desired_access,
+            NtProcess parent_process, ProcessCreateFlags flags, NtSection section_handle, NtDebug debug_port, NtToken token)
         {
-            return CreateProcessEx(null, ProcessCreateFlags.None, SectionHandle);
+            return CreateProcessEx(desired_access, object_attributes, parent_process, flags, section_handle, debug_port, token, true).Result;
+        }
+
+        /// <summary>
+        /// Create a new process
+        /// </summary>
+        /// <param name="parent_process">The parent process</param>
+        /// <param name="flags">Creation flags</param>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <param name="token">Access token for the new process.</param>
+        /// <returns>The created process</returns>
+        public static NtProcess CreateProcessEx(NtProcess parent_process, ProcessCreateFlags flags, NtSection section_handle, NtToken token)
+        {
+            return CreateProcessEx(null, ProcessAccessRights.MaximumAllowed, parent_process, flags, section_handle, null, token);
+        }
+
+        /// <summary>
+        /// Create a new process
+        /// </summary>
+        /// <param name="parent_process">The parent process</param>
+        /// <param name="flags">Creation flags</param>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <returns>The created process</returns>
+        public static NtProcess CreateProcessEx(NtProcess parent_process, ProcessCreateFlags flags, NtSection section_handle)
+        {
+            return CreateProcessEx(parent_process, flags, section_handle, null);
+        }
+
+        /// <summary>
+        /// Create a new process
+        /// </summary>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <param name="token">Access token for the new process.</param>
+        /// <returns>The created process</returns>
+        public static NtProcess CreateProcessEx(NtSection section_handle, NtToken token)
+        {
+            return CreateProcessEx(null, ProcessCreateFlags.None, section_handle, token);
+        }
+
+        /// <summary>
+        /// Create a new process
+        /// </summary>
+        /// <param name="section_handle">Handle to the executable image section</param>
+        /// <returns>The created process</returns>
+        public static NtProcess CreateProcessEx(NtSection section_handle)
+        {
+            return CreateProcessEx(section_handle, null);
         }
 
         /// <summary>
@@ -1410,6 +1468,11 @@ namespace NtApiDotNet
                 }
             }
         }
+
+        /// <summary>
+        /// Get the command line as parsed arguments.
+        /// </summary>
+        public string[] CommandLineArguments => Win32Utils.ParseCommandLine(CommandLine);
 
         /// <summary>
         /// Get process DEP status

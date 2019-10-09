@@ -14,12 +14,11 @@
 
 Set-StrictMode -Version Latest
 
-if (($PSVersionTable.Keys -contains "PSEdition") -and ($PSVersionTable.PSEdition -ne 'Desktop')) {
-  Import-Module "$PSScriptRoot\Core\NtObjectManager.dll"
-}
-else
-{
-  Import-Module "$PSScriptRoot\NtObjectManager.dll"
+Import-Module "$PSScriptRoot\NtObjectManager.dll"
+
+# We use this incase we're running on a downlevel PowerShell.
+function Get-IsPSCore {
+    return ($PSVersionTable.Keys -contains "PSEdition") -and ($PSVersionTable.PSEdition -ne 'Desktop')
 }
 
 if ([System.Environment]::Is64BitProcess) {
@@ -568,6 +567,10 @@ Specify an explicit token to create the new process with.
  Specify extended creation flags.
 .PARAMETER Config
 Specify the configuration for the new process.
+.PARAMETER Wait
+Specify to wait for the process to exit.
+.PARAMETER WaitTimeout
+Specify the timeout to wait for the process to exit. Defaults to infinite.
 .INPUTS
 None
 .OUTPUTS
@@ -620,7 +623,9 @@ function New-Win32Process
         [Parameter(ParameterSetName = "FromArgs")]
         [NtApiDotNet.Win32.ProcessExtendedFlags]$ExtendedFlags = 0,
         [Parameter(Mandatory=$true, Position=0, ParameterSetName = "FromConfig")]
-        [NtApiDotNet.Win32.Win32ProcessConfig]$Config
+        [NtApiDotNet.Win32.Win32ProcessConfig]$Config,
+        [switch]$Wait,
+        [NtApiDotNet.NtWaitTimeout]$WaitTimeout = [NtApiDotNet.NtWaitTimeout]::Infinite
     )
 
   if ($null -eq $Config) {
@@ -633,7 +638,11 @@ function New-Win32Process
     -DebugObject $DebugObject -AppContainerProfile $AppContainerProfile -ExtendedFlags $ExtendedFlags
   }
 
-  [NtApiDotNet.Win32.Win32Process]::CreateProcess($config)
+  $p = [NtApiDotNet.Win32.Win32Process]::CreateProcess($config)
+  if ($Wait) {
+    $p.Process.Wait($WaitTimeout)
+  }
+  $p | Write-Output
 }
 
 <#
@@ -1497,7 +1506,7 @@ function Get-ExecutionAlias
 
 <#
 .SYNOPSIS
-Creates a new execution alias information.
+Creates a new execution alias information or updates and existing one.
 .DESCRIPTION
 This cmdlet creates a new execution alias for a packaged application.
 .PARAMETER PackageName
@@ -1506,15 +1515,15 @@ The name of the UWP package.
 The entry point of the application
 .PARAMETER Target
 The target executable path
-.PARAMETER Flags
-Additional flags
+.PARAMETER AppType
+The application type.
 .PARAMETER Version
 Version number
 .EXAMPLE
 Set-ExecutionAlias c:\path\to\alias.exe -PackageName test -EntryPoint test!test -Target c:\test.exe -Flags 48 -Version 3
 Set the alias.exe execution alias.
 #>
-function New-ExecutionAlias
+function Set-ExecutionAlias
 {
     Param(
         [Parameter(Mandatory=$true, Position=0)]
@@ -1525,11 +1534,11 @@ function New-ExecutionAlias
         [string]$EntryPoint,
         [Parameter(Mandatory=$true, Position=3)]
         [string]$Target,
-        [Int32]$Flags = 48,
+        [NtApiDotNet.ExecutionAliasAppType]$AppType = "Desktop",
         [Int32]$Version = 3
     )
 
-    $rp = [NtApiDotNet.ExecutionAliasReparseBuffer]::new($Version, $PackageName, $EntryPoint, $Target, $Flags)
+    $rp = [NtApiDotNet.ExecutionAliasReparseBuffer]::new($Version, $PackageName, $EntryPoint, $Target, $AppType)
     Use-NtObject($file = New-NtFile -Path $Path -Win32Path -Options OpenReparsePoint,SynchronousIoNonAlert `
                   -Access GenericWrite,Synchronize -Disposition OpenIf) {
             $file.SetReparsePoint($rp)
@@ -1705,6 +1714,8 @@ Optionally wait for the user to close the UI.
 Optionally force the viewer to be read-only when passing a section with Map Write access.
 .PARAMETER Path
 Path to a file to view as a section.
+.PARAMETER ObjPath
+Path to a object name to view as a section.
 .OUTPUTS
 None
 .EXAMPLE
@@ -1732,8 +1743,10 @@ function Show-NtSection {
         [switch]$ReadOnly,
         [Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromData")]
         [byte[]]$Data,
-    [Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromFile")]
-    [string]$Path,
+		[Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromFile")]
+		[string]$Path,
+		[Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromPath")]
+		[string]$ObjPath,
         [switch]$Wait
     )
     switch($PSCmdlet.ParameterSetName) {
@@ -1770,16 +1783,23 @@ function Show-NtSection {
                 }
             }
         }
-    "FromFile" {
-      $Path = Resolve-Path $Path
-      if ($Path -ne "") {
-        Use-NtObject($p = New-Win32Process "EditSection --file=""$Path""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
-          if ($Wait) {
-            $p.Process.Wait() | Out-Null
-          }
+		"FromFile" {
+		  $Path = Resolve-Path $Path
+		  if ($Path -ne "") {
+			Use-NtObject($p = New-Win32Process "EditSection --file=""$Path""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
+			  if ($Wait) {
+				$p.Process.Wait() | Out-Null
+			  }
+			}
+		  }
         }
-      }
-        }
+		"FromPath" {
+			Use-NtObject($p = New-Win32Process "EditSection --path=""$ObjPath""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
+				if ($Wait) {
+					$p.Process.Wait() | Out-Null
+				}
+			}
+		}
     } 
 }
 
@@ -4166,6 +4186,8 @@ Specify to flags for the source creation.
 Specify a Code DOM provider. Defaults to C#.
 .PARAMETER Options
 Specify optional options for the code generation if Provider is also specified.
+.PARAMETER OutputPath
+Specify optional output directory to write formatted client.
 .INPUTS
 None
 .OUTPUTS
@@ -4174,8 +4196,11 @@ string
 Format-RpcClient -Server $Server
 Get the source code for a RPC client from a parsed RPC server.
 .EXAMPLE
-$servers | Format-RpcAlpcClient
-Get the source code for a RPC client from a list of parsed RPC server.
+$servers | Format-RpcClient
+Get the source code for RPC clients from a list of parsed RPC servers.
+.EXAMPLE
+$servers | Format-RpcClient -OutputPath rpc_output
+Get the source code for RPC clients from a list of parsed RPC servers and output as separate source code files.
 #>
 function Format-RpcClient {
     [CmdletBinding()]
@@ -4186,8 +4211,20 @@ function Format-RpcClient {
         [string]$ClientName,
         [NtApiDotNet.Win32.Rpc.RpcClientBuilderFlags]$Flags = 0,
         [System.CodeDom.Compiler.CodeDomProvider]$Provider,
-        [System.CodeDom.Compiler.CodeGeneratorOptions]$Options
+        [System.CodeDom.Compiler.CodeGeneratorOptions]$Options,
+        [string]$OutputPath
     )
+
+    BEGIN {
+        $file_ext = "cs"
+        if ($null -ne $Provider) {
+            $file_ext = $Provider.FileExtension
+        }
+
+        if ("" -ne $OutputPath) {
+            mkdir $OutputPath -ErrorAction Ignore | Out-Null
+        }
+    }
 
     PROCESS {
         $args = [NtApiDotNet.Win32.Rpc.RpcClientBuilderArguments]::new();
@@ -4196,10 +4233,17 @@ function Format-RpcClient {
         $args.Flags = $Flags
 
         foreach($s in $Server) {
-            if ($Provider -eq $null) {
-                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args) | Write-Output
+            $src = if ($Provider -eq $null) {
+                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args)
             } else {
-                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args, $Provider, $Options) | Write-Output
+                [NtApiDotNet.Win32.Rpc.RpcClientBuilder]::BuildSource($s, $args, $Provider, $Options)
+            }
+
+            if ("" -eq $OutputPath) {
+                $src | Write-Output
+            } else {
+                $path = Join-Path -Path $OutputPath -ChildPath "$($s.InterfaceId)_$($s.InterfaceVersion).$file_ext"
+                $src | Set-Content -Path $path
             }
         }
     }
@@ -4325,4 +4369,95 @@ function Get-Win32File {
 
     [NtApiDotNet.Win32.Win32Utils]::CreateFile($Path, $DesiredAccess, $ShareMode, `
             $SecurityDescriptor, $InheritHandle, $Disposition, $FlagsAndAttributes, $TemplateFile)
+}
+
+<#
+.SYNOPSIS
+Close an object handle.
+.DESCRIPTION
+This cmdlet closes an object handle. It supports closing a handle locally or in another process as long
+as duplicate handle access is granted.
+.PARAMETER Object
+Specify the object to close.
+.PARAMETER Process
+Specify the process where the handle to close is located.
+.PARAMETER ProcessId
+Specify the process ID where the handle to close is located.
+.PARAMETER Handle
+Specify the handle value to close in another process.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Close-NtObject -Object $obj
+Close an object in the current process.
+.EXAMPLE
+Close-NtObject -Handle 0x1234 -Process $proc
+Close handle 0x1234 in another process.
+.EXAMPLE
+Close-NtObject -Handle 0x1234 -ProcessId 684
+Close handle 0x1234 in process with ID 684.
+#>
+function Close-NtObject {
+    [CmdletBinding(DefaultParameterSetName="FromProcess")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromObject")]
+        [NtApiDotNet.NtObject]$Object,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromProcess")]
+        [NtApiDotNet.NtProcess]$Process,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromProcessId")]
+        [int]$ProcessId,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromProcess")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromProcessId")]
+        [IntPtr]$Handle
+    )
+
+    PROCESS {
+        switch($PsCmdlet.ParameterSetName) {
+            "FromObject" { $Object.Close() }
+            "FromProcess" { [NtApiDotNet.NtObject]::CloseHandle($Process, $Handle) }
+            "FromProcessId" { [NtApiDotNet.NtObject]::CloseHandle($ProcessId, $Handle) }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Start an accessible scheduled task.
+.DESCRIPTION
+This cmdlet starts a scheduled task based on an accessible task result.
+.PARAMETER Task
+Specify the task to start.
+.PARAMETER User
+Specify the user to run the task under. Can be a username or a SID.
+.PARAMETER Flags
+Specify optional flags.
+.PARAMETER SessionId
+Specify an optional session ID.
+.PARAMETER Arguments
+Specify optional arguments to the pass to the task.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Start-AccessibleScheduledTask -Task $task
+Start a task with no options.
+.EXAMPLE
+Start-AccessibleScheduledTask -Task $task -Arguments "A", B"
+Start a task with optional argument strings "A" and "B"
+#>
+function Start-AccessibleScheduledTask {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtObjectManager.ScheduledTaskAccessCheckResult]$Task,
+        [string]$User,
+        [NtObjectManager.TaskRunFlags]$Flags = 0,
+        [int]$SessionId,
+        [string[]]$Arguments
+    )
+
+    $Task.RunEx($Flags, $SessionId, $User, $Arguments)
 }

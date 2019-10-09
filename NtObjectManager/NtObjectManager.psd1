@@ -53,7 +53,7 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'New-NtSecurityQualityOfService', 'Get-NtLicenseValue', 'Get-NtSystemEnvironmentValue', 'New-Win32Process',
           'New-NtEaBuffer', 'New-NtSectionImage', 'New-Win32ProcessConfig', 'Get-NtTokenFromProcess', 'Get-ExecutableManifest',
           'New-NtProcess', 'New-NtProcessConfig', 'Get-NtFilePath', 'Show-NtTokenEffective', 'Show-NtSecurityDescriptor', 'Get-NtIoControlCode',
-          'Import-NtObject', 'Export-NtObject', 'Get-ExecutionAlias', 'New-ExecutionAlias', 'Show-NtToken', 'Show-NtSection',
+          'Import-NtObject', 'Export-NtObject', 'Get-ExecutionAlias', 'Set-ExecutionAlias', 'Set-ExecutionAlias', 'Show-NtToken', 'Show-NtSection',
           'Resolve-NtObjectAddress', 'Invoke-NtToken', 'Get-NtSecurityDescriptor',
           'Set-NtSecurityDescriptor', 'Add-NtVirtualMemory', 'Get-NtVirtualMemory', 'Remove-NtVirtualMemory', 'Set-NtVirtualMemory',
           'Read-NtVirtualMemory', 'Write-NtVirtualMemory', 'Get-EmbeddedAuthenticodeSignature', 'Get-NtSidName', 'New-SymbolResolver', 
@@ -64,7 +64,7 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Start-NtFileOplock', 'Format-RpcServer', 'Get-NtObjectInformation', 'Set-NtObjectInformation', 'Get-NtProcessMitigationPolicy',
           'Set-NtProcessMitigationPolicy', 'Format-NtSecurityDescriptor', 'Get-AppContainerProfile', 'New-AppContainerProfile',
           'Get-RpcClient', 'Format-RpcClient', 'Set-RpcServer', 'Connect-RpcClient', 'New-RpcContextHandle', 'Format-RpcComplexType',
-          'Get-Win32File'
+          'Get-Win32File', 'Close-NtObject', 'Start-AccessibleScheduledTask'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -93,7 +93,8 @@ CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile',
                'Remove-NtDebugProcess', 'Copy-NtObject', 'New-NtResourceManager',
                'Get-NtResourceManager', 'Get-NtTransactionGuid', 'Get-NtEnlistment',
                'New-NtEnlistment', 'Get-RpcServerName', 'Set-RpcServerName',
-               'Set-NtFileHardlink', 'Test-NetworkAccess'
+               'Set-NtFileHardlink', 'Test-NetworkAccess', 'Get-AccessibleScheduledTask',
+               'Compare-RpcServer'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = @()
