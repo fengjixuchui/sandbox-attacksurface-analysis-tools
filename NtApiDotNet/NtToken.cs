@@ -1284,6 +1284,33 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get whether token is write restricted.
+        /// </summary>
+        public bool WriteRestricted
+        {
+            get
+            {
+                if (!Restricted)
+                    return false;
+                return (Flags & TokenFlags.WriteRestricted) != 0;
+            }
+        }
+
+        /// <summary>
+        /// Token access flags.
+        /// </summary>
+        public TokenFlags Flags
+        {
+            get
+            {
+                using (var buffer = QueryBuffer<TokenAccessInformationTruncated>(TokenInformationClass.TokenAccessInformation))
+                {
+                    return buffer.Result.Flags;
+                }
+            }
+        }
+
+        /// <summary>
         /// Get token capabilities.
         /// </summary>
         public UserGroup[] Capabilities

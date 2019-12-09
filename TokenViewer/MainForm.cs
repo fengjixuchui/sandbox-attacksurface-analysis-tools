@@ -38,7 +38,12 @@ namespace TokenViewer
             item.SubItems.Add(entry.Name);
             item.SubItems.Add(token.User.ToString());
             item.SubItems.Add(token.IntegrityLevel.ToString());
-            item.SubItems.Add(token.Restricted.ToString());
+            string restricted = token.Restricted.ToString();
+            if (token.WriteRestricted)
+            {
+                restricted = "Write";
+            }
+            item.SubItems.Add(restricted);
             item.SubItems.Add(token.AppContainer.ToString());
             item.Tag = token.Duplicate();
             return item;
@@ -476,8 +481,7 @@ namespace TokenViewer
         {
             if (listViewSessions.SelectedItems.Count > 0)
             {
-                NtToken token = listViewSessions.SelectedItems[0].Tag as NtToken;
-                if (token != null)
+                if (listViewSessions.SelectedItems[0].Tag is NtToken token)
                 {
                     TokenForm.OpenForm(token, "Session", true);
                 }
@@ -527,7 +531,12 @@ namespace TokenViewer
                             item.SubItems.Add($"0x{handle.Handle:X}");
                             item.SubItems.Add(token.User.ToString());
                             item.SubItems.Add(token.IntegrityLevel.ToString());
-                            item.SubItems.Add(token.Restricted.ToString());
+                            string restricted = token.Restricted.ToString();
+                            if (token.WriteRestricted)
+                            {
+                                restricted = "Write";
+                            }
+                            item.SubItems.Add(restricted);
                             item.SubItems.Add(token.AppContainer.ToString());
                             item.SubItems.Add(token.TokenType.ToString());
                             item.SubItems.Add(token.ImpersonationLevel.ToString());
