@@ -148,6 +148,11 @@ namespace TokenViewer
             }
         }
 
+        private void UpdateTokenFlags()
+        {
+            txtTokenFlags.Text = _token.Flags.ToString();
+        }
+
         private void UpdateTokenData()
         {
             UserGroup user = _token.User;
@@ -216,7 +221,10 @@ namespace TokenViewer
 
                     ListViewItem item = new ListViewItem(group.ToString());
 
-                    AccessMask mask = GenericAccessRights.GenericAll | GenericAccessRights.GenericExecute | GenericAccessRights.GenericRead | GenericAccessRights.GenericWrite;
+                    AccessMask mask = GenericAccessRights.GenericAll | GenericAccessRights.GenericExecute 
+                        | GenericAccessRights.GenericRead | GenericAccessRights.GenericWrite 
+                        | GenericAccessRights.AccessSystemSecurity | GenericAccessRights.Delete | GenericAccessRights.ReadControl
+                        | GenericAccessRights.Synchronize | GenericAccessRights.WriteDac | GenericAccessRights.WriteOwner;
                     string maskstr;
 
                     if ((ace.Mask & ~mask).HasAccess)
@@ -245,6 +253,10 @@ namespace TokenViewer
             if (_token.Restricted)
             {
                 PopulateGroupList(listViewRestrictedSids, _token.RestrictedSids);
+                if (_token.WriteRestricted)
+                {
+                    tabPageRestricted.Text = "Write Restricted SIDs";
+                }
             }
             else
             {
@@ -282,6 +294,7 @@ namespace TokenViewer
             txtHandleAccess.Text = _token.GrantedAccess.ToString();
             Sid trust_level = _token.TrustLevel;
             txtTrustLevel.Text = trust_level != null ? trust_level.Name : "N/A";
+            UpdateTokenFlags();
             UpdatePrivileges();
             UpdateSecurityAttributes();
 
@@ -307,7 +320,8 @@ namespace TokenViewer
             return builder.ToString();
         }
 
-        public TokenForm(NtToken token) : this(token, null)
+        public TokenForm(NtToken token) 
+            : this(token, null)
         {
         }
 
@@ -869,6 +883,7 @@ namespace TokenViewer
             {
                 _token.SetUIAccess(!_token.UIAccess);
                 txtUIAccess.Text = _token.UIAccess.ToString();
+                UpdateTokenFlags();
             }
             catch (NtException ex)
             {
@@ -883,6 +898,7 @@ namespace TokenViewer
             {
                 _token.SetVirtualizationEnabled(!_token.VirtualizationEnabled);
                 txtVirtualizationEnabled.Text = _token.VirtualizationEnabled.ToString();
+                UpdateTokenFlags();
             }
             catch (NtException ex)
             {

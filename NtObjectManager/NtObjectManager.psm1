@@ -130,6 +130,50 @@ function Set-NtTokenPrivilege
 
 <#
 .SYNOPSIS
+Remove privileges from a token.
+.DESCRIPTION
+This cmdlet will remove privileges from a token. Note that this completely removes the privilege, not just disable.
+.PARAMETER Privileges
+A list of privileges to remove.
+.PARAMETER Token
+Optional token object to use to remove privileges.
+.INPUTS
+None
+.OUTPUTS
+List of TokenPrivilege values indicating the new state of all privileges successfully modified.
+.EXAMPLE
+Remove-NtTokenPrivilege SeDebugPrivilege
+Remove SeDebugPrivilege from the current process token
+.EXAMPLE
+Remove-NtTokenPrivilege SeBackupPrivilege, SeRestorePrivilege -Token $token
+Remove SeBackupPrivilege and SeRestorePrivilege from an explicit token object.
+#>
+function Remove-NtTokenPrivilege
+{
+  Param(
+    [Parameter(Mandatory=$true, Position=0)]
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
+    [NtApiDotNet.NtToken]$Token
+    )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    $result = @()
+    foreach($priv in $Privileges) {
+      if (!$Token.RemovePrivilege($priv)) {
+        Write-Warning "Can't remove $priv from token."
+      }
+    }
+    return $result
+  }
+}
+
+<#
+.SYNOPSIS
 Set the integrity level of a token.
 .DESCRIPTION
 This cmdlet will set the integrity level of a token. If you want to raise the level you must have SeTcbPrivilege otherwise you can only lower it. 
@@ -999,10 +1043,11 @@ function Get-ExecutableManifest
 
 <#
 .SYNOPSIS
-Prints the details of the current token.
+Prints the details of a token.
 .DESCRIPTION
-This cmdlet opens the current token and prints basic details about it. This is similar to the Windows whois
-command but runs in process and will print information about the current thread token if you're impersonating.
+This cmdlet opens prints basic details about it a token.
+.PARAMETER Token
+Specify the token to format.
 .PARAMETER All
 Show all information.
 .PARAMETER User
@@ -1013,34 +1058,38 @@ Show group information. Also prints capability sids and restricted sids if a san
 Show privilege information.
 .PARAMETER Integrity
 Show integrity information.
+.PARAMETER SecurityAttributes
+Show token security attributes.
 .OUTPUTS
 Text data
 .EXAMPLE
-Show-NtTokenEffective
-Show only the user name of the current token.
+Format-NtToken -Token $token
+Print the user name of the token.
 .EXAMPLE
-Show-NtTokenEffective -All
-Show the user, groups, privileges and integrity of the current token.
+Format-NtToken -Token $token -All
+Print all details for the token.
 .EXAMPLE
-Show-NtTokenEffective -User -Group
-Show the user and groups of the current token.
+Format-NtToken -Token $token -User -Group
+Print the user and groups of the token.
 #>
-function Show-NtTokenEffective {
+function Format-NtToken {
     Param(
+    [parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
+    [NtApiDotNet.NtToken]$Token,
     [switch]$All,
     [switch]$Group,
     [switch]$Privilege,
     [switch]$User,
-    [switch]$Integrity
-    )
-
-  $token = Get-NtToken -Effective
+    [switch]$Integrity,
+    [switch]$SecurityAttributes
+  )
 
   if ($All) {
     $Group = $true
     $User = $true
     $Privilege = $true
     $Integrity = $true
+    $SecurityAttributes = $true
   }
 
   if (!$User -and !$Group -and !$Privilege -and !$Integrity) {
@@ -1066,8 +1115,13 @@ function Show-NtTokenEffective {
     }
 
     if ($token.Restricted) {
-      "RESTRICTED SID INFORMATION"
-      "--------------------------"
+      if ($token.WriteRestricted) {
+        "WRITE RESTRICTED SID INFORMATION"
+        "--------------------------------"
+      } else {
+        "RESTRICTED SID INFORMATION"
+        "--------------------------"
+      }
       $token.RestrictedSids | Format-Table
     }
   }
@@ -1082,6 +1136,59 @@ function Show-NtTokenEffective {
     "INTEGRITY LEVEL"
     "---------------"
     $token.IntegrityLevel | Format-Table
+    ""
+  }
+
+  if ($SecurityAttributes) {
+    "SECURITY ATTRIBUTES"
+    "-------------------"
+    $token.SecurityAttributes | Format-Table
+  }
+}
+
+<#
+.SYNOPSIS
+Prints the details of the current token.
+.DESCRIPTION
+This cmdlet opens the current token and prints basic details about it. This is similar to the Windows whoami
+command but runs in process and will print information about the current thread token if you're impersonating.
+.PARAMETER All
+Show all information.
+.PARAMETER User
+Show user information.
+.PARAMETER Group
+Show group information. Also prints capability sids and restricted sids if a sandboxed token.
+.PARAMETER Privilege
+Show privilege information.
+.PARAMETER Integrity
+Show integrity information.
+.PARAMETER SecurityAttributes
+Show token security attributes.
+.OUTPUTS
+Text data
+.EXAMPLE
+Show-NtTokenEffective
+Show only the user name of the current token.
+.EXAMPLE
+Show-NtTokenEffective -All
+Show the user, groups, privileges and integrity of the current token.
+.EXAMPLE
+Show-NtTokenEffective -User -Group
+Show the user and groups of the current token.
+#>
+function Show-NtTokenEffective {
+    Param(
+    [switch]$All,
+    [switch]$Group,
+    [switch]$Privilege,
+    [switch]$User,
+    [switch]$Integrity,
+    [switch]$SecurityAttributes
+    )
+
+  Use-NtObject($token = Get-NtToken -Effective) {
+    Format-NtToken -Token $token -All:$All -Group:$Group -Privilege:$Privilege `
+        -User:$User -Integrity:$Integrity -SecurityAttributes:$SecurityAttributes
   }
 }
 
@@ -1633,7 +1740,7 @@ A process ID of a process to display the token for.
 .PARAMETER Name
 The name of a process to display the token for.
 .PARAMETER MaxTokens
-When getting the name only display at most this number of tokens.
+When getting the name/command line only display at most this number of tokens.
 .PARAMETER All
 Show dialog with all access tokens.
 .PARAMETER RunAsAdmin
@@ -1678,6 +1785,10 @@ function Show-NtToken {
         [int]$ProcessId = $pid,
         [Parameter(Mandatory=$true, ParameterSetName="FromName")]
         [string]$Name,
+        [Parameter(Mandatory=$true, ParameterSetName="FromCommandLine")]
+        [string]$CommandLine,
+        [Parameter(ParameterSetName="FromName")]
+        [Parameter(ParameterSetName="FromCommandLine")]
         [int]$MaxTokens = 0,
         [Parameter(ParameterSetName="All")]
         [switch]$All,
@@ -1699,8 +1810,18 @@ function Show-NtToken {
         }
         "FromName" {
           Use-NtObject($ps = Get-NtProcess -Name $Name -Access QueryLimitedInformation) {
+            $result = $ps
             if ($MaxTokens -gt 0) {
-              $ps = $ps | Select-Object -First $MaxTokens
+              $result = $ps | Select-Object -First $MaxTokens
+            }
+            $ps | Show-NtToken
+          }
+        }
+        "FromCommandLine" {
+          Use-NtObject($ps = Get-NtProcess -CommandLine $CommandLine -Access QueryLimitedInformation) {
+            $result = $ps
+            if ($MaxTokens -gt 0) {
+              $result = $ps | Select-Object -First $MaxTokens
             }
             $ps | Show-NtToken
           }
@@ -1805,10 +1926,10 @@ function Show-NtSection {
         [switch]$ReadOnly,
         [Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromData")]
         [byte[]]$Data,
-		[Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromFile")]
-		[string]$Path,
-		[Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromPath")]
-		[string]$ObjPath,
+        [Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromFile")]
+        [string]$Path,
+        [Parameter(Position = 0, Mandatory = $true, ParameterSetName = "FromPath")]
+        [string]$ObjPath,
         [switch]$Wait
     )
     switch($PSCmdlet.ParameterSetName) {
@@ -1845,23 +1966,23 @@ function Show-NtSection {
                 }
             }
         }
-		"FromFile" {
-		  $Path = Resolve-Path $Path
-		  if ($Path -ne "") {
-			Use-NtObject($p = New-Win32Process "EditSection --file=""$Path""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
-			  if ($Wait) {
-				$p.Process.Wait() | Out-Null
-			  }
-			}
-		  }
+        "FromFile" {
+          $Path = Resolve-Path $Path
+          if ($Path -ne "") {
+            Use-NtObject($p = New-Win32Process "EditSection --file=""$Path""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
+              if ($Wait) {
+                $p.Process.Wait() | Out-Null
+              }
+            }
+          }
         }
-		"FromPath" {
-			Use-NtObject($p = New-Win32Process "EditSection --path=""$ObjPath""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
-				if ($Wait) {
-					$p.Process.Wait() | Out-Null
-				}
-			}
-		}
+        "FromPath" {
+            Use-NtObject($p = New-Win32Process "EditSection --path=""$ObjPath""" -ApplicationName "$PSScriptRoot\EditSection.exe") {
+                if ($Wait) {
+                    $p.Process.Wait() | Out-Null
+                }
+            }
+        }
     } 
 }
 
@@ -1959,6 +2080,12 @@ function Get-NtSecurityDescriptor
         [string]$Path,
         [parameter(ParameterSetName = "FromPath")]
         [string]$TypeName,
+        [parameter(Mandatory, ParameterSetName = "FromPid")]
+        [alias("pid")]
+        [int]$ProcessId,
+        [parameter(Mandatory, ParameterSetName = "FromTid")]
+        [alias("tid")]
+        [int]$ThreadId,
         [switch]$ToSddl
     )
     PROCESS {
@@ -1971,6 +2098,16 @@ function Get-NtSecurityDescriptor
             }
             "FromPath" {
                 Use-NtObject($obj = Get-NtObject -Path $Path -TypeName $TypeName -Access ReadControl) {
+                    $obj.GetSecurityDescriptor($SecurityInformation)
+                }
+            }
+            "FromPid" {
+                Use-NtObject($obj = Get-NtProcess -ProcessId $ProcessId -Access ReadControl) {
+                    $obj.GetSecurityDescriptor($SecurityInformation)
+                }
+            }
+            "FromTid" {
+                Use-NtObject($obj = Get-NtThread -ThreadId $ThreadId -Access ReadControl) {
                     $obj.GetSecurityDescriptor($SecurityInformation)
                 }
             }
@@ -2976,12 +3113,6 @@ The enumerated type
 None
 .OUTPUTS
 NtApiDotNet.NtType
-.EXAMPLE
-Add-NtSecurityDescriptorDaclAce -SecurityDescriptor $sd -Sid "S-1-1-0" -AccessMask 0x1234
-Adds an access allowed ACE to the DACL for SID S-1-1-0 and mask of 0x1234
-.EXAMPLE
-Add-NtSecurityDescriptorDaclAce -SecurityDescriptor $sd -Sid "S-1-1-0" -AccessMask (Get-NtAccessMask -FileAccess ReadData)
-Adds an access allowed ACE to the DACL for SID S-1-1-0 and mask for the file ReadData access right.
 #>
 function New-NtType {
     Param(

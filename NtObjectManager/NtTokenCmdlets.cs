@@ -40,7 +40,11 @@ namespace NtObjectManager
         /// <summary>
         /// Create Network Service token.
         /// </summary>
-        NetworkService
+        NetworkService,
+        /// <summary>
+        /// Create IUsr Service token.
+        /// </summary>
+        IUser,
     }
 
     /// <summary>
@@ -152,6 +156,14 @@ namespace NtObjectManager
     /// <example>
     ///   <code>Get-NtToken -LowBox -PackageSid "Application.Name" -CapabilitySid "readRegistry", "S-1-15-3-1"</code>
     ///   <para>Get current process' primary token create a lowbox token with a named package and the internetClient and readRegistry capabilities.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Get-NtToken -Session</code>
+    ///   <para>Get current session token.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Get-NtToken -Session -SessionId 10</code>
+    ///   <para>Get session token for session 10.</para>
     /// </example>
     /// <para type="link">about_ManagingNtObjectLifetime</para>
     [Cmdlet(VerbsCommon.Get, "NtToken", DefaultParameterSetName = "Primary")]
@@ -374,6 +386,18 @@ namespace NtObjectManager
         [Parameter(ParameterSetName = "Service", Mandatory = true)]
         public ServiceAccountType? Service { get; set; }
 
+        /// <summary>
+        /// <para type="description">Specify getting a session token.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "Session", Mandatory = true)]
+        public SwitchParameter Session { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the session ID for the session token.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "Session")]
+        public int SessionId { get; set; }
+
         private static void AddLuids(HashSet<Luid> set, IEnumerable<Luid> luids)
         {
             foreach (Luid l in luids)
@@ -417,6 +441,7 @@ namespace NtObjectManager
                 Domain = "Unknown";
             }
             LogonType = SecurityLogonType.Network;
+            SessionId = -1;
         }
 
         private NtToken GetPrimaryToken(TokenAccessRights desired_access)
@@ -511,6 +536,19 @@ namespace NtObjectManager
             return null;
         }
 
+        private static GroupAttributes GetAttributes(Sid sid)
+        {
+            if (NtSecurity.IsServiceSid(sid))
+            {
+                return GroupAttributes.Owner | GroupAttributes.Enabled;
+            }
+            else if (NtSecurity.IsLogonSessionSid(sid))
+            {
+                return GroupAttributes.Enabled | GroupAttributes.EnabledByDefault | GroupAttributes.Mandatory | GroupAttributes.LogonId;
+            }
+            return GroupAttributes.Enabled | GroupAttributes.EnabledByDefault | GroupAttributes.Mandatory;
+        }
+
         private NtToken GetLogonToken(TokenAccessRights desired_access, string user, 
             string domain, string password, SecurityLogonType logon_type)
         {
@@ -518,7 +556,7 @@ namespace NtObjectManager
             if (AdditionalGroups != null && AdditionalGroups.Length > 0)
             {
                 groups = AdditionalGroups.Select(s => new UserGroup(s,
-                    GroupAttributes.Enabled | GroupAttributes.EnabledByDefault | GroupAttributes.Mandatory));
+                    GetAttributes(s)));
             }
             using (NtToken token = TokenUtils.GetLogonUserToken(user, domain, password, logon_type, groups))
             {
@@ -575,7 +613,7 @@ namespace NtObjectManager
                 throw new ArgumentException($"Invalid Package Sid {package_sid}");
             }
 
-            if (!String.IsNullOrEmpty(RestrictedPackageName))
+            if (!string.IsNullOrEmpty(RestrictedPackageName))
             {
                 package_sid = TokenUtils.DeriveRestrictedPackageSidFromSid(package_sid, RestrictedPackageName);
             }
@@ -618,8 +656,32 @@ namespace NtObjectManager
                 case ServiceAccountType.NetworkService:
                     user = "Network Service";
                     break;
+                case ServiceAccountType.IUser:
+                    user = "IUsr";
+                    break;
             }
             return GetLogonToken(desired_access, user, "NT AUTHORITY", null, SecurityLogonType.Service);
+        }
+
+        private NtToken GetSessionToken(TokenAccessRights desired_access, int session_id)
+        {
+            if (!NtToken.EnableEffectivePrivilege(TokenPrivilegeValue.SeTcbPrivilege))
+            {
+                WriteWarning("Getting session token requires SeTcbPrivilege");
+            }
+
+            if (session_id < 0)
+            {
+                session_id = NtProcess.Current.SessionId;
+            }
+            using (var token = TokenUtils.GetSessionToken(session_id))
+            {
+                if (desired_access == TokenAccessRights.MaximumAllowed)
+                {
+                    return token.Duplicate();
+                }
+                return token.Duplicate(desired_access);
+            }
         }
 
         private NtToken GetToken(TokenAccessRights desired_access)
@@ -659,6 +721,10 @@ namespace NtObjectManager
             else if (Service.HasValue)
             {
                 return GetServiceToken(desired_access, Service.Value);
+            }
+            else if (Session)
+            {
+                return GetSessionToken(desired_access, SessionId);
             }
             else
             {

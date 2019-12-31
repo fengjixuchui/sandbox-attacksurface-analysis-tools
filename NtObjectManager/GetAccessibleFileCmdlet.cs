@@ -13,7 +13,6 @@
 //  limitations under the License.
 
 using NtApiDotNet;
-using System;
 using System.Collections.Generic;
 using System.Management.Automation;
 
@@ -137,7 +136,7 @@ namespace NtObjectManager
             {
                 bool is_directory = IsDirectoryNoThrow(file);
                 WriteAccessCheckResult(FormatWin32Path ? file.Win32PathName : file.FullPath, type.Name, granted_access, type.GenericMapping,
-                    sd.ToSddl(), is_directory ? typeof(FileDirectoryAccessRights) : typeof(FileAccessRights), is_directory, token.Information);
+                    sd, is_directory ? typeof(FileDirectoryAccessRights) : typeof(FileAccessRights), is_directory, token.Information);
             }
         }
 
@@ -152,7 +151,7 @@ namespace NtObjectManager
                 {
                     bool is_directory = IsDirectoryNoThrow(result.Result);
                     WriteAccessCheckResult(file.FullPath, file.NtType.Name, result.Result.GrantedAccessMask,
-                        file.NtType.GenericMapping, String.Empty, is_directory ?
+                        file.NtType.GenericMapping, null, is_directory ?
                         typeof(FileDirectoryAccessRights) : typeof(FileAccessRights), is_directory, token.Information);
                 }
             }
