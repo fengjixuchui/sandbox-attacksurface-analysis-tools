@@ -21,6 +21,7 @@ namespace NtApiDotNet
     /// <summary>
     /// Result from a native create process call.
     /// </summary>
+    [Obsolete("Use NtProcessCreateResult")]
     public sealed class CreateUserProcessResult : IDisposable
     {
         /// <summary>
@@ -173,8 +174,7 @@ namespace NtApiDotNet
         /// <param name="exitcode">Exit code for termination</param>
         public void Terminate(NtStatus exitcode)
         {
-            if (Process != null)
-                Process.Terminate(exitcode);
+            Process?.Terminate(exitcode);
         }
 
         /// <summary>
@@ -183,9 +183,7 @@ namespace NtApiDotNet
         /// <returns>The suspend count</returns>
         public int Resume()
         {
-            if (Thread != null)
-                return Thread.Resume();
-            return 0;
+            return Thread?.Resume() ?? 0;
         }
 
         /// <summary>
@@ -214,14 +212,11 @@ namespace NtApiDotNet
                     }
                 }
 
-                Process.Close();
-                Thread.Close();
-                ImageFile.Close();
-                SectionHandle.Close();
-                if (IFEOKeyHandle != null)
-                {
-                    IFEOKeyHandle.Close();
-                }
+                Process?.Close();
+                Thread?.Close();
+                ImageFile?.Close();
+                SectionHandle?.Close();
+                IFEOKeyHandle?.Close();
                 disposedValue = true;
             }
         }
