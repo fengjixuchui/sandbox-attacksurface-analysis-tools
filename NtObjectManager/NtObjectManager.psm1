@@ -130,6 +130,53 @@ function Set-NtTokenPrivilege
 
 <#
 .SYNOPSIS
+Get the state of a token's privileges.
+.DESCRIPTION
+This cmdlet will get the state of a token's privileges.
+.PARAMETER Privileges
+A list of privileges to get their state.
+.PARAMETER Token
+Optional token object to use to get privileges. Must be accesible for Query right.
+.INPUTS
+None
+.OUTPUTS
+List of TokenPrivilege values indicating the state of all privileges requested.
+.EXAMPLE
+Get-NtTokenPrivilege
+Get all privileges on the current process token
+.EXAMPLE
+Set-NtTokenPrivilege SeDebugPrivilege 
+Get state of SeDebugPrivilege on the current process token
+.EXAMPLE
+Get-NtTokenPrivilege SeBackupPrivilege, SeRestorePrivilege -Token $token
+Get SeBackupPrivilege and SeRestorePrivilege status on an explicit token object.
+#>
+function Get-NtTokenPrivilege
+{
+  Param(
+    [Parameter(Position=0)]
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
+    [NtApiDotNet.NtToken]$Token
+    )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access Query
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    if ($Privileges -ne $null -and $Privileges.Count -gt 0) {
+        foreach($priv in $Privileges) {
+            $Token.GetPrivilege($priv) | Write-Output
+        }
+    } else {
+        $Token.Privileges | Write-Output
+    }
+  }
+}
+
+<#
+.SYNOPSIS
 Remove privileges from a token.
 .DESCRIPTION
 This cmdlet will remove privileges from a token. Note that this completely removes the privilege, not just disable.
@@ -1095,6 +1142,8 @@ Show integrity information.
 Show token security attributes.
 .PARAMETER TrustLevel
 Show token trust level.
+.PARAMETER Information
+Show token information such as type, impersonation level and ID.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1117,7 +1166,8 @@ function Format-NtToken {
     [switch]$User,
     [switch]$Integrity,
     [switch]$SecurityAttributes,
-    [switch]$TrustLevel
+    [switch]$TrustLevel,
+    [switch]$Information
   )
 
   if ($All) {
@@ -1127,11 +1177,12 @@ function Format-NtToken {
     $Integrity = $true
     $SecurityAttributes = $true
     $TrustLevel = $true
+    $Information = $true
   }
 
   if (!$User -and !$Group -and !$Privilege `
     -and !$Integrity -and !$TrustLevel `
-    -and !$SecurityAttributes) {
+    -and !$SecurityAttributes -and !$Information) {
     $token.User.ToString()
     return
   }
@@ -1193,6 +1244,20 @@ function Format-NtToken {
     "SECURITY ATTRIBUTES"
     "-------------------"
     $token.SecurityAttributes | Format-Table
+  }
+
+  if ($Information) {
+    "TOKEN INFORMATION"
+    "-----------------"
+    "Type       : {0}" -f $token.TokenType
+    if ($token.TokenType -eq "Impersonation") {
+      "Imp Level  : {0}" -f $token.ImpersonationLevel
+    }
+    "ID         : {0}" -f $token.Id
+    "Auth ID    : {0}" -f $token.AuthenticationId
+    "Origin ID  : {0}" -f $token.Origin
+    "Modified ID: {0}" -f $token.ModifiedId
+    "Session ID : {0}" -f $token.SessionId
   }
 }
 
@@ -5053,4 +5118,21 @@ function Stop-NtThread
             }
         }
     }
+}
+
+<#
+.SYNOPSIS
+Gets a new Locally Unique ID (LUID)
+.DESCRIPTION
+This cmdlet requests a new LUID value.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Luid
+.EXAMPLE
+Get-NtLocallyUniqueId
+Get a new locally unique ID.
+#>
+function Get-NtLocallyUniqueId {
+    [NtApiDotNet.NtSystemInfo]::AllocateLocallyUniqueId() | Write-Output
 }
