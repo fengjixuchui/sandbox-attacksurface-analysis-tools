@@ -105,11 +105,15 @@ Enable SeBackupPrivilege and SeRestorePrivilege on an explicit token object.
 #>
 function Set-NtTokenPrivilege
 {
+  [CmdletBinding(DefaultParameterSetName="FromAttributes")]
   Param(
     [Parameter(Mandatory=$true, Position=0)]
     [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
     [NtApiDotNet.NtToken]$Token,
-    [NtApiDotNet.PrivilegeAttributes]$Attributes = "Enabled"
+    [Parameter(ParameterSetName="FromAttributes")]
+    [NtApiDotNet.PrivilegeAttributes]$Attributes = "Enabled",
+    [Parameter(ParameterSetName="FromDisable")]
+    [switch]$Disable
     )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary
@@ -117,11 +121,17 @@ function Set-NtTokenPrivilege
     $Token = $Token.Duplicate()
   }
 
+  if ($Disable) {
+    $Attributes = 0
+  }
+
   Use-NtObject($Token) {
     $result = @()
     foreach($priv in $Privileges) {
       if ($Token.SetPrivilege($priv, $Attributes)) {
         $result += @($Token.GetPrivilege($priv))
+      } else {
+        Write-Warning "Couldn't set privilege $priv"
       }
     }
     return $result
@@ -143,21 +153,24 @@ None
 List of TokenPrivilege values indicating the state of all privileges requested.
 .EXAMPLE
 Get-NtTokenPrivilege
-Get all privileges on the current process token
+Get all privileges on the current process token.
 .EXAMPLE
-Set-NtTokenPrivilege SeDebugPrivilege 
+Get-NtTokenPrivilege -Token $token
+Get all privileges on an explicit  token.
+.EXAMPLE
+Get-NtTokenPrivilege -Privileges SeDebugPrivilege 
 Get state of SeDebugPrivilege on the current process token
 .EXAMPLE
-Get-NtTokenPrivilege SeBackupPrivilege, SeRestorePrivilege -Token $token
+Get-NtTokenPrivilege -Privileges SeBackupPrivilege, SeRestorePrivilege -Token $token
 Get SeBackupPrivilege and SeRestorePrivilege status on an explicit token object.
 #>
 function Get-NtTokenPrivilege
 {
   Param(
     [Parameter(Position=0)]
-    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
-    [NtApiDotNet.NtToken]$Token
-    )
+    [NtApiDotNet.NtToken]$Token,
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges
+  )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary -Access Query
   } else {
@@ -167,10 +180,302 @@ function Get-NtTokenPrivilege
   Use-NtObject($Token) {
     if ($Privileges -ne $null -and $Privileges.Count -gt 0) {
         foreach($priv in $Privileges) {
-            $Token.GetPrivilege($priv) | Write-Output
+            $val = $Token.GetPrivilege($priv)
+            if ($val -ne $null) {
+                $val | Write-Output
+            } else {
+                Write-Warning "Couldn't get privilege $priv"
+            }
         }
     } else {
         $Token.Privileges | Write-Output
+    }
+  }
+}
+
+<#
+.SYNOPSIS
+Get a token's groups.
+.DESCRIPTION
+This cmdlet will get the groups for a token.
+.PARAMETER Token
+Optional token object to use to get groups. Must be accesible for Query right.
+.PARAMETER Restricted
+Return the restricted SID list.
+.PARAMETER Capabilities
+Return the capability SID list.
+.PARAMETER Attributes
+Specify attributes to filter group list on.
+.INPUTS
+None
+.OUTPUTS
+List of UserGroup values indicating the state of all groups.
+.EXAMPLE
+Get-NtTokenGroup
+Get all groups on the current process token
+.EXAMPLE
+Get-NtTokenGroup -Token $token
+Get groups on an explicit token object.
+.EXAMPLE
+Get-NtTokenGroup -Attributes Enabled
+Get groups that are enabled.
+#>
+function Get-NtTokenGroup {
+  [CmdletBinding(DefaultParameterSetName="Normal")]
+  Param(
+    [Parameter(Position = 0)]
+    [NtApiDotNet.NtToken]$Token,
+    [Parameter(Mandatory, ParameterSetName = "Restricted")]
+    [switch]$Restricted,
+    [Parameter(Mandatory, ParameterSetName = "Capabilities")]
+    [switch]$Capabilities,
+    [NtApiDotNet.GroupAttributes]$Attributes = 0
+  )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access Query
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    $groups = if ($Restricted) {
+        $Token.RestrictedSids
+    } elseif ($Capabilities) {
+        $Token.Capabilities
+    } else {
+        $Token.Groups
+    }
+
+    if ($Attributes -ne 0) {
+        $groups = $groups | ? {($_.Attributes -band $Attributes) -eq $Attributes}
+    }
+
+    $groups | Write-Output
+  }
+}
+
+<#
+.SYNOPSIS
+Sets a token's group state.
+.DESCRIPTION
+This cmdlet will sets the state of groups for a token.
+.PARAMETER Token
+Optional token object to use to set groups. Must be accesible for AdjustGroups right.
+.PARAMETER Sid
+Specify the list of SIDs to set.
+.PARAMETER Attributes
+Specify the attributes to set on the SIDs.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtTokenGroup -Sid "WD" -Attributes 0
+Set the Everyone SID to disabled.
+.EXAMPLE
+Set-NtTokenGroup -Sid "WD" -Attributes Enabled
+Set the Everyone SID to enabled.
+#>
+function Set-NtTokenGroup {
+  [CmdletBinding(DefaultParameterSetName="Normal")]
+  Param(
+    [NtApiDotNet.NtToken]$Token,
+    [Parameter(Mandatory, Position = 0)] 
+    [NtApiDotNet.Sid[]]$Sid,
+    [Parameter(Mandatory, Position = 1)] 
+    [NtApiDotNet.GroupAttributes]$Attributes
+  )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access AdjustGroups
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    $Token.SetGroups($Sid, $Attributes)
+  }
+}
+
+<#
+.SYNOPSIS
+Get a token's user SID or one of the other single SID values.
+.DESCRIPTION
+This cmdlet will get user SID for a token. Or one of the other SIDs such as Owner.
+.PARAMETER Owner
+Specify to get the owner.
+.PARAMETER Group
+Specify to get the default group.
+.PARAMETER Integrity
+Specify to get the integrity level.
+.PARAMETER TrustLevel
+Specify to get the process trust level.
+.PARAMETER LogonId
+Specify to get the logon SID.
+.PARAMETER Package
+Specify to get the AppContainer package SID.
+.PARAMETER Token
+Optional token object to use to get SID. Must be accesible for Query right.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Sid
+.EXAMPLE
+Get-NtTokenSid
+Get user SID on the current process token
+.EXAMPLE
+Get-NtTokenSid -Token $token
+Get user SID on an explicit token object.
+.EXAMPLE
+Get-NtTokenSid -Group
+Get the default group SID.
+.EXAMPLE
+Get-NtTokenSid -Owner
+Get the default owner SID.
+#>
+function Get-NtTokenSid {
+  [CmdletBinding(DefaultParameterSetName="User")]
+  Param(
+    [Parameter(Position = 0)]
+    [NtApiDotNet.NtToken]$Token,
+    [Parameter(Mandatory, ParameterSetName="Owner")]
+    [switch]$Owner,
+    [Parameter(Mandatory, ParameterSetName="Group")]
+    [switch]$Group,
+    [Parameter(Mandatory, ParameterSetName="TrustLevel")]
+    [switch]$TrustLevel,
+    [Parameter(Mandatory, ParameterSetName="Login")]
+    [switch]$LogonId,
+    [Parameter(Mandatory, ParameterSetName="Integrity")]
+    [switch]$Integrity,
+    [Parameter(Mandatory, ParameterSetName="Package")]
+    [switch]$Package,
+    [switch]$ToSddl,
+    [switch]$ToName
+  )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access Query
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    $sid = switch($PsCmdlet.ParameterSetName) {
+        "User" { $Token.User.Sid }
+        "Owner" { $Token.Owner }
+        "Group" { $Token.PrimaryGroup }
+        "TrustLevel" { $Token.TrustLevel }
+        "Login" { $Token.LogonSid.Sid }
+        "Integrity" { $Token.IntegrityLevelSid.Sid }
+        "Package" { $Token.AppContainerSid }
+    }
+
+    if ($ToSddl) {
+        $sid.ToString() | Write-Output
+    } elseif ($ToName) {
+        $sid.Name | Write-Output
+    } else {
+        $sid | Write-Output
+    }
+  }
+}
+
+<#
+.SYNOPSIS
+Set a token SID.
+.DESCRIPTION
+This cmdlet will set a SID on the token such as default owner or group.
+.PARAMETER Owner
+Specify to set the default owner.
+.PARAMETER Group
+Specify to set the default group.
+.PARAMETER Integrity
+Specify to set the integrity level.
+.PARAMETER Token
+Optional token object to use to set group. Must be accesible for AdjustDefault right.
+.PARAMETER Sid
+Specify the SID to set.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtTokenSid -Owner -Sid "S-1-2-3-4"
+Set default owner on the current process token
+.EXAMPLE
+Set-NtTokenOwner -Owner -Token $token -Sid "S-1-2-3-4"
+Set default owner on an explicit token object.
+.EXAMPLE
+Set-NtTokenOwner -Group -Sid "S-1-2-3-4"
+Set the default group.
+#>
+function Set-NtTokenSid {
+  [CmdletBinding(DefaultParameterSetName="Normal")]
+  Param(
+    [Parameter(Position = 1)]
+    [NtApiDotNet.NtToken]$Token,
+    [Parameter(Mandatory, Position = 0)]
+    [NtApiDotNet.Sid]$Sid,
+    [Parameter(Mandatory, ParameterSetName="Owner")]
+    [switch]$Owner,
+    [Parameter(Mandatory, ParameterSetName="Group")]
+    [switch]$Group,
+    [Parameter(Mandatory, ParameterSetName="Integrity")]
+    [switch]$Integrity
+  )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access AdjustDefault
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    switch($PsCmdlet.ParameterSetName) {
+        "Owner" { $Token.Owner = $Sid }
+        "Group" { $Token.PrimaryGroup = $Sid }
+        "Integrity" { $Token.IntegrityLevelSid = $sid }
+    }}
+}
+
+<#
+.SYNOPSIS
+Get a token's default owner of group.
+.DESCRIPTION
+This cmdlet will get the default owner or group for a token.
+.PARAMETER Group
+Specify to get the default group rather than default owner.
+.PARAMETER Token
+Optional token object to use to get group. Must be accesible for Query right.
+.INPUTS
+None
+.OUTPUTS
+List of TokenPrivilege values indicating the state of all privileges requested.
+.EXAMPLE
+Get-NtTokenOwner
+Get default owner on the current process token
+.EXAMPLE
+Get-NtTokenOwner -Token $token
+Get default owner on an explicit token object.
+.EXAMPLE
+Get-NtTokenOwner -Group
+Get the default group.
+#>
+function Get-NtTokenOwner {
+  [CmdletBinding(DefaultParameterSetName="Normal")]
+  Param(
+    [NtApiDotNet.NtToken]$Token,
+    [switch]$Group
+  )
+  if ($null -eq $Token) {
+    $Token = Get-NtToken -Primary -Access Query
+  } else {
+    $Token = $Token.Duplicate()
+  }
+
+  Use-NtObject($Token) {
+    if ($Group) {
+        $Token.PrimaryGroup | Write-Output
+    } else {
+        $Token.Owner | Write-Output
     }
   }
 }
@@ -3581,6 +3886,8 @@ This cmdlet formats a list of RPC servers as text.
 The RPC servers to format.
 .PARAMETER RemoveComments
 When outputing as text remove comments from the output.
+.PARAMETER CppFormat
+Format output in C++ pseudo syntax rather than C++.
 .INPUTS
 RpcServer[] The RPC servers to format.
 .OUTPUTS
@@ -3600,12 +3907,13 @@ function Format-RpcServer {
   Param(
     [parameter(Mandatory=$true, Position=0, ValueFromPipeline)]
     [NtApiDotNet.Win32.RpcServer[]]$RpcServer,
-    [switch]$RemoveComments
+    [switch]$RemoveComments,
+    [switch]$CppFormat
   )
 
   PROCESS {
     foreach($server in $RpcServer) {
-        $server.FormatAsText($RemoveComments) | Write-Output
+        $server.FormatAsText($RemoveComments, $CppFormat) | Write-Output
     }
   }
 }
@@ -3689,9 +3997,13 @@ This cmdlet gets a list of running services. It can also include in the list non
 .PARAMETER IncludeNonActive
 Specify to return all services including non-active ones.
 .PARAMETER Driver
-Specify to return drivers rather than services.
+Specify to include drivers.
+.PARAMETER State
+Specify the state of the services to get.
+.PARAMETER ServiceType
+Specify to filter the services to specific types only.
 .PARAMETER Name
-Specify a name to lookup.
+Specify names to lookup.
 .INPUTS
 None
 .OUTPUTS
@@ -3708,6 +4020,9 @@ Get all running drivers.
 .EXAMPLE
 Get-RunningService -Name Fax
 Get the Fax running service.
+.EXAMPLE
+Get-RunningService -State All -ServiceType UserService
+Get all user services.
 #>
 function Get-RunningService {
     [CmdletBinding(DefaultParameterSetName = "All")]
@@ -3716,28 +4031,39 @@ function Get-RunningService {
         [switch]$IncludeNonActive,
         [parameter(ParameterSetName = "All")]
         [switch]$Driver,
+        [parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.ServiceState]$State = "Active",
+        [parameter(Mandatory, ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.ServiceType]$ServiceType = 0,
         [parameter(ParameterSetName = "FromName", Position = 0)]
-        [string]$Name
+        [string[]]$Name
     )
 
-    switch($PSCmdlet.ParameterSetName) {
-        "All" {
-            if ($IncludeNonActive) {
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "All" {
                 if ($Driver) {
-                    [NtApiDotNet.Win32.ServiceUtils]::GetDrivers()
+                    $ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetDriverTypes()
                 } else {
-                    [NtApiDotNet.Win32.ServiceUtils]::GetServices()
+                    $ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes()
                 }
-            } else {
-                if ($Driver) {
-                    [NtApiDotNet.Win32.ServiceUtils]::GetDrivers()
+
+                if ($IncludeNonActive) {
+                    $State = "All"
                 } else {
-                    [NtApiDotNet.Win32.ServiceUtils]::GetRunningServicesWithProcessIds()
+                    $State = "Active"
+                }
+
+                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $ServiceType) | Write-Output
+            }
+            "FromArgs" {
+                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $ServiceType) | Write-Output
+            }
+            "FromName" {
+                foreach($n in $Name) {
+                    [NtApiDotNet.Win32.ServiceUtils]::GetService($n) | Write-Output
                 }
             }
-        }
-        "FromName" {
-            [NtApiDotNet.Win32.ServiceUtils]::GetService($Name)
         }
     }
 }

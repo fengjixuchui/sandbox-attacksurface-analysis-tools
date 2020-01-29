@@ -18,7 +18,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Management.Automation;
-using System.ServiceProcess;
 
 namespace NtObjectManager
 {
@@ -49,16 +48,45 @@ namespace NtObjectManager
         /// <summary>
         /// Service triggers for service.
         /// </summary>
-        public IEnumerable<ServiceTriggerInformation> Triggers { get; }
+        public IEnumerable<ServiceTriggerInformation> Triggers => Service.Triggers;
+
+        /// <summary>
+        /// Indicates additional access granted based on the Triggers.
+        /// </summary>
+        public ServiceAccessRights TriggerGrantedAccess { get; }
+
+        /// <summary>
+        /// Indicates original access granted without triggers.
+        /// </summary>
+        public ServiceAccessRights OriginalGrantedAccess { get; }
+
+        /// <summary>
+        /// Indicates the service information.
+        /// </summary>
+        public RunningService Service { get; }
+
+        /// <summary>
+        /// Indicates the service image path.
+        /// </summary>
+        public string ImagePath => Service.ImagePath;
+
+        /// <summary>
+        /// Indicates the service DLL.
+        /// </summary>
+        public string ServiceDll => Service.ServiceDll;
 
         internal ServiceAccessCheckResult(string name, AccessMask granted_access, 
             SecurityDescriptor sd, TokenInformation token_info,
-            IEnumerable<ServiceTriggerInformation> triggers) 
+            ServiceAccessRights trigger_granted_access, 
+            ServiceAccessRights original_granted_access,
+            RunningService service) 
             : base(name, "Service", granted_access,
                 ServiceUtils.GetServiceGenericMapping(), sd, 
                 typeof(ServiceAccessRights), false, token_info)
         {
-            Triggers = triggers;
+            TriggerGrantedAccess = trigger_granted_access;
+            OriginalGrantedAccess = original_granted_access;
+            Service = service;
         }
     }
 
@@ -122,6 +150,73 @@ namespace NtObjectManager
             }
         }
 
+        private bool CheckForAccess<T>(SecurityDescriptor sd, NtToken token, T desired_access, GenericMapping generic_mapping) where T : Enum
+        {
+            var result = NtSecurity.AccessCheck(sd, token,
+                               desired_access, null, generic_mapping, false);
+            if (!result.IsSuccess || !result.Result.Status.IsSuccess())
+            {
+                return false;
+            }
+            return result.Result.GrantedAccess.HasAccess;
+        }
+
+        private ServiceAccessRights GetTriggerAccess(RunningService service, NtToken token)
+        {
+            if (IgnoreTrigger)
+                return 0;
+
+            ServiceAccessRights granted_access = 0;
+            NtType type = NtType.GetTypeByType<NtEtwRegistration>();
+
+            foreach (var trigger in service.Triggers)
+            {
+                bool accessible = false;
+                if (trigger.TriggerType == ServiceTriggerType.NetworkEndpoint)
+                {
+                    accessible = true;
+                }
+                else if (trigger is EtwServiceTriggerInformation etw_trigger)
+                {
+                    if (etw_trigger.SecurityDescriptor == null)
+                    {
+                        WriteWarning($"Can't access ETW Security Descriptor for service {service.Name}. Running as Administrator might help.");
+                    }
+                    else
+                    {
+                        accessible = CheckForAccess(etw_trigger.SecurityDescriptor, token,
+                            TraceAccessRights.GuidEnable, type.GenericMapping);
+                    }
+                }
+                else if (trigger is WnfServiceTriggerInformation wnf_trigger)
+                {
+                    if (wnf_trigger.Name?.SecurityDescriptor == null)
+                    {
+                        WriteWarning($"Can't access WNF Security Descriptor for service {service.Name}");
+                    }
+                    else
+                    {
+                        accessible = CheckForAccess(wnf_trigger.Name.SecurityDescriptor, token,
+                            WnfAccessRights.WriteData, NtWnf.GenericMapping);
+                    }
+                }
+
+                if (accessible)
+                {
+                    if (trigger.Action == ServiceTriggerAction.Start)
+                    {
+                        granted_access |= ServiceAccessRights.Start;
+                    }
+                    else
+                    {
+                        granted_access |= ServiceAccessRights.Stop;
+                    }
+                }
+            }
+
+            return granted_access;
+        }
+
         /// <summary>
         /// <para type="description">Specify names of services to check.</para>
         /// </summary>
@@ -140,7 +235,14 @@ namespace NtObjectManager
         [Parameter(ParameterSetName = "All")]
         public ServiceCheckMode CheckMode { get; set; }
 
-        internal override void RunAccessCheck(IEnumerable<TokenEntry> tokens)
+        /// <summary>
+        /// <para type="description">Ignore triggers when checking maximum access.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "All")]
+        [Parameter(ParameterSetName = "FromName")]
+        public SwitchParameter IgnoreTrigger { get; set; }
+
+        private protected override void RunAccessCheck(IEnumerable<TokenEntry> tokens)
         {
             if (CheckScmAccess)
             {
@@ -166,10 +268,12 @@ namespace NtObjectManager
                     {
                         AccessMask granted_access = NtSecurity.GetMaximumAccess(service.SecurityDescriptor,
                             token.Token, service_mapping);
+                        ServiceAccessRights trigger_access = GetTriggerAccess(service, token.Token);
                         if (IsAccessGranted(granted_access, access_rights))
                         {
-                            WriteObject(new ServiceAccessCheckResult(service.Name, granted_access,
-                                service.SecurityDescriptor, token.Information, service.Triggers));
+                            WriteObject(new ServiceAccessCheckResult(service.Name, granted_access | trigger_access,
+                                service.SecurityDescriptor, token.Information, trigger_access,
+                                granted_access.ToSpecificAccess<ServiceAccessRights>(), service));
                         }
                     }
                 }

@@ -215,6 +215,13 @@ namespace NtApiDotNet.Win32
         Full = 0x00000100
     }
 
+    internal enum EventControlCode
+    {
+        DisableProvider = 0,
+        EnableProvider = 1,
+        CaptureState = 2,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct PROCESS_INFORMATION
     {
@@ -254,6 +261,17 @@ namespace NtApiDotNet.Win32
     }
 
     [StructLayout(LayoutKind.Sequential)]
+    internal class ENABLE_TRACE_PARAMETERS
+    {
+        public int Version;
+        public uint EnableProperty;
+        public uint ControlFlags;
+        public Guid SourceId;
+        public IntPtr EnableFilterDesc; // PEVENT_FILTER_DESCRIPTOR
+        public int FilterDescCount; // Only in v2 version of the parameters.
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
     internal struct EVENT_DESCRIPTOR
     {
         public ushort Id;
@@ -273,6 +291,57 @@ namespace NtApiDotNet.Win32
         public byte Type;
         public byte Reserved1;
         public ushort Reserved2;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct WNODE_HEADER
+    {
+        public int BufferSize;
+        public int ProviderId;
+        public ulong HistoricalContext;
+        public LargeIntegerStruct TimeStamp;
+        public Guid Guid;
+        public uint ClientContext;
+        public uint Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct EVENT_TRACE_PROPERTIES
+    {
+        public WNODE_HEADER Wnode;
+        public int BufferSize;
+        public int MinimumBuffers;
+        public int MaximumBuffers;
+        public int MaximumFileSize;
+        public int LogFileMode;
+        public int FlushTimer;
+        public int EnableFlags;
+        public int AgeLimit;
+        public int NumberOfBuffers;
+        public int FreeBuffers;
+        public int EventsLost;
+        public int BuffersWritten;
+        public int LogBuffersLost;
+        public int RealTimeBuffersLost;
+        public IntPtr LoggerThreadId;
+        public int LogFileNameOffset;
+        public int LoggerNameOffset;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct TRACE_PROVIDER_INFO
+    {
+        public Guid ProviderGuid;
+        public int SchemaSource;
+        public uint ProviderNameOffset;
+    }
+
+    [StructLayout(LayoutKind.Sequential), DataStart("TraceProviderInfoArray")]
+    internal struct PROVIDER_ENUMERATION_INFO
+    {
+        public int NumberOfProviders;
+        public int Reserved;
+        public TRACE_PROVIDER_INFO TraceProviderInfoArray;
     }
 
     internal enum TRACE_QUERY_INFO_CLASS
@@ -853,6 +922,31 @@ namespace NtApiDotNet.Win32
             out int ReturnLength
         );
 
+        [DllImport("tdh.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error TdhEnumerateProviders(
+                SafeBuffer pBuffer,
+                ref int pBufferSize
+        );
+
+        [DllImport("advap32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error StartTrace(
+            out long SessionHandle,
+            out string SessionName,
+            SafeBuffer Properties // EVENT_TRACE_PROPERTIES
+        );
+
+        [DllImport("advap32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error EnableTraceEx2(
+          long TraceHandle,
+          ref Guid ProviderId,
+          EventControlCode ControlCode,
+          EventTraceLevel Level,
+          ulong MatchAnyKeyword,
+          ulong MatchAllKeyword,
+          int   Timeout,
+          ENABLE_TRACE_PARAMETERS EnableParameters
+        );
+
         [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         internal static extern SafeKernelObjectHandle CreateFile(
           string lpFileName,
@@ -863,6 +957,12 @@ namespace NtApiDotNet.Win32
           CreateFileFlagsAndAttributes dwFlagsAndAttributes,
           SafeKernelObjectHandle hTemplateFile
         );
+
+        [DllImport("kernelbase.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern bool CreateAppContainerToken(
+                SafeKernelObjectHandle TokenHandle,
+                ref SECURITY_CAPABILITIES SecurityCapabilities,
+                out SafeKernelObjectHandle AppContainerTokenHandle);
     }
 #pragma warning restore 1591
 }

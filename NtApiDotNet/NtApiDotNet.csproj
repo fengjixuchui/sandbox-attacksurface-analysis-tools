@@ -62,9 +62,21 @@
     <Compile Include="NtProcessCreateResult.cs" />
     <Compile Include="NtProcessCreateConfig.cs" />
     <Compile Include="NtProcessTrustletConfig.cs" />
+    <Compile Include="NtUserProcessParameters.cs" />
     <Compile Include="NtWaitNative.cs" />
     <Compile Include="NtWindowStationNative.cs" />
+    <Compile Include="SafeArrayBuffer.cs" />
+    <Compile Include="SafeHandleListHandle.cs" />
+    <Compile Include="SafeIoStatusBuffer.cs" />
     <Compile Include="SafeProcessParametersHandle.cs" />
+    <Compile Include="SafeStringBuffer.cs" />
+    <Compile Include="SidIdentifierAuthority.cs" />
+    <Compile Include="Utilities\Memory\CrossBitnessProcessMemoryReader.cs" />
+    <Compile Include="Utilities\Memory\CrossBitnessTypeAttribute.cs" />
+    <Compile Include="Utilities\Memory\CurrentProcessMemoryReader.cs" />
+    <Compile Include="Utilities\Memory\ProcessMemoryReader.cs" />
+    <Compile Include="Utilities\Memory\ProcessMemoryStream.cs" />
+    <Compile Include="Utilities\Memory\SafeBufferWrapper.cs" />
     <Compile Include="Utilities\Text\StringUtils.cs" />
     <Compile Include="Utilities\Token\ClaimSecurityAttributeBuilder.cs" />
     <Compile Include="CreateUserProcess.cs" />
@@ -95,7 +107,7 @@
     <Compile Include="MandatoryLabelAce.cs" />
     <Compile Include="MappedFile.cs" />
     <Compile Include="MemoryInformation.cs" />
-    <Compile Include="Ndr\IMemoryReader.cs" />
+    <Compile Include="Utilities\Memory\IMemoryReader.cs" />
     <Compile Include="Ndr\Marshal\INdrConformantStructure.cs" />
     <Compile Include="Ndr\Marshal\INdrStructure.cs" />
     <Compile Include="Ndr\Marshal\NdrContextHandle.cs" />
@@ -227,7 +239,7 @@
     <Compile Include="SafeAlpcPortSectionHandle.cs" />
     <Compile Include="SafeAlpcSecurityContextHandle.cs" />
     <Compile Include="SafeBufferGeneric.cs" />
-    <Compile Include="SafeBuffers.cs" />
+    <Compile Include="SafeSecurityObjectBuffer.cs" />
     <Compile Include="SafeHGlobalBuffer.cs" />
     <Compile Include="SafeSidBufferHandle.cs" />
     <Compile Include="NtSecurity.cs" />
@@ -247,7 +259,10 @@
     <Compile Include="Win32\AppContainerProfile.cs" />
     <Compile Include="Win32\Device\DeviceNativeMethods.cs" />
     <Compile Include="Win32\Device\DeviceUtils.cs" />
+    <Compile Include="Win32\EtwServiceTriggerInformation.cs" />
     <Compile Include="Win32\EventTrace.cs" />
+    <Compile Include="Win32\EventTraceLog.cs" />
+    <Compile Include="Win32\EventTraceProvider.cs" />
     <Compile Include="Win32\EventTracing.cs" />
     <Compile Include="Win32\ExecutableManifest.cs" />
     <Compile Include="Win32\LogonUtils.cs" />
@@ -272,8 +287,12 @@
     <Compile Include="Win32\Rpc\Transport\ExtendedErrorInfo.cs" />
     <Compile Include="Win32\Rpc\Transport\RpcFaultException.cs" />
     <Compile Include="Win32\RpcServer.cs" />
+    <Compile Include="Win32\RunningService.cs" />
     <Compile Include="Win32\SafeCoTaskMemHandle.cs" />
     <Compile Include="Win32\SafeLocalAllocBuffer.cs" />
+    <Compile Include="Win32\ServiceInformation.cs" />
+    <Compile Include="Win32\ServiceTriggerCustomData.cs" />
+    <Compile Include="Win32\ServiceTriggerInformation.cs" />
     <Compile Include="Win32\SymbolResolver.cs" />
     <Compile Include="Win32\Win32Debug.cs" />
     <Compile Include="Win32\Win32Error.cs" />
@@ -289,6 +308,7 @@
     <Compile Include="SafeAlpcPortMessageBuffer.cs" />
     <Compile Include="NtWaitTimeout.cs" />
     <Compile Include="NtWaitHandle.cs" />
+    <Compile Include="Win32\WnfServiceTriggerInformation.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="Readme.txt" />
@@ -304,6 +324,7 @@
       <DependentUpon>SecurityDescriptorViewerForm.cs</DependentUpon>
     </EmbeddedResource>
   </ItemGroup>
+  <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

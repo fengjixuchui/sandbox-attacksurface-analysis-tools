@@ -210,7 +210,7 @@ namespace NtApiDotNet
                         return;
                     }
 
-                    var value = key.Result.QueryValue(StateName.ToString("X"), false);
+                    var value = key.Result.QueryValue(StateName.ToString("X016"), false);
                     if (value.IsSuccess)
                     {
                         ReadStateData(value.Result);
@@ -345,6 +345,15 @@ namespace NtApiDotNet
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Overridden ToString method.
+        /// </summary>
+        /// <returns>The string representation.</returns>
+        public override string ToString()
+        {
+            return $"WNF:{StateName:X016} {Lifetime}";
         }
 
         internal NtWnf(ulong state_name)

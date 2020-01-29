@@ -54,6 +54,16 @@ namespace NtApiDotNet.Win32
         }
 
         /// <summary>
+        /// Query the default security for events.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The default security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> QueryDefaultSecurity(bool throw_on_error)
+        {
+            return QueryTraceSecurity(TraceKnownGuids.DefaultTraceSecurity, throw_on_error);
+        }
+
+        /// <summary>
         /// Register an event trace with a specific GUID.
         /// </summary>
         /// <param name="guid">The event trace GUID.</param>
@@ -102,6 +112,55 @@ namespace NtApiDotNet.Win32
                     return ret;
                 }
             }
+        }
+
+        /// <summary>
+        /// Get the list of registered trace providers.
+        /// </summary>
+        /// <returns>The list of trace providers.</returns>
+        public static IEnumerable<EventTraceProvider> GetProviders()
+        {
+            int retry_count = 10;
+            int buffer_length = 1024;
+            Dictionary<Guid, EventTraceProvider> providers = new Dictionary<Guid, EventTraceProvider>();
+            while (retry_count-- > 0)
+            {
+                using (var buffer = new SafeStructureInOutBuffer<PROVIDER_ENUMERATION_INFO>(buffer_length, false))
+                {
+                    Win32Error error = Win32NativeMethods.TdhEnumerateProviders(buffer, ref buffer_length);
+                    if (error == Win32Error.ERROR_INSUFFICIENT_BUFFER)
+                    {
+                        continue;
+                    }
+                    if (error != Win32Error.SUCCESS)
+                    {
+                        error.ToNtException();
+                    }
+                    var result = buffer.Result;
+                    var data = buffer.Data;
+                    TRACE_PROVIDER_INFO[] infos = new TRACE_PROVIDER_INFO[result.NumberOfProviders];
+                    buffer.Data.ReadArray(0, infos, 0, infos.Length);
+                    foreach (var info in infos)
+                    {
+                        if (!providers.ContainsKey(info.ProviderGuid))
+                        {
+                            providers.Add(info.ProviderGuid,
+                                new EventTraceProvider(info.ProviderGuid,
+                                buffer.ReadNulTerminatedUnicodeString(info.ProviderNameOffset),
+                                info.SchemaSource == 0));
+                        }
+                    }
+                    break;
+                }
+            }
+            foreach (var guid in GetTraceGuids())
+            {
+                if (!providers.ContainsKey(guid))
+                {
+                    providers.Add(guid, new EventTraceProvider(guid));
+                }
+            }
+            return providers.Values;
         }
     }
 }

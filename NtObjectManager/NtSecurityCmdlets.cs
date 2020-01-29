@@ -71,7 +71,7 @@ namespace NtApiDotNet
     ///   <para>Gets the Sid for the current user.</para>
     /// </example>
     /// <example>
-    ///   <code>Get-NtSid -Token -LogonGroup</code>
+    ///   <code>Get-NtSid -LogonGroup</code>
     ///   <para>Gets the Sid for the current default logon group.</para>
     /// </example>
     /// <example>
@@ -136,7 +136,7 @@ namespace NtApiDotNet
         /// <summary>
         /// <para type="description">Get the SID from the current user token. Defaults to the user SID.</para>
         /// </summary>
-        [Parameter(Mandatory = true, ParameterSetName = "token")]
+        [Parameter(ParameterSetName = "token")]
         public SwitchParameter Token { get; set; }
 
         /// <summary>
@@ -198,6 +198,18 @@ namespace NtApiDotNet
         /// </summary>
         [Parameter(Mandatory = true, ParameterSetName = "logon")]
         public SwitchParameter NewLogon { get; set; }
+
+        /// <summary>
+        /// <para type="description">Output the SID in SDDL format.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter ToSddl { get; set; }
+
+        /// <summary>
+        /// <para type="description">Output the name of the SID from LSASS.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter ToName { get; set; }
 
         /// <summary>
         /// Process record.
@@ -275,7 +287,18 @@ namespace NtApiDotNet
                     throw new ArgumentException("No SID type specified");
             }
 
-            WriteObject(sid);
+            if (ToSddl)
+            {
+                WriteObject(sid.ToString());
+            }
+            else if (ToName)
+            {
+                WriteObject(sid.Name);
+            }
+            else
+            {
+                WriteObject(sid);
+            }
         }
     }
 

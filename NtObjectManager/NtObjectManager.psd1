@@ -18,7 +18,7 @@
 RootModule = 'NtObjectManager.psm1'
 
 # Version number of this module.
-ModuleVersion = '1.1.25'
+ModuleVersion = '1.1.26'
 
 # ID used to uniquely identify this module
 GUID = 'ac251c97-67a6-4bc4-bb8a-5ae300e93030'
@@ -30,7 +30,7 @@ Author = 'James Forshaw'
 CompanyName = 'Google Inc.'
 
 # Copyright statement for this module
-Copyright = '(c) 2016, 2017, 2018, 2019 Google Inc. All rights reserved.'
+Copyright = '(c) 2016-2020 Google Inc. All rights reserved.'
 
 # Description of the functionality provided by this module
 Description = 'This module adds a provider and cmdlets to access the NT object manager namespace.'
@@ -66,7 +66,8 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Get-RpcClient', 'Format-RpcClient', 'Set-RpcServer', 'Connect-RpcClient', 'New-RpcContextHandle', 'Format-RpcComplexType',
           'Get-Win32File', 'Close-NtObject', 'Start-AccessibleScheduledTask', 'Get-NtEaBuffer', 'Set-NtEaBuffer',
           'Suspend-NtProcess', 'Resume-NtProcess', 'Stop-NtProcess', 'Suspend-NtThread', 'Resume-NtThread', 'Stop-NtThread',
-          'Format-NtToken', 'Remove-NtTokenPrivilege', 'Get-NtTokenPrivilege', 'Get-NtLocallyUniqueId'
+          'Format-NtToken', 'Remove-NtTokenPrivilege', 'Get-NtTokenPrivilege', 'Get-NtLocallyUniqueId', 'Get-NtTokenGroup',
+          'Get-NtTokenSid', 'Set-NtTokenSid', 'Set-NtTokenGroup'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -97,7 +98,8 @@ CmdletsToExport = 'Add-NtKey', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile',
                'New-NtEnlistment', 'Get-RpcServerName', 'Set-RpcServerName',
                'Set-NtFileHardlink', 'Test-NetworkAccess', 'Get-AccessibleScheduledTask',
                'Compare-RpcServer', 'Select-RpcServer', 'Add-NtTokenSecurityAttribute',
-               'Remove-NtTokenSecurityAttribute'
+               'Remove-NtTokenSecurityAttribute', 'Get-AccessibleEventTrace',
+               'Test-NtToken'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = @()
@@ -117,14 +119,25 @@ PrivateData = @{
         ProjectUri = 'https://github.com/googleprojectzero/sandbox-attacksurface-analysis-tools'
 
         # ReleaseNotes of this module
-        ReleaseNotes = '1.1.25
+        ReleaseNotes = '1.1.26
 --------
-* Added new options to Get-NtSecurityDescriptor.
-* Updated accessible resource checking.
-* Added Remove-NtTokenPrivilege.
-* Added Session option to Get-NtToken.
-* Added command line option to Show-NtToken.
-* Added information classes for symbolic links.
+* Add DeviceGuid to Get/New-NtFile
+* Fixed bug in ETA registrations and added GUID enumeration.
+* Added SetExceptionPort to NtProcess.
+* Added child process mitigation improvements.
+* Added extended Fork.
+* Updated native process creation support.
+* Various new non-throwing methods.
+* Updated to C# 7.3.
+* Added list of access rights to NtType.
+* Added default mandatory policy to NtType.
+* Added SetDisposition methods to NtFile.
+* Added console and GUI support for Object ACEs.
+* Updated access checking to support Object Types.
+* Access check returns a structure rather than just an access mask.
+* CPP style NDR formatting (#21)
+* Added Get-NtTokenPrivilege command.
+* Added Get-NtLocallyUniqueId command.
 '
 
         # External dependent modules of this module
