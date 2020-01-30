@@ -508,7 +508,7 @@ namespace NtApiDotNet.Win32
                             if (_sym_load_module(Handle, IntPtr.Zero, dllpath.ToString(), 
                                 Path.GetFileNameWithoutExtension(dllpath.ToString()), module.ToInt64(), GetImageSize(module)) == 0)
                             {
-                                System.Diagnostics.Debug.WriteLine(String.Format("Couldn't load {0}", dllpath));
+                                System.Diagnostics.Debug.WriteLine($"Couldn't load {dllpath}");
                             }
                         }
                     }
@@ -600,10 +600,10 @@ namespace NtApiDotNet.Win32
             SymbolLoadedModule module = GetModuleForAddress(address, refresh);
             if (module == null)
             {
-                return String.Format("0x{0:X}", address.ToInt64());
+                return $"0x{address.ToInt64():X}";
             }
 
-            return String.Format("{0}+0x{1:X}", module.Name, address.ToInt64() - module.BaseAddress.ToInt64());
+            return $"{module.Name}+0x{address.ToInt64() - module.BaseAddress.ToInt64():X}";
         }
 
         public IntPtr GetAddressOfSymbol(string name)
@@ -665,7 +665,7 @@ namespace NtApiDotNet.Win32
                 // Perhaps should return module+X?
                 if (generate_fake_symbol && !return_name_only)
                 {
-                    return String.Format("0x{0:X}", address.ToInt64());
+                    return $"0x{address.ToInt64():X}";
                 }
                 return null;
             }
