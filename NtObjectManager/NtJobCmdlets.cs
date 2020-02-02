@@ -102,10 +102,16 @@ namespace NtObjectManager
         public int ActiveProcessLimit { get; set; }
 
         /// <summary>
-        /// <para type="description">Specify a limit flags for the job.</para>
+        /// <para type="description">Specify limit flags for the job.</para>
         /// </summary>
         [Parameter]
         public JobObjectLimitFlags LimitFlags { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify UI Restriction flags for the job.</para>
+        /// </summary>
+        [Parameter]
+        public JobObjectUiLimitFlags UiRestrictionFlags { get; set; }
 
         /// <summary>
         /// Determine if the cmdlet can create objects.
@@ -133,7 +139,65 @@ namespace NtObjectManager
                 {
                     job.ActiveProcessLimit = ActiveProcessLimit;
                 }
+                if (UiRestrictionFlags != 0)
+                {
+                    job.UiRestrictionFlags = UiRestrictionFlags;
+                }
                 return job.Duplicate();
+            }
+        }
+    }
+
+    /// <summary>
+    /// <para type="synopsis">Assign a process to a Job object.</para>
+    /// <para type="description">This cmdlet assigns a process to a Job object.</para>
+    /// </summary>
+    /// <example>
+    ///   <code>Set-NtProcessJob -Job $job -Process $process</code>
+    ///   <para>Assigns the process to the job object.</para>
+    /// </example>
+    /// <para type="link">about_ManagingNtObjectLifetime</para>
+    [Cmdlet(VerbsCommon.Set, "NtProcessJob")]
+    public sealed class SetNtProcessJobCmdlet : PSCmdlet
+    {
+        /// <summary>
+        /// <para type="description">Specify the job object.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, Position = 0)]
+        public NtJob Job { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the list of processes to assign.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, Position = 1, ValueFromPipeline = true)]
+        public NtProcess[] Process { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to pass through the process objects.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter PassThru { get; set; }
+
+        /// <summary>
+        /// Overridden ProcessRecord method.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            foreach (var proc in Process)
+            {
+                try
+                {
+                    Job.AssignProcess(proc);
+                }
+                catch (NtException ex)
+                {
+                    WriteError(new ErrorRecord(ex, "AssignJob", ErrorCategory.QuotaExceeded, proc));
+                }
+
+                if (PassThru)
+                {
+                    WriteObject(proc);
+                }
             }
         }
     }
