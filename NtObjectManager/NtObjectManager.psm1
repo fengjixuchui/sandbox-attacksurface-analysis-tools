@@ -1665,6 +1665,8 @@ function Show-NtSecurityDescriptor {
     [NtApiDotNet.NtObject]$Object,
     [Parameter(ParameterSetName = "FromObject")]
     [switch]$ReadOnly,
+    [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true)]
+    [NtObjectManager.AccessCheckResult]$AccessCheckResult,
     [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true)]
     [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
     [Parameter(Position = 1, ParameterSetName = "FromSecurityDescriptor")]
@@ -1709,6 +1711,14 @@ function Show-NtSecurityDescriptor {
             $Type = Get-NtType File
         }
         Start-Process -FilePath "$PSScriptRoot\ViewSecurityDescriptor.exe" -ArgumentList @("`"$Name`"", "`"$($SecurityDescriptor.ToSddl())`"","`"$($Type.Name)`"") -Wait:$Wait
+    }
+    "FromAccessCheck" {
+        if ($AccessCheckResult.SecurityDescriptor -eq "") {
+            return
+        }
+
+        Show-NtSecurityDescriptor -SecurityDescriptor $AccessCheckResult.SecurityDescriptor `
+                -Type $AccessCheckResult.TypeName -Name $AccessCheckResult.Name
     }
   }
 }
@@ -1835,6 +1845,8 @@ function Format-NtSecurityDescriptor {
         [NtApiDotNet.NtObject]$Object,
         [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true, ValueFromPipeline)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true, ValueFromPipeline)]
+        [NtObjectManager.AccessCheckResult]$AccessCheckResult,
         [Parameter(Position = 0, ParameterSetName = "FromAcl", Mandatory = $true)]
         [AllowEmptyCollection()]
         [NtApiDotNet.Acl]$Acl,
@@ -1886,6 +1898,12 @@ function Format-NtSecurityDescriptor {
                         $SecurityInformation = "Dacl"
                     }
                     ($fake_sd, $Type, "UNKNOWN")
+                }
+                "FromAccessCheck" {
+                    $Check_sd = New-NtSecurityDescriptor $AccessCheckResult.SecurityDescriptor
+                    $Type = Get-NtType $AccessCheckResult.TypeName
+                    $Name = $AccessCheckResult.Name
+                    ($Check_sd, $Type, $Name)
                 }
             }
 
@@ -2159,20 +2177,19 @@ function Set-ExecutionAlias
 function Start-NtTokenViewer {
     param(
         [Parameter(Mandatory=$true, Position=0)]
-        [NtApiDotNet.NtToken]$Token,
+        [NtApiDotNet.NtObject]$Handle,
         [string]$Text
     )
 
-    Use-NtObject($dup_token = $Token.Duplicate()) {
-        $dup_token.Inherit = $true
-        $cmdline = [string]::Format("TokenViewer --handle={0}", $dup_token.Handle.DangerousGetHandle())
+    Use-NtObject($dup_handle = $Handle.Duplicate()) {
+        $dup_handle.Inherit = $true
+        $cmdline = [string]::Format("TokenViewer --handle={0}", $dup_handle.Handle.DangerousGetHandle())
         if ($Text -ne "") {
             $cmdline += " ""--text=$Text"""
         }
         $config = New-Win32ProcessConfig $cmdline -ApplicationName "$PSScriptRoot\TokenViewer.exe" -InheritHandles
-        $config.InheritHandleList.Add($dup_token.Handle.DangerousGetHandle())
-        Use-NtObject($p = New-Win32Process -Config $config) {
-        }
+        $config.InheritHandleList.Add($dup_handle.Handle.DangerousGetHandle())
+        Use-NtObject($p = New-Win32Process -Config $config) {}
     }
 }
 
@@ -2255,10 +2272,8 @@ function Show-NtToken {
       }
       switch($PSCmdlet.ParameterSetName) {
         "FromProcess" {
-            Use-NtObject($t = Get-NtToken -Primary -Process $Process) {
-              $text = "$($Process.Name):$($Process.ProcessId)"
-              Start-NtTokenViewer $t -Text $text
-            }
+            $text = "$($Process.Name):$($Process.ProcessId)"
+            Start-NtTokenViewer $Process -Text $text
         }
         "FromName" {
           Use-NtObject($ps = Get-NtProcess -Name $Name -Access QueryLimitedInformation) {
@@ -3402,6 +3417,8 @@ This cmdlet gets the registered WNF entries or a specific entry from a state nam
 The statename to get.
 .PARAMETER DontCheckExists
 Specify to not check that the WNF entry exists.
+.PARAMETER Name
+Lookup the state name from a well known text name.
 .OUTPUTS
 NtApiDotNet.NtWnf
 .EXAMPLE
@@ -3413,6 +3430,9 @@ Get a WNF entry from a state name.
 .EXAMPLE
 Get-NtWnf 0x12345678 -DontCheckExists
 Get a WNF entry from a state name but don't check if it exists.
+.EXAMPLE
+Get-NtWnf "WNF_AOW_BOOT_PROGRESS"
+Get a WNF entry from a name.
 #>
 function Get-NtWnf {
     [CmdletBinding(DefaultParameterSetName = "All")]
@@ -3420,7 +3440,10 @@ function Get-NtWnf {
         [parameter(Position=0, Mandatory, ParameterSetName="StateName")]
         [uint64]$StateName,
         [parameter(ParameterSetName="StateName")]
-        [switch]$DontCheckExists
+        [parameter(ParameterSetName="Name")]
+        [switch]$DontCheckExists,
+        [parameter(Position=0, Mandatory, ParameterSetName="Name")]
+        [string]$Name
     )
     switch($PSCmdlet.ParameterSetName) {
         "All" {
@@ -3428,6 +3451,9 @@ function Get-NtWnf {
         }
         "StateName" { 
             [NtApiDotNet.NtWnf]::Open($StateName, -not $DontCheckExists)
+        }
+        "Name" {
+            [NtApiDotNet.NtWnf]::Open($Name, -not $DontCheckExists)
         }
     }
 }
@@ -5481,4 +5507,188 @@ Get a new locally unique ID.
 #>
 function Get-NtLocallyUniqueId {
     [NtApiDotNet.NtSystemInfo]::AllocateLocallyUniqueId() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get the names of the Windows Stations in the current Session.
+.DESCRIPTION
+This cmdlet queries the names of the Window Stations in the current Session.
+.PARAMETER Current
+Show the current Window Station name only.
+.INPUTS
+string
+.OUTPUTS
+None
+#>
+function Get-NtWindowStationName {
+    Param(
+        [Parameter()]
+        [switch]$Current
+    )
+
+    if ($Current) {
+        [NtApiDotNet.NtWindowStation]::Current.Name | Write-Output
+    } else {
+        [NtApiDotNet.NtWindowStation]::WindowStations | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Gets the names of the Desktops from the specified Window Station.
+.DESCRIPTION
+This cmdlet queries the names of the Desktops from the specified Window Station. 
+By default will use the current process Window Station.
+.PARAMETER WindowStation
+The Window Station to query.
+.PARAMETER Current
+Specify to get the name of the current thread desktop.
+.PARAMETER ThreadId
+Specify to get the name of the desktop from a thread.
+.INPUTS
+string
+.OUTPUTS
+None
+#>
+function Get-NtDesktopName {
+    [CmdletBinding(DefaultParameterSetName = "FromCurrentWindowStation")]
+    Param(
+        [Parameter(Position=0, ParameterSetName="FromWindowStation")]
+        [NtApiDotNet.NtWindowStation]$WindowStation,
+        [Parameter(ParameterSetName="FromCurrentDesktop")]
+        [switch]$Current,
+        [Parameter(ParameterSetName="FromThreadId")]
+        [alias("tid")]
+        [int]$ThreadId
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromCurrentWindowStation" {
+            $winsta = [NtApiDotNet.NtWindowStation]::Current
+            $winsta.Desktops | Write-Output
+        }
+        "FromWindowStation" {
+            $WindowStation.Desktops | Write-Output
+        }
+        "FromCurrentDesktop" {
+            [NtApiDotNet.NtDesktop]::Current.Name | Write-Output
+        }
+        "FromThreadId" {
+            [NtApiDotNet.NtDesktop]::GetThreadDesktop($ThreadId).Name | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Gets the a list of Window handles.
+.DESCRIPTION
+This cmdlet queries the list of Window Handles based on a set of criteria such as Desktop or ThreadId.
+.PARAMETER Desktop
+The Desktop to query.
+.PARAMETER Parent
+Specify the parent Window if enumerating children.
+.PARAMETER Children
+Specify the get list of child windows.
+.PARAMETER Immersive
+Specify to get immersive Windows.
+.PARAMETER ThreadId
+Specify the thread ID for the Window.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtWindow
+#>
+function Get-NtWindow {
+    [CmdletBinding()]
+    Param(
+        [NtApiDotNet.NtDesktop]$Desktop,
+        [switch]$Children,
+        [switch]$Immersive,
+        [NtApiDotNet.NtWindow]$Parent = [NtApiDotNet.NtWindow]::Null,
+        [alias("tid")]
+        [int]$ThreadId
+    )
+
+    [NtApiDotNet.NtWindow]::GetWindows($Desktop, $Parent, $Children, !$Immersive, $ThreadId) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Outputs a hex dump for a byte array.
+.DESCRIPTION
+This cmdlet converts a byte array to a hex dump.
+.PARAMETER Bytes
+The bytes to convert.
+.INPUTS
+byte[]
+.OUTPUTS
+String
+#>
+function Out-HexDump {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory, Position=0, ValueFromPipeline)]
+        [byte[]]$Bytes
+    )
+
+    BEGIN {
+        $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new();
+    }
+
+    PROCESS {
+        $builder.Append($Bytes)
+    }
+
+    END {
+        $builder.Complete()
+        $builder.ToString() | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Gets the access masks for a type.
+.DESCRIPTION
+This cmdlet gets the access masks for a type.
+.PARAMETER Type
+The NT type.
+.PARAMETER Read
+Shown only read access.
+.PARAMETER Write
+Shown only write access.
+.PARAMETER Execute
+Shown only execute access.
+.PARAMETER Mandatory
+Shown only default mandatory access.
+.INPUTS
+None
+.OUTPUTS
+AccessMask entries.
+#>
+function Get-NtTypeAccess {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [Parameter(Mandatory, Position=0)]
+        [NtApiDotNet.NtType]$Type,
+        [Parameter(ParameterSetName="Read")]
+        [switch]$Read,
+        [Parameter(ParameterSetName="Write")]
+        [switch]$Write,
+        [Parameter(ParameterSetName="Execute")]
+        [switch]$Execute,
+        [Parameter(ParameterSetName="Mandatory")]
+        [switch]$Mandatory
+    )
+
+    $access = switch($PSCmdlet.ParameterSetName) {
+        "All" { $Type.AccessRights }
+        "Read" { $Type.ReadAccessRights } 
+        "Write" { $Type.WriteAccessRights }
+        "Execute" { $Type.ExecuteAccessRights }
+        "Mandatory" { $Type.MandatoryAccessRights }
+    }
+
+    $access | Write-Output
 }

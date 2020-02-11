@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet;
+using NtApiDotNet.Win32;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -221,6 +222,28 @@ namespace NtObjectManager
         }
 
         /// <summary>
+        /// Get the Win32 path for a specified path.
+        /// </summary>
+        /// <param name="path">The path component.</param>
+        /// <returns>The full NT path.</returns>
+        protected virtual string GetWin32Path(string path)
+        {
+            List<string> ret = new List<string>();
+            int session_id = NtProcess.Current.SessionId;
+            if (session_id != 0)
+            {
+                ret.Add("Sessions");
+                ret.Add(session_id.ToString());
+            }
+            ret.Add("BaseNamedObjects");
+            if (!string.IsNullOrEmpty(path))
+            {
+                ret.AddRange(Path.Split('\\'));
+            }
+            return $@"\{string.Join(@"\", ret)}";
+        }
+
+        /// <summary>
         /// Virtual method to resolve the value of the Path variable.
         /// </summary>
         /// <returns>The object path.</returns>
@@ -238,19 +261,7 @@ namespace NtObjectManager
                     throw new ArgumentException("Win32 paths can't start with a path separator");
                 }
 
-                List<string> ret = new List<string>();
-                int session_id = NtProcess.Current.SessionId;
-                if (session_id != 0)
-                {
-                    ret.Add("Sessions");
-                    ret.Add(session_id.ToString());
-                }
-                ret.Add("BaseNamedObjects");
-                if (!string.IsNullOrEmpty(Path))
-                {
-                    ret.AddRange(Path.Split('\\'));
-                }
-                return $@"\{string.Join(@"\", ret)}";
+                return GetWin32Path(Path);
             }
 
             if (Path.StartsWith(@"\") || Root != null)
@@ -335,7 +346,7 @@ namespace NtObjectManager
         /// <summary>
         /// Overridden ProcessRecord method.
         /// </summary>
-        protected sealed override void ProcessRecord()
+        protected override void ProcessRecord()
         {
             VerifyParameters();
             try
@@ -552,6 +563,10 @@ namespace NtObjectManager
         /// </summary>
         public uint Status { get; }
         /// <summary>
+        /// The numeric value of the status code as a signed integer.
+        /// </summary>
+        public int StatusSigned => (int)Status;
+        /// <summary>
         /// The name of the status code if known.
         /// </summary>
         public string StatusName { get; }
@@ -562,7 +577,11 @@ namespace NtObjectManager
         /// <summary>
         /// Win32 error code.
         /// </summary>
-        public int Win32Error { get; }
+        public Win32Error Win32Error { get; }
+        /// <summary>
+        /// Win32 error as an integer.
+        /// </summary>
+        public int Win32ErrorCode => (int)Win32Error;
         /// <summary>
         /// The status code.
         /// </summary>
@@ -587,6 +606,7 @@ namespace NtObjectManager
         internal NtStatusResult(NtStatus status)
         {
             Status = (uint)status;
+
             Message = NtObjectUtils.GetNtStatusMessage(status);
             Win32Error = NtObjectUtils.MapNtStatusToDosError(status);
             StatusName = status.ToString();

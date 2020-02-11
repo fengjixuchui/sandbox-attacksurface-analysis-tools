@@ -122,16 +122,27 @@ namespace NtApiDotNet
         {
             using (var dispose = new DisposableList())
             {
-                var process_params = SafeProcessParametersHandle.Null;
+                var process_params = SafeProcessParametersBuffer.Null;
                 if (!fork)
                 {
-                    var result = dispose.AddResource(SafeProcessParametersHandle.Create(config.ConfigImagePath ?? image_path,
+                    var result = dispose.AddResource(SafeProcessParametersBuffer.Create(config.ConfigImagePath ?? image_path,
                         config.DllPath, config.CurrentDirectory, config.CommandLine, config.Environment,
                         config.WindowTitle, config.DesktopInfo, config.ShellInfo, config.RuntimeData,
                         CreateProcessParametersFlags.Normalize, throw_on_error));
                     if (!result.IsSuccess)
                         return new NtProcessCreateResult(result.Status);
                     process_params = result.Result;
+                    if (config.ProcessParametersCallback != null)
+                    {
+                        process_params = config.ProcessParametersCallback(process_params, dispose);
+                    }
+                    if (!string.IsNullOrWhiteSpace(config.RedirectionDllName) 
+                        && NtObjectUtils.SupportedVersion >= SupportedVersion.Windows10_19H1)
+                    {
+                        var str = dispose.AddResource(new UnicodeStringAllocated(config.RedirectionDllName));
+                        IntPtr offset = Marshal.OffsetOf(typeof(RtlUserProcessParameters), "RedirectionDllName");
+                        process_params.Write((ulong)offset.ToInt32(), str.String);
+                    }
                 }
 
                 ProcessCreateInfo create_info = dispose.AddResource(new ProcessCreateInfo());
@@ -343,7 +354,7 @@ namespace NtApiDotNet
         /// <param name="token">Access token for the new process.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The created process</returns>
-        public static NtResult<NtProcess> CreateProcessEx(ProcessAccessRights desired_access, ObjectAttributes object_attributes, 
+        public static NtResult<NtProcess> CreateProcessEx(ProcessAccessRights desired_access, ObjectAttributes object_attributes,
             NtProcess parent_process, ProcessCreateFlags flags, NtSection section_handle, NtDebug debug_port, NtToken token, bool throw_on_error)
         {
             return NtSystemCalls.NtCreateProcessEx(out SafeKernelObjectHandle process, desired_access,
@@ -1425,7 +1436,7 @@ namespace NtApiDotNet
         /// <remarks>Should only work on the pseudo process handle.</remarks>
         public NtResult<NtSection> OpenImageSection(bool throw_on_error)
         {
-            return Query(ProcessInformationClass.ProcessImageSection, 
+            return Query(ProcessInformationClass.ProcessImageSection,
                 IntPtr.Zero, throw_on_error).Map(r => NtSection.FromHandle(r, true));
         }
 
@@ -1533,8 +1544,8 @@ namespace NtApiDotNet
         /// <returns>The NT status code.</returns>
         public NtStatus SetExceptionPort(NtAlpc exception_port, int state_flags, bool throw_on_error)
         {
-            ProcessExceptionPort port = new ProcessExceptionPort() 
-            { 
+            ProcessExceptionPort port = new ProcessExceptionPort()
+            {
                 ExceptionPortHandle = exception_port.Handle.DangerousGetHandle(),
                 StateFlags = state_flags
             };
@@ -1609,7 +1620,7 @@ namespace NtApiDotNet
         /// <remarks>This uses NtCreateProcessEx.</remarks>
         public NtResult<NtProcess> Fork(ProcessCreateFlags flags, bool throw_on_error)
         {
-            return CreateProcessEx(ProcessAccessRights.MaximumAllowed, null, 
+            return CreateProcessEx(ProcessAccessRights.MaximumAllowed, null,
                 this, flags | ProcessCreateFlags.InheritFromParent, null, null, null, throw_on_error);
         }
 
@@ -1632,6 +1643,31 @@ namespace NtApiDotNet
         public NtProcess Fork()
         {
             return Fork(ProcessCreateFlags.None);
+        }
+
+        /// <summary>
+        /// Get the accessible job objects this process is in.
+        /// </summary>
+        /// <remarks>This tries to find accessible Job handles. There's no guarantee that all Job objects will be found for the process.</remarks>
+        /// <returns>The list of job objects.</returns>
+        public IEnumerable<NtJob> GetAccessibleJobObjects()
+        {
+            if (!IsInJob())
+                yield break;
+            foreach (var h in NtSystemInfo.GetHandles())
+            {
+                if (h.ObjectType == "Job")
+                {
+                    using (var result = h.GetObject(false).Cast<NtJob>())
+                    {
+                        if (!result.IsSuccess || !IsInJob(result.Result))
+                        {
+                            continue;
+                        }
+                        yield return result.Result.Duplicate();
+                    }
+                }
+            }
         }
 
         /// <summary>
@@ -1818,14 +1854,22 @@ namespace NtApiDotNet
         public bool BreakOnTermination => Query<int>(ProcessInformationClass.ProcessBreakOnTermination) != 0;
 
         /// <summary>
-        /// Get debug flags.
+        /// Get or set debug flags.
         /// </summary>
-        public int DebugFlags => Query<int>(ProcessInformationClass.ProcessDebugFlags);
+        public ProcessDebugFlags DebugFlags
+        {
+            get => (ProcessDebugFlags)Query<int>(ProcessInformationClass.ProcessDebugFlags);
+            set => Set(ProcessInformationClass.ProcessDebugFlags, (int)value);
+        }
 
         /// <summary>
-        /// Get execute flags.
+        /// Get or set execute flags.
         /// </summary>
-        public int ExecuteFlags => Query<int>(ProcessInformationClass.ProcessExecuteFlags);
+        public ProcessExecuteFlags ExecuteFlags
+        {
+            get => (ProcessExecuteFlags)Query<int>(ProcessInformationClass.ProcessExecuteFlags);
+            set => Set(ProcessInformationClass.ProcessExecuteFlags, (int)value);
+        }
 
         /// <summary>
         /// Get IO priority.
@@ -2015,6 +2059,11 @@ namespace NtApiDotNet
                 return string.Empty;
             }
         }
+
+        /// <summary>
+        /// Get the Win32 image path.
+        /// </summary>
+        public string Win32ImagePath => GetImageFilePath(false, false).GetResultOrDefault() ?? string.Empty;
 
         /// <summary>
         /// Get owner process ID

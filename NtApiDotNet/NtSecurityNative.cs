@@ -363,6 +363,7 @@ namespace NtApiDotNet
         Capability,
         Package,
         ProcessTrust,
+        WellKnown
     }
 
     /// <summary>
@@ -812,6 +813,10 @@ namespace NtApiDotNet
           ref int ThumbprintSize,
           out HashAlgorithm ThumbprintAlgorithm
         );
+
+        [DllImport("ntdll.dll")]
+        public static extern NtStatus NtCompareSigningLevel(
+            SigningLevel CurrentLevel, SigningLevel CheckLevel);
     }
 
     [StructLayout(LayoutKind.Sequential)]

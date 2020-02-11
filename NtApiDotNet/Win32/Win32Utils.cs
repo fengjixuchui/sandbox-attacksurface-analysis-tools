@@ -399,5 +399,49 @@ namespace NtApiDotNet.Win32
 
             return caps;
         }
+
+        /// <summary>
+        /// Send key down events.
+        /// </summary>
+        /// <param name="key_codes">The key codes to send.</param>
+        public static void SendKeyDown(params VirtualKey[] key_codes)
+        {
+            INPUT[] inputs = key_codes.Select(k => new INPUT(k, false)).ToArray();
+            Win32NativeMethods.SendInput(inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        /// <summary>
+        /// Send key down events.
+        /// </summary>
+        /// <param name="key_codes">The key codes to send.</param>
+        public static void SendKeyUp(params VirtualKey[] key_codes)
+        {
+            INPUT[] inputs = key_codes.Select(k => new INPUT(k, true)).ToArray();
+            Win32NativeMethods.SendInput(inputs.Length, inputs, Marshal.SizeOf(typeof(INPUT)));
+        }
+
+        /// <summary>
+        /// Send key down then up events.
+        /// </summary>
+        /// <param name="key_codes">The key codes to send.</param>
+        /// <remarks>This will send all keys down first, then all up.</remarks>
+        public static void SendKeys(params VirtualKey[] key_codes)
+        {
+            SendKeyDown(key_codes);
+            SendKeyUp(key_codes);
+        }
+
+        /// <summary>
+        /// This creates a Window Station using the User32 API.
+        /// </summary>
+        /// <param name="name">The name of the Window Station.</param>
+        /// <returns>The Window Station.</returns>
+        public static NtWindowStation CreateWindowStation(string name)
+        {
+            var handle = Win32NativeMethods.CreateWindowStation(name, 0, WindowStationAccessRights.MaximumAllowed, null);
+            if (handle.IsInvalid)
+                throw new SafeWin32Exception();
+            return new NtWindowStation(handle);
+        }
     }
 }

@@ -122,6 +122,16 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Checks if the NtStatus value is an error.
+        /// </summary>
+        /// <param name="status">The NtStatus value</param>
+        /// <returns>True if an error.</returns>
+        public static bool IsError(this NtStatus status)
+        {
+            return status.GetSeverity() == NtStatusSeverity.STATUS_SEVERITY_ERROR;
+        }
+
+        /// <summary>
         /// Get the severity of the NTSTATUS.
         /// </summary>
         /// <param name="status">The NtStatus value</param>
@@ -506,19 +516,6 @@ namespace NtApiDotNet
             return FromHandle(new IntPtr(handle), owns_handle);
         }
 
-        /// <summary>
-        /// Close a handle.
-        /// </summary>
-        /// <param name="handle">The handle to close.</param>
-        /// <returns>The NT status code.</returns>
-        /// <remarks>This ensures the handle to can't be 0 before calling NtClose.</remarks>
-        public static NtStatus CloseHandle(IntPtr handle)
-        {
-            if (handle == IntPtr.Zero)
-                return NtStatus.STATUS_INVALID_HANDLE;
-            return NtSystemCalls.NtClose(handle);
-        }
-
         internal static NtStatus MapDosErrorToStatus(this Win32Error dos_error)
         {
             return MapDosErrorToStatus((int)dos_error);
@@ -555,13 +552,13 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="status">The status code.</param>
         /// <returns>The mapped DOS error.</returns>
-        public static int MapNtStatusToDosError(NtStatus status)
+        public static Win32Error MapNtStatusToDosError(NtStatus status)
         {
             if (status.GetFacility() == NtStatusFacility.FACILITY_NTWIN32)
             {
-                return status.GetStatusCode();
+                return (Win32Error)status.GetStatusCode();
             }
-            return NtRtl.RtlNtStatusToDosErrorNoTeb(status);
+            return (Win32Error)NtRtl.RtlNtStatusToDosErrorNoTeb(status);
         }
 
         /// <summary>
@@ -652,6 +649,11 @@ namespace NtApiDotNet
             return CreateResultFromDosError<T>((Win32Error)error, throw_on_error);
         }
 
+        internal static NtResult<T> CreateResultFromDosError<T>(bool throw_on_error)
+        {
+            return CreateResultFromDosError<T>(Marshal.GetLastWin32Error(), throw_on_error);
+        }
+
         internal static IEnumerable<T> SelectValidResults<T>(this IEnumerable<NtResult<T>> iterator)
         {
             return iterator.Where(r => r.IsSuccess).Select(r => r.Result);
@@ -692,6 +694,65 @@ namespace NtApiDotNet
             get
             {
                 return Environment.OSVersion.Version < new Version(6, 4);
+            }
+        }
+
+        internal static SupportedVersion SupportedVersion
+        {
+            get
+            {
+                if (IsWindows7OrLess)
+                    return SupportedVersion.Windows7;
+                if (IsWindows8OrLess)
+                    return SupportedVersion.Windows8;
+                if (IsWindows81OrLess)
+                    return SupportedVersion.Windows81;
+                Version ver = Environment.OSVersion.Version;
+                if (ver.Major != 10)
+                {
+                    return SupportedVersion.Unknown;
+                }
+
+                if (ver.Build <= 10240)
+                {
+                    return SupportedVersion.Windows10;
+                }
+                else if (ver.Build <= 10586)
+                {
+                    return SupportedVersion.Windows10_TH2;
+                }
+                else if (ver.Build <= 14393)
+                {
+                    return SupportedVersion.Windows10_RS1;
+                }
+                else if (ver.Build <= 15063)
+                {
+                    return SupportedVersion.Windows10_RS2;
+                }
+                else if (ver.Build <= 16299)
+                {
+                    return SupportedVersion.Windows10_RS3;
+                }
+                else if (ver.Build <= 17134)
+                {
+                    return SupportedVersion.Windows10_RS4;
+                }
+                else if (ver.Build <= 17763)
+                {
+                    return SupportedVersion.Windows10_RS5;
+                }
+                else if (ver.Build <= 18362)
+                {
+                    return SupportedVersion.Windows10_19H1;
+                }
+                else if (ver.Build <= 18363)
+                {
+                    return SupportedVersion.Windows10_19H2;
+                }
+                else
+                {
+                    return SupportedVersion.Windows10_Latest;
+                }
             }
         }
 

@@ -64,11 +64,14 @@
     <Compile Include="NtProcessTrustletConfig.cs" />
     <Compile Include="NtUserProcessParameters.cs" />
     <Compile Include="NtWaitNative.cs" />
+    <Compile Include="NtWindow.cs" />
+    <Compile Include="NtWindowNative.cs" />
     <Compile Include="NtWindowStationNative.cs" />
+    <Compile Include="NtWnfWellKnownNames.cs" />
     <Compile Include="SafeArrayBuffer.cs" />
     <Compile Include="SafeHandleListHandle.cs" />
     <Compile Include="SafeIoStatusBuffer.cs" />
-    <Compile Include="SafeProcessParametersHandle.cs" />
+    <Compile Include="SafeProcessParametersBuffer.cs" />
     <Compile Include="SafeStringBuffer.cs" />
     <Compile Include="SidIdentifierAuthority.cs" />
     <Compile Include="Utilities\Memory\CrossBitnessProcessMemoryReader.cs" />
@@ -77,6 +80,7 @@
     <Compile Include="Utilities\Memory\ProcessMemoryReader.cs" />
     <Compile Include="Utilities\Memory\ProcessMemoryStream.cs" />
     <Compile Include="Utilities\Memory\SafeBufferWrapper.cs" />
+    <Compile Include="Utilities\Text\HexDumpBuilder.cs" />
     <Compile Include="Utilities\Text\StringUtils.cs" />
     <Compile Include="Utilities\Token\ClaimSecurityAttributeBuilder.cs" />
     <Compile Include="CreateUserProcess.cs" />
@@ -290,6 +294,7 @@
     <Compile Include="Win32\RunningService.cs" />
     <Compile Include="Win32\SafeCoTaskMemHandle.cs" />
     <Compile Include="Win32\SafeLocalAllocBuffer.cs" />
+    <Compile Include="Win32\SendInput.cs" />
     <Compile Include="Win32\ServiceInformation.cs" />
     <Compile Include="Win32\ServiceTriggerCustomData.cs" />
     <Compile Include="Win32\ServiceTriggerInformation.cs" />

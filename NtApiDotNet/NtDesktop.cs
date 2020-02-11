@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace NtApiDotNet
@@ -63,6 +64,20 @@ namespace NtApiDotNet
         /// <summary>
         /// Open a desktop by name.
         /// </summary>
+        /// <param name="object_attributes">The object attributes for opening.</param>
+        /// <param name="flags">Flags for opening the desktop.</param>
+        /// <param name="desired_access">Desired access.</param>
+        /// <returns>The instance of the desktop.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public static NtDesktop Open(ObjectAttributes object_attributes, CreateDesktopFlags flags,
+            DesktopAccessRights desired_access)
+        {
+            return Open(object_attributes, flags, desired_access, true).Result;
+        }
+
+        /// <summary>
+        /// Open a desktop by name.
+        /// </summary>
         /// <param name="desktop_name">The name of the desktop.</param>
         /// <param name="root">Optional root object</param>
         /// <returns>An instance of NtDesktop.</returns>
@@ -98,18 +113,34 @@ namespace NtApiDotNet
         /// <param name="heap_size">Heap size.</param>
         /// <returns>An instance of NtDesktop.</returns>
         public static NtResult<NtDesktop> Create(ObjectAttributes object_attributes, string device, 
-            IntPtr dev_mode, CreateDesktopFlags flags, DesktopAccessRights desired_access, int heap_size,
+            DEVMODE dev_mode, CreateDesktopFlags flags, DesktopAccessRights desired_access, int heap_size,
             bool throw_on_error)
         {
 
             SafeKernelObjectHandle handle = NtSystemCalls.NtUserCreateDesktopEx(object_attributes, 
-                device == null ? null : new UnicodeString(device),
+                string.IsNullOrEmpty(device) ? null : new UnicodeString(device),
                 dev_mode, flags, desired_access, heap_size);
             if (handle.IsInvalid)
             {
                 return NtObjectUtils.CreateResultFromDosError<NtDesktop>(Marshal.GetLastWin32Error(), throw_on_error);
             }
             return new NtResult<NtDesktop>(NtStatus.STATUS_SUCCESS, new NtDesktop(handle));
+        }
+
+        /// <summary>
+        /// Create a new desktop.
+        /// </summary>
+        /// <param name="object_attributes">The object attributes for opening.</param>
+        /// <param name="flags">Flags for opening the desktop.</param>
+        /// <param name="desired_access">Desired access.</param>
+        /// <param name="device">Device name.</param>
+        /// <param name="dev_mode">Device mode.</param>
+        /// <param name="heap_size">Heap size.</param>
+        /// <returns>An instance of NtDesktop.</returns>
+        public static NtDesktop Create(ObjectAttributes object_attributes, string device,
+            DEVMODE dev_mode, CreateDesktopFlags flags, DesktopAccessRights desired_access, int heap_size)
+        {
+            return Create(object_attributes, device, dev_mode, flags, desired_access, heap_size, true).Result;
         }
 
         /// <summary>
@@ -122,7 +153,7 @@ namespace NtApiDotNet
         {
             using (ObjectAttributes obj_attributes = new ObjectAttributes(desktop_name, AttributeFlags.CaseInsensitive, root))
             {
-                return Create(obj_attributes, null, IntPtr.Zero, 0, DesktopAccessRights.MaximumAllowed, 0, true).Result;
+                return Create(obj_attributes, null, null, 0, DesktopAccessRights.MaximumAllowed, 0, true).Result;
             }
         }
 
@@ -134,6 +165,57 @@ namespace NtApiDotNet
         public static NtDesktop Create(string desktop_name)
         {
             return Create(desktop_name, null);
+        }
+
+        /// <summary>
+        /// Get the desktop for a thread.
+        /// </summary>
+        /// <param name="thread_id">The thread ID of the thread.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The desktop result.</returns>
+        public static NtResult<NtDesktop> GetThreadDesktop(int thread_id, bool throw_on_error)
+        {
+            var handle = NtSystemCalls.NtUserGetThreadDesktop(thread_id);
+            if (handle == IntPtr.Zero)
+            {
+                return NtObjectUtils.CreateResultFromDosError<NtDesktop>(Marshal.GetLastWin32Error(), throw_on_error);
+            }
+            return new NtDesktop(new SafeKernelObjectHandle(handle, false)).CreateResult();
+        }
+
+        /// <summary>
+        /// Get the desktop for a thread.
+        /// </summary>
+        /// <param name="thread_id">The thread ID of the thread.</param>
+        /// <returns>The desktop result.</returns>
+        public static NtDesktop GetThreadDesktop(int thread_id)
+        {
+            return GetThreadDesktop(thread_id, true).Result;
+        }
+
+        /// <summary>
+        /// Get desktop for current thread.
+        /// </summary>
+        public static NtDesktop Current => GetThreadDesktop(NtThread.Current.ThreadId);
+
+        /// <summary>
+        /// Get list of top level Windows for this Desktop.
+        /// </summary>
+        public IEnumerable<NtWindow> Windows => NtWindow.GetWindows(this, NtWindow.Null, false, true, 0);
+
+        /// <summary>
+        /// Close the Desktop. This is different from normal Close as it destroys the Desktop.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status.</returns>
+        public NtStatus CloseDesktop(bool throw_on_error = true)
+        {
+            if (!NtSystemCalls.NtUserCloseDesktop(Handle))
+            {
+                return NtObjectUtils.MapDosErrorToStatus().ToNtException(throw_on_error);
+            }
+            Handle.SetHandleAsInvalid();
+            return NtStatus.STATUS_SUCCESS;
         }
     }
 }
