@@ -5692,3 +5692,196 @@ function Get-NtTypeAccess {
 
     $access | Write-Output
 }
+
+<#
+.SYNOPSIS
+Get an ATOM objects.
+.DESCRIPTION
+This cmdlet gets all ATOM objects or by name or atom.
+.PARAMETER Atom
+Specify the ATOM to get.
+.PARAMETER Name
+Specify the name of the ATOM to get.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtAtom
+#>
+function Get-NtAtom {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [Parameter(Mandatory, ParameterSetName = "FromAtom")]
+        [uint16]$Atom,
+        [Parameter(Mandatory, Position=0, ParameterSetName = "FromName")]
+        [string]$Name
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" { [NtApiDotNet.NtAtom]::GetAtoms() | Write-Output }
+        "FromAtom" { [NtApiDotNet.NtAtom]::Open($Atom) | Write-Output }
+        "FromName" { [NtApiDotNet.NtAtom]::Find($Name) | Write-Output }
+    }
+}
+
+<#
+.SYNOPSIS
+Add a ATOM object.
+.DESCRIPTION
+This cmdlet adds an ATOM objects.
+.PARAMETER Name
+Specify the name of the ATOM to add.
+.PARAMETER Flags
+Specify the flags for the ATOM.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtAtom
+#>
+function Add-NtAtom {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory, Position=0)]
+        [string]$Name,
+        [NtApiDotNet.AddAtomFlags]$Flags = 0
+    )
+
+    [NtApiDotNet.NtAtom]::Add($Name, $Flags) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Removes an ATOM object.
+.DESCRIPTION
+This cmdlet removes an ATOM object by name or atom.
+.PARAMETER Object
+Specify the NtAtom object to remove.
+.PARAMETER Atom
+Specify the ATOM to remove.
+.PARAMETER Name
+Specify the name of the ATOM to remove.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtAtom {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [Parameter(Position=0, Mandatory, ParameterSetName = "FromObject")]
+        [NtApiDotNet.NtAtom]$Object,
+        [Parameter(Mandatory, ParameterSetName = "FromAtom")]
+        [uint16]$Atom,
+        [Parameter(Mandatory, Position=0, ParameterSetName = "FromName")]
+        [string]$Name
+    )
+
+    $obj = switch($PSCmdlet.ParameterSetName) {
+        "FromObject" { $Object }
+        "FromAtom" { Get-NtAtom -Atom $Atom }
+        "FromName" { Get-NtATom -Name $Name }
+    }
+
+    if ($obj -ne $null) {
+        $obj.Delete()
+    }
+}
+
+<#
+.SYNOPSIS
+Loads a DLL into memory.
+.DESCRIPTION
+This cmdlet loads a DLL into memory with specified flags.
+.PARAMETER Path
+Specify the path to the DLL.
+.PARAMETER Flags
+Specify the flags for loading.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.SafeLoadLibraryHandle
+#>
+function New-Win32Module {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [string]$Path,
+        [Parameter(Position=1)]
+        [NtApiDotNet.Win32.LoadLibraryFlags]$Flags = 0
+    )
+
+    [NtApiDotNet.Win32.SafeLoadLibraryHandle]::LoadLibrary($Path, $Flags) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets an existing DLL from memory.
+.DESCRIPTION
+This cmdlet finds an existing DLL from memory.
+.PARAMETER Path
+Specify the path to the DLL.
+.PARAMETER Address
+Specify the address of the module.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.SafeLoadLibraryHandle
+#>
+function Get-Win32Module {
+    [CmdletBinding(DefaultParameterSetName="FromPath")]
+    Param(
+        [Parameter(Position=0, Mandatory, ParameterSetName = "FromPath")]
+        [string]$Path,
+        [Parameter(Mandatory, ParameterSetName = "FromAddress")]
+        [IntPtr]$Address
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromPath") {
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]::GetModuleHandle($Path) | Write-Output
+    } else {
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]::GetModuleHandle($Address) | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Gets the exports from a loaded DLL.
+.DESCRIPTION
+This cmdlet gets the list of exports from a loaded DLL.
+.PARAMETER Module
+Specify the DLL
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.DllExport[]
+#>
+function Get-Win32ModuleExport {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module
+    )
+
+    $Module.Exports | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets the imports from a loaded DLL.
+.DESCRIPTION
+This cmdlet gets the list of imports from a loaded DLL.
+.PARAMETER Module
+Specify the DLL
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.DllImport[]
+#>
+function Get-Win32ModuleImport {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module
+    )
+
+    $Module.Imports | Write-Output
+}
