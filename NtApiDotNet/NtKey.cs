@@ -882,7 +882,7 @@ namespace NtApiDotNet
         /// <exception cref="NtException">Thrown on error.</exception>
         public NtStatus SetSymbolicLinkTarget(string target, bool throw_on_error)
         {
-            return SetValue("SymbolicLinkValue", RegistryValueType.Link, Encoding.Unicode.GetBytes(target), throw_on_error);
+            return SetValue(SymbolicLinkValueName, RegistryValueType.Link, Encoding.Unicode.GetBytes(target), throw_on_error);
         }
 
         /// <summary>
@@ -893,6 +893,27 @@ namespace NtApiDotNet
         public void SetSymbolicLinkTarget(string target)
         {
             SetSymbolicLinkTarget(target, true);
+        }
+
+        /// <summary>
+        /// Get the symbolic link target for this key.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The symbolic link target.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtResult<string> GetSymbolicLinkTarget(bool throw_on_error)
+        {
+            return QueryValue(SymbolicLinkValueName, throw_on_error).Map(v => v.ToString());
+        }
+
+        /// <summary>
+        /// Get the symbolic link target for this key.
+        /// </summary>
+        /// <returns>The symbolic link target.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public string GetSymbolicLinkTarget()
+        {
+            return GetSymbolicLinkTarget(true).Result;
         }
 
         /// <summary>
@@ -916,6 +937,33 @@ namespace NtApiDotNet
         public NtKey Open(string key_name, KeyAccessRights desired_access)
         {
             return Open(key_name, this, desired_access);
+        }
+
+        /// <summary>
+        /// Open a key
+        /// </summary>
+        /// <param name="key_name">The path to the key to open</param>
+        /// <param name="desired_access">Access rights for the key</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The opened key</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtResult<NtKey> Open(string key_name, KeyAccessRights desired_access, bool throw_on_error)
+        {
+            return Open(key_name, this, desired_access, KeyCreateOptions.NonVolatile, throw_on_error);
+        }
+
+        /// <summary>
+        /// Open a key
+        /// </summary>
+        /// <param name="key_name">The path to the key to open</param>
+        /// <param name="desired_access">Access rights for the key</param>
+        /// <param name="open_options">Key open options.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The opened key</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtResult<NtKey> Open(string key_name, KeyAccessRights desired_access, KeyCreateOptions open_options, bool throw_on_error)
+        {
+            return Open(key_name, this, desired_access, open_options, throw_on_error);
         }
 
         /// <summary>
@@ -1398,12 +1446,22 @@ namespace NtApiDotNet
         /// <summary>
         /// Get key flags.
         /// </summary>
-        public int KeyFlags => Query<KeyFlagsInformation>(KeyInformationClass.KeyFlagsInformation).KeyFlags;
+        public KeyFlags KeyFlags => Query<KeyFlagsInformation>(KeyInformationClass.KeyFlagsInformation).KeyFlags;
 
         /// <summary>
         /// Indicates if this key is from a trusted hive.
         /// </summary>
         public bool Trusted => Query<KeyTrustInformation>(KeyInformationClass.KeyTrustInformation).TrustedKey;
+
+        /// <summary>
+        /// Indicates if this key is a symbolic link.
+        /// </summary>
+        public bool IsLink => KeyFlags.HasFlag(KeyFlags.Link);
+
+        /// <summary>
+        /// Indicates if this key is volatile.
+        /// </summary>
+        public bool IsVolatile => KeyFlags.HasFlag(KeyFlags.Volatile);
 
         /// <summary>
         /// Get the name from NtQueryKey.
@@ -1427,6 +1485,9 @@ namespace NtApiDotNet
         #endregion
 
         #region Private Members
+
+        private const string SymbolicLinkValueName = "SymbolicLinkValue";
+
         private NtResult<NtKey> GetKeyForEnumeration(bool open_for_backup)
         {
             if (IsAccessGranted(KeyAccessRights.EnumerateSubKeys))

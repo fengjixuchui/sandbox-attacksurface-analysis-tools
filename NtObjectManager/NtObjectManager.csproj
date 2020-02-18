@@ -65,13 +65,19 @@
     <Compile Include="NtTransactionCmdlets.cs" />
     <Compile Include="NtTransactionManagerCmdlets.cs" />
     <Compile Include="NtWin32Cmdlets.cs" />
+    <Compile Include="Provider\NtDirectoryContainer.cs" />
+    <Compile Include="Provider\NtKeyContainer.cs" />
+    <Compile Include="Provider\NtKeyEntry.cs" />
+    <Compile Include="Provider\NtObjectContainer.cs" />
+    <Compile Include="Provider\NtObjectContainerEntry.cs" />
+    <Compile Include="Provider\ObjectManagerPSDriveInfo.cs" />
     <Compile Include="PSUtils.cs" />
     <Compile Include="RpcServerCmdlets.cs" />
     <Compile Include="RpcServerNameCmdlets.cs" />
     <Compile Include="TestNetworkAccessCmdlet.cs" />
     <Compile Include="Win32Cmdlets.cs" />
     <Compile Include="CommonAccessBaseCmdlet.cs" />
-    <Compile Include="GenericObjectSecurity.cs" />
+    <Compile Include="Provider\GenericObjectSecurity.cs" />
     <Compile Include="GetAccessibleDeviceCmdlet.cs" />
     <Compile Include="GetAccessibleFileCmdlet.cs" />
     <Compile Include="GetAccessibleHandle.cs" />
@@ -96,8 +102,8 @@
     <Compile Include="NtObjectCmdlets.cs" />
     <Compile Include="NtTypesCmdlets.cs" />
     <Compile Include="NtSymbolicLinkCmdlet.cs" />
-    <Compile Include="NtDirectoryEntry.cs" />
-    <Compile Include="NtObjectManagerProvider.cs" />
+    <Compile Include="Provider\NtDirectoryEntry.cs" />
+    <Compile Include="Provider\NtObjectManagerProvider.cs" />
     <Compile Include="NtWaitCmdlets.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
   </ItemGroup>
