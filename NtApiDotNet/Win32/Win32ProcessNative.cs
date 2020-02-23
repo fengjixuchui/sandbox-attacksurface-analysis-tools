@@ -193,6 +193,26 @@ namespace NtApiDotNet.Win32
         Audit = 2,
     }
 
+    /// <summary>
+    /// Flags for create thread.
+    /// </summary>
+    [Flags]
+    public enum CreateThreadFlags : uint
+    {
+        /// <summary>
+        /// No flags.
+        /// </summary>
+        None = 0,
+        /// <summary>
+        /// Create suspended.
+        /// </summary>
+        Suspended = 0x00000004,
+        /// <summary>
+        /// Stack size is a reservation.
+        /// </summary>
+        StackSizeParamIsAReservation = 0x00010000,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     struct Win32kFilterAttribute
     {
@@ -565,6 +585,12 @@ namespace NtApiDotNet.Win32
         ModuleTamperingProtectionAlwaysOn = (0x00000001UL << 12),
         ModuleTamperingProtectionAlwaysOff = (0x00000002UL << 12),
         ModuleTamperingProtectionNoInherit = (0x00000003UL << 12),
+        RestrictBranchPredictionAlwaysOn = (0x00000001UL << 16),
+        RestrictBranchPredictionAlwaysOff  = (0x00000002UL << 16),
+        AllowDowngradeDynamicCodePolicyAlwaysOn = (0x00000001UL << 20),
+        AllowDowngradeDynamicCodePolicyAlwaysOff = (0x00000002UL << 20),
+        SpeculativeStoreBypassDisableAlwaysOn = (0x00000001UL << 24),
+        SpeculativeStoreBypassDisableAlwaysOff = (0x00000002UL << 24),
     }
 
     [Flags]

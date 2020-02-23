@@ -54,7 +54,7 @@ Specify a list process objects to use for their tokens.
 .INPUTS
 None
 .OUTPUTS
-NtObjectManager.AccessCheckResult
+NtObjectManager.Cmdlets.Accessible.AccessCheckResult
 .NOTES
 For best results run this function as an administrator with SeDebugPrivilege available.
 .EXAMPLE
@@ -1093,7 +1093,7 @@ function Get-NtFilePath {
             $p = Resolve-Path -LiteralPath $FullName
         }
     }
-    $p = [NtObjectManager.GetNtFileCmdlet]::ResolveWin32Path($PSCmdlet.SessionState, $p)
+    $p = [NtObjectManager.Cmdlets.Object.GetNtFileCmdlet]::ResolveWin32Path($PSCmdlet.SessionState, $p)
     Write-Output $p
   }
 }
@@ -1666,7 +1666,7 @@ function Show-NtSecurityDescriptor {
     [Parameter(ParameterSetName = "FromObject")]
     [switch]$ReadOnly,
     [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true)]
-    [NtObjectManager.AccessCheckResult]$AccessCheckResult,
+    [NtObjectManager.Cmdlets.Accessible.AccessCheckResult]$AccessCheckResult,
     [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true)]
     [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
     [Parameter(Position = 1, ParameterSetName = "FromSecurityDescriptor")]
@@ -1846,7 +1846,7 @@ function Format-NtSecurityDescriptor {
         [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true, ValueFromPipeline)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
         [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true, ValueFromPipeline)]
-        [NtObjectManager.AccessCheckResult]$AccessCheckResult,
+        [NtObjectManager.Cmdlets.Accessible.AccessCheckResult]$AccessCheckResult,
         [Parameter(Position = 0, ParameterSetName = "FromAcl", Mandatory = $true)]
         [AllowEmptyCollection()]
         [NtApiDotNet.Acl]$Acl,
@@ -4312,7 +4312,7 @@ function Start-Win32ChildProcess {
 .SYNOPSIS
 Get the values from a registry key.
 .DESCRIPTION
-This cmdlet will get one more values from a registry key.
+This cmdlet will get one or more values from a registry key.
 .PARAMETER Key
 The base key to query the values from.
 .PARAMETER Name
@@ -4320,6 +4320,8 @@ The name of the value to query. If not specified then returns all values.
 .PARAMETER AsString
 Output the values as strings.
 .INPUTS
+None
+.OUTPUTS
 NtKeyValue
 .EXAMPLE
 Get-NtKeyValue $key
@@ -4357,6 +4359,38 @@ function Get-NtKeyValue {
         }
     } else {
         $values | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Remove a value from a registry key.
+.DESCRIPTION
+This cmdlet will remove one more values from a registry key.
+.PARAMETER Key
+The base key to remove the values from.
+.PARAMETER Name
+The names of the values to remove.
+.INPUTS
+None
+.EXAMPLE
+Remove-NtKeyValue -Key $key -Name ABC
+Removes the value ABC from the Key.
+.EXAMPLE
+Remove-NtKeyValue -Key $key -Name ABC, XYZ
+Removes the value ABC and XYZ from the Key.
+#>
+function Remove-NtKeyValue {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [parameter(Mandatory, Position=0)]
+        [NtApiDotNet.NtKey]$Key,
+        [parameter(Mandatory, Position=1)]
+        [string[]]$Name
+    )
+    foreach($n in $Name)
+    {
+        $Key.DeleteValue($n)
     }
 }
 
@@ -5210,9 +5244,9 @@ function Start-AccessibleScheduledTask {
     [CmdletBinding()]
     Param(
         [parameter(Mandatory, Position = 0)]
-        [NtObjectManager.ScheduledTaskAccessCheckResult]$Task,
+        [NtObjectManager.Cmdlets.Accessible.ScheduledTaskAccessCheckResult]$Task,
         [string]$User,
-        [NtObjectManager.TaskRunFlags]$Flags = 0,
+        [NtObjectManager.Cmdlets.Accessible.TaskRunFlags]$Flags = 0,
         [int]$SessionId,
         [string[]]$Arguments
     )
@@ -5917,4 +5951,297 @@ function Get-Win32ModuleImport {
     } else {
         $imports | Write-Output
     }
+}
+
+<#
+.SYNOPSIS
+Gets entries from an object directory.
+.DESCRIPTION
+This cmdlet gets the list entries in an object directory.
+.PARAMETER Directory
+Specify the directory.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.ObjectDirectoryInformation[]
+.EXAMPLE
+Get-NtDirectoryEntry $dir
+Get list of entries from $dir.
+#>
+function Get-NtDirectoryEntry {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.NtDirectory]$Directory
+    )
+
+    $Directory.Query() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get current authentication packages.
+.DESCRIPTION
+This cmdlet gets the list of current authentication packages.
+.PARAMETER Name
+The name of the authentication package.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.AuthenticationPackage
+.EXAMPLE
+Get-AuthPackage
+Get all authentication packages.
+.EXAMPLE
+Get-AuthPackage -Name NTLM
+Get the NTLM authentication package.
+#>
+function Get-AuthPackage {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    Param(
+        [Parameter(Position=0, ParameterSetName="FromName")]
+        [string]$Name
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.Security.AuthenticationPackage]::Get() | Write-Output
+        }
+        "FromName" {
+            [NtApiDotNet.Win32.Security.AuthenticationPackage]::FromName($Name) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Read's user credentials from the shell.
+.DESCRIPTION
+This cmdlet reads the user credentials from the shell and encodes the password.
+.PARAMETER UserName
+The username to use.
+.PARAMETER Domain
+The domain to use.
+.PARAMETER Password
+The password to use.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.UserCredentials
+.EXAMPLE
+$user_creds = Read-UserCredentials
+Read user credentials from the shell.
+#>
+function Read-AuthCredential {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0)]
+        [string]$UserName,
+        [Parameter(Position=1)]
+        [string]$Domain,
+        [Parameter(Position=2)]
+        [string]$Password
+    )
+
+    $creds = [NtApiDotNet.Win32.Security.UserCredentials]::new()
+    if ($UserName -eq "") {
+        $UserName = Read-Host -Prompt "UserName"
+    }
+    $creds.UserName = $UserName
+    if ($Domain -eq "") {
+        $Domain = Read-Host -Prompt "Domain"
+    }
+    $creds.Domain = $Domain
+    if ($Password -ne "") {
+        $creds.SetPassword($Password)
+    } else {
+        $creds.Password = Read-Host -AsSecureString -Prompt "Password"
+    }
+    $creds | Write-Output
+}
+
+<#
+.SYNOPSIS
+Create a new credentials handle.
+.DESCRIPTION
+This cmdlet creates a new authentication credentials handle.
+.PARAMETER Package
+The name of the package to use.
+.PARAMETER UseFlag
+The use flags for the credentials.
+.PARAMETER AuthId
+Optional authentication ID to authenticate.
+.PARAMETER Principal
+Optional principal to authentication.
+.PARAMETER Credentials
+Optional Credentials for the authentication.
+.PARAMETER ReadCredentials
+Specify to read the credentials from the console.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.CredentialHandle
+.EXAMPLE
+$h = Get-AuthCredentialHandle "NTLM" Both
+Get a credential handle for the NTLM package for both directions.
+#>
+function Get-AuthCredentialHandle {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [string]$Package,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.Win32.Security.SecPkgCredFlags]$UseFlag,
+        [Nullable[NtApiDotNet.Luid]]$AuthId,
+        [string]$Principal,
+        [NtApiDotNet.Win32.Security.AuthenticationCredentials]$Credentials,
+        [switch]$ReadCredentials
+    )
+
+    if ($ReadCredentials) {
+        $Credentials = Read-AuthCredential
+    }
+
+    [NtApiDotNet.Win32.Security.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credentials) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Create a new authentication client.
+.DESCRIPTION
+This cmdlet creates a new authentication client.
+.PARAMETER CredHandle
+The credential handle to use.
+.PARAMETER RequestAttributes
+Request attributes.
+.PARAMETER Target
+Optional SPN target.
+.PARAMETER DataRepresentation
+Data representation format.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.ClientAuthenticationContext
+#>
+function Get-AuthClient {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.Security.CredentialHandle]$CredHandle,
+        [NtApiDotNet.Win32.Security.InitializeContextReqFlags]$RequestAttributes = 0,
+        [string]$Target,
+        [NtApiDotNet.Win32.Security.SecDataRep]$DataRepresentation = "Native"
+    )
+
+    [NtApiDotNet.Win32.Security.ClientAuthenticationContext]::new($CredHandle, `
+        $RequestAttributes, $Target, $DataRepresentation) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Create a new authentication server.
+.DESCRIPTION
+This cmdlet creates a new authentication server.
+.PARAMETER CredHandle
+The credential handle to use.
+.PARAMETER RequestAttributes
+Request attributes.
+.PARAMETER Token
+Initial client token.
+.PARAMETER DataRepresentation
+Data representation format.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.ServerAuthenticationContext
+#>
+function Get-AuthServer {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.Security.CredentialHandle]$CredHandle,
+        [Parameter(Position=1, Mandatory)]
+        [byte[]]$Token,
+        [NtApiDotNet.Win32.Security.AcceptContextReqFlags]$RequestAttributes = 0,
+        [NtApiDotNet.Win32.Security.SecDataRep]$DataRepresentation = "Native"
+    )
+
+    [NtApiDotNet.Win32.Security.ServerAuthenticationContext]::new($CredHandle, `
+        $Token, $RequestAttributes, $DataRepresentation) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Update an authentication client.
+.DESCRIPTION
+This cmdlet updates an authentication client. Returns true if the authentication is complete.
+.PARAMETER Server
+The authentication client.
+.PARAMETER Token
+The next authentication token.
+.INPUTS
+None
+.OUTPUTS
+bool
+#>
+function Update-AuthClient {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.Security.ClientAuthenticationContext]$Client,
+        [Parameter(Position=1, Mandatory)]
+        [byte[]]$Token
+    )
+
+    $Client.Continue($Token)
+    $Client.Done | Write-Output
+}
+
+<#
+.SYNOPSIS
+Update an authentication server.
+.DESCRIPTION
+This cmdlet updates an authentication server. Returns true if the authentication is complete.
+.PARAMETER Server
+The authentication server.
+.PARAMETER Token
+The next authentication token.
+.INPUTS
+None
+.OUTPUTS
+bool
+#>
+function Update-AuthServer {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.Security.ServerAuthenticationContext]$Server,
+        [Parameter(Position=1, Mandatory)]
+        [byte[]]$Token
+    )
+
+    $Server.Continue($Token)
+    $Server.Done | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get access token for the authentication.
+.DESCRIPTION
+This cmdlet gets the access token for authentication, once complete.
+.PARAMETER Server
+The authentication server.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtToken
+#>
+function Get-AuthAccessToken {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.Win32.Security.ServerAuthenticationContext]$Server
+    )
+
+    $Server.GetAccessToken() | Write-Output
 }
