@@ -38,7 +38,13 @@ namespace NtApiDotNet
                 if (!IsAccessGranted(ProcessAccessRights.QueryLimitedInformation)
                     && !IsAccessGranted(ProcessAccessRights.QueryInformation))
                 {
-                    _extended_info = new ProcessExtendedBasicInformation();
+                    // If we don't have query try and duplicate.
+                    using (var dup_process = Duplicate(ProcessAccessRights.QueryLimitedInformation, false))
+                    {
+                        if (dup_process.IsSuccess)
+                            return dup_process.Result.GetExtendedBasicInfo(false);
+                        _extended_info = new ProcessExtendedBasicInformation();
+                    }
                 }
                 else
                 {
@@ -493,12 +499,38 @@ namespace NtApiDotNet
         /// <returns>The accessible process, or null if one couldn't be opened.</returns>
         public NtProcess GetNextProcess(ProcessAccessRights desired_access)
         {
-            NtStatus status = NtSystemCalls.NtGetNextProcess(Handle, desired_access, AttributeFlags.None, 0, out SafeKernelObjectHandle new_handle);
+            NtStatus status = NtSystemCalls.NtGetNextProcess(Handle, desired_access, AttributeFlags.None, 
+                GetNextProcessFlags.None, out SafeKernelObjectHandle new_handle);
             if (status == NtStatus.STATUS_SUCCESS)
             {
                 return new NtProcess(new_handle);
             }
             return null;
+        }
+
+        /// <summary>
+        /// Get previous accessible process (used in combination with GetFirstProcess)
+        /// </summary>
+        /// <param name="desired_access">The access required for the process.</param>
+        /// <returns>The accessible process, or null if one couldn't be opened.</returns>
+        public NtProcess GetPreviousProcess(ProcessAccessRights desired_access)
+        {
+            NtStatus status = NtSystemCalls.NtGetNextProcess(Handle, desired_access, AttributeFlags.None,
+                GetNextProcessFlags.PreviousProcess, out SafeKernelObjectHandle new_handle);
+            if (status == NtStatus.STATUS_SUCCESS)
+            {
+                return new NtProcess(new_handle);
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Get previous accessible process (used in combination with GetFirstProcess)
+        /// </summary>
+        /// <returns>The accessible process, or null if one couldn't be opened.</returns>
+        public NtProcess GetPreviousProcess()
+        {
+            return GetPreviousProcess(ProcessAccessRights.MaximumAllowed);
         }
 
         /// <summary>
@@ -1747,6 +1779,17 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get the session ID for the process.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The session ID.</returns>
+        public NtResult<int> GetSessionId(bool throw_on_error)
+        {
+            return Query<ProcessSessionInformation>(ProcessInformationClass.ProcessSessionInformation, 
+                default, throw_on_error).Map(s => s.SessionId);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -1776,7 +1819,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the process' session ID
         /// </summary>
-        public int SessionId => Query<ProcessSessionInformation>(ProcessInformationClass.ProcessSessionInformation).SessionId;
+        public int SessionId => GetSessionId(true).Result;
 
         /// <summary>
         /// Get the process' ID

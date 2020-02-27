@@ -649,6 +649,10 @@
       <TableControl>
         <TableHeaders>
           <TableColumnHeader>
+            <Label>Handle</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
             <Label>Name</Label>
             <Alignment>left</Alignment>
           </TableColumnHeader>
@@ -656,15 +660,32 @@
             <Label>NtTypeName</Label>
             <Alignment>left</Alignment>
           </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Inherit</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ProtectFromClose</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
               <TableColumnItem>
+                <ScriptBlock>$_.Handle.DangerousGetHandle()</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
                 <PropertyName>Name</PropertyName>
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>NtTypeName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Inherit</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ProtectFromClose</PropertyName>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
@@ -790,7 +811,7 @@
     <View>
       <Name>AccessCheckResult</Name>
       <ViewSelectedBy>
-        <TypeName>NtObjectManager.AccessCheckResult</TypeName>
+        <TypeName>NtObjectManager.Cmdlets.Accessible.AccessCheckResult</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
@@ -1112,9 +1133,9 @@
         </TableControl>
     </View>
     <View>
-        <Name>NtKeyValue</Name>
+        <Name>NtStatusResultTable</Name>
         <ViewSelectedBy>
-            <TypeName>NtObjectManager.NtStatusResult</TypeName>
+            <TypeName>NtObjectManager.Cmdlets.Object.NtStatusResult</TypeName>
         </ViewSelectedBy>
         <TableControl>
             <TableHeaders>
@@ -2044,7 +2065,7 @@
       </TableControl>
     </View>
     <View>
-      <Name>NtApiDotNet.Win32.Security.AuthenticationPackageTable</Name>
+      <Name>AuthenticationPackageTable</Name>
       <ViewSelectedBy>
         <TypeName>NtApiDotNet.Win32.Security.AuthenticationPackage</TypeName>
       </ViewSelectedBy>
@@ -2074,6 +2095,134 @@
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>Capabilities</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>SafeLoadLibraryHandleTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.SafeLoadLibraryHandle</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ImageBase</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>EntryPoint</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ImageBase</PropertyName>
+                <FormatString>X016</FormatString>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>EntryPointAddress</PropertyName>
+                <FormatString>X016</FormatString>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>ProcessModuleTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.ProcessModule</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ImageBase</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ImageSize</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ImageBase</PropertyName>
+                <FormatString>X016</FormatString>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ImageSize</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>SafeKernelObjectHandleTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.SafeKernelObjectHandle</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Handle</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>NtTypeName</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Inherit</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ProtectFromClose</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>IsClosed</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <ScriptBlock>$_.DangerousGetHandle()</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>NtTypeName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Inherit</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ProtectFromClose</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>IsClosed</PropertyName>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

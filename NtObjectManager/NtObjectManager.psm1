@@ -1108,7 +1108,7 @@ The DOS path to convert to NT.
 .INPUTS
 string[] List of paths to convert.
 .OUTPUTS
-
+NtApiDotNet.RtlPathType
 .EXAMPLE
 Get-NtFilePathType c:\Windows
 Get the path type for c:\windows.
@@ -2324,6 +2324,8 @@ The token to impersonate, if the token is a primary token it will be duplicated.
 The script block to execute during impersonation.
 .PARAMETER ImpersonationLevel
 When the token is duplicated specify the impersonation level to use.
+.PARAMETER Anonymous
+Impersonate the anonymous token and run the script.
 .OUTPUTS
 Result of the script block.
 .EXAMPLE
@@ -2332,23 +2334,38 @@ Open a file under impersonation.
 .EXAMPLE
 Invoke-NtToken -Token $token -ImpersonationLevel Identification -Script { Get-NtToken -Impersonation -OpenAsSelf }
 Open the impersontation token under identification level impersonation.
+.EXAMPLE
+Invoke-NtToken -Script { Get-NtProcess -ProcessId 1234 } -Anonymous
+Open a process while impersonating the anonymous token.
 #>
-function Invoke-NtToken{
+function Invoke-NtToken {
+    [CmdletBinding(DefaultParameterSetName="FromToken")]
     param(
-        [Parameter(Mandatory=$true, Position=0)]
+        [Parameter(Mandatory=$true, Position=0, ParameterSetName="FromToken")]
         [NtApiDotNet.NtToken]$Token,
-        [Parameter(Mandatory=$true, Position=1)]
+        [Parameter(Mandatory=$true, Position=1, ParameterSetName="FromToken")]
+        [Parameter(Mandatory=$true, Position=0, ParameterSetName="FromAnonymous")]
         [ScriptBlock]$Script,
-        [NtApiDotNet.SecurityImpersonationLevel]$ImpersonationLevel = "Impersonation"
+        [Parameter(Position=2, ParameterSetName="FromToken")]
+        [NtApiDotNet.SecurityImpersonationLevel]$ImpersonationLevel = "Impersonation",
+        [Parameter(Mandatory=$true, ParameterSetName="FromAnonymous")]
+        [switch]$Anonymous
     )
 
-    if ($Token.TokenType -eq "Impersonation" -and $Token.ImpersonationLevel -lt $ImpersonationLevel) {
-        Write-Error "Impersonation level can't be raised, specify an appropriate impersonation level"
-        return
-    }
+    if ($PSCmdlet.ParameterSetName -eq "FromToken") {
+        if ($Token.TokenType -eq "Impersonation" -and $Token.ImpersonationLevel -lt $ImpersonationLevel) {
+            Write-Error "Impersonation level can't be raised, specify an appropriate impersonation level"
+            return
+        }
 
-    $cb = [System.Func[Object]]{ & $Script }
-    $Token.RunUnderImpersonate($cb, $ImpersonationLevel)
+        $cb = [System.Func[Object]]{ & $Script }
+        $Token.RunUnderImpersonate($cb, $ImpersonationLevel)
+    } else {
+        $th = Get-NtThread -Current
+        Use-NtObject($imp = $th.ImpersonateAnonymousToken()) {
+            & $Script
+        }
+    }
 }
 
 <#
@@ -5190,6 +5207,9 @@ Close handle 0x1234 in another process.
 .EXAMPLE
 Close-NtObject -Handle 0x1234 -ProcessId 684
 Close handle 0x1234 in process with ID 684.
+.EXAMPLE
+Close-NtObject -Handle 0x1234
+Close handle 0x1234 in process the current process.
 #>
 function Close-NtObject {
     [CmdletBinding(DefaultParameterSetName="FromProcess")]
@@ -5202,7 +5222,10 @@ function Close-NtObject {
         [int]$ProcessId,
         [parameter(Mandatory, Position = 1, ParameterSetName="FromProcess")]
         [parameter(Mandatory, Position = 1, ParameterSetName="FromProcessId")]
-        [IntPtr]$Handle
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromCurrentProcess")]
+        [IntPtr]$Handle,
+        [parameter(Mandatory, ParameterSetName="FromCurrentProcess")]
+        [switch]$CurrentProcess
     )
 
     PROCESS {
@@ -5210,6 +5233,7 @@ function Close-NtObject {
             "FromObject" { $Object.Close() }
             "FromProcess" { [NtApiDotNet.NtObject]::CloseHandle($Process, $Handle) }
             "FromProcessId" { [NtApiDotNet.NtObject]::CloseHandle($ProcessId, $Handle) }
+            "FromCurrentProcess" { [NtApiDotNet.NtObject]::CloseHandle($Handle) }
         }
     }
 }
@@ -5880,15 +5904,17 @@ function Get-Win32Module {
 .SYNOPSIS
 Gets the exports from a loaded DLL.
 .DESCRIPTION
-This cmdlet gets the list of exports from a loaded DLL.
+This cmdlet gets the list of exports from a loaded DLL or a single exported function.
 .PARAMETER Module
 Specify the DLL.
 .PARAMETER Path
 Specify the path to the DLL.
+.PARAMETER ProcAddress
+Specify the name of the function to query.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.DllExport[]
+NtApiDotNet.Win32.DllExport[] or int64.
 #>
 function Get-Win32ModuleExport {
     [CmdletBinding(DefaultParameterSetName="FromModule")]
@@ -5896,17 +5922,22 @@ function Get-Win32ModuleExport {
         [Parameter(Position=0, Mandatory, ParameterSetName="FromModule")]
         [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module,
         [Parameter(Position=0, Mandatory, ParameterSetName="FromPath")]
-        [string]$Path
+        [string]$Path,
+        [string]$ProcAddress = ""
     )
 
     if ($PsCmdlet.ParameterSetName -eq "FromPath") {
         Use-NtObject($lib = Import-Win32Module -Path $Path -Flags LoadLibraryAsDataFile) {
             if ($lib -ne $null) {
-                Get-Win32ModuleExport -Module $lib
+                Get-Win32ModuleExport -Module $lib -ProcAddress $ProcAddress
             }
         }
     } else {
-        $Module.Exports | Write-Output
+        if ($ProcAddress -eq "") {
+            $Module.Exports | Write-Output
+        } else {
+            $Module.GetProcAddress($ProcAddress, $true).Result.ToInt64() | Write-Output
+        }
     }
 }
 
@@ -6244,4 +6275,18 @@ function Get-AuthAccessToken {
     )
 
     $Server.GetAccessToken() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get list of loaded kernel modules.
+.DESCRIPTION
+This cmdlet gets the list of loaded kernel modules.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.ProcessModule[]
+#>
+function Get-KernelModule {
+    [NtApiDotNet.NtSystemInfo]::GetKernelModules() | Write-Output
 }
