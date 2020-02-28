@@ -2766,44 +2766,60 @@ The address to get information about.
 The process to query for memory information, defaults to current process.
 .PARAMETER All
 Show all memory regions.
+.PARAMETER Name
+Show only memory regions for the named mapped file.
 .PARAMETER IncludeFree
 When showing all memory regions specify to include free regions as well.
 .OUTPUTS
 NtApiDotNet.MemoryInformation
 .EXAMPLE
 Get-NtVirtualMemory $addr
-Get the memory information for the specified address.
+Get the memory information for the specified address for the current process.
 .EXAMPLE
 Get-NtVirtualMemory $addr -Process $process
 Get the memory information for the specified address in another process.
 .EXAMPLE
-Get-NtVirtualMemory -All
-Get all memory information.
+Get-NtVirtualMemory
+Get all memory information for the current process.
 .EXAMPLE
-Get-NtVirtualMemory -All -Process $process
+Get-NtVirtualMemory -Process $process
 Get all memory information in another process.
 .EXAMPLE
-Get-NtVirtualMemory -All -Process $process -IncludeFree
+Get-NtVirtualMemory -Process $process -IncludeFree
 Get all memory information in another process including free regions.
+.EXAMPLE
+Get-NtVirtualMemory -Type Mapped
+Get all mapped memory information for the current process.
+.EXAMPLE
+Get-NtVirtualMemory -Name file.exe
+Get all mapped memory information where the mapped name is file.exe.
 #>
 function Get-NtVirtualMemory
 {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="All")]
     param (
         [parameter(Mandatory, Position=0, ParameterSetName = "FromAddress")]
         [int64]$Address,
         [NtApiDotNet.NtProcess]$Process = [NtApiDotnet.NtProcess]::Current,
-        [parameter(Mandatory, ParameterSetName = "All")]
+        [parameter(ParameterSetName = "All")]
         [switch]$All,
         [parameter(ParameterSetName = "All")]
-        [switch]$IncludeFree
+        [switch]$IncludeFree,
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.MemoryType]$Type = "All",
+        [parameter(ParameterSetName = "All")]
+        [string]$Name
     )
     switch ($PsCmdlet.ParameterSetName) {
     "FromAddress" {
-      $Process.QueryMemoryInformation($Address)
+      $Process.QueryMemoryInformation($Address) | Write-Output
     }
     "All" {
-      $Process.QueryAllMemoryInformation($IncludeFree)
+        if ($Name -ne "") {
+            $Process.QueryAllMemoryInformation($IncludeFree, $Type) | Where-Object MappedImageName -eq $Name | Write-Output
+        } else {
+            $Process.QueryAllMemoryInformation($IncludeFree, $Type) | Write-Output
+        }
     }
   }
 }
@@ -3367,6 +3383,38 @@ function Format-NdrRpcServerInterface {
 .SYNOPSIS
 Get a mapped view of a section.
 .DESCRIPTION
+Call Add-NtSection instead.
+#>
+function Get-NtMappedSection {
+    Param(
+        [parameter(Mandatory, Position=0)]
+        [NtApiDotNet.NtSection]$Section,
+        [parameter(Mandatory, Position=1)]
+        [NtApiDotNet.MemoryAllocationProtect]$Protection,
+        [NtApiDotNet.NtProcess]$Process,
+        [IntPtr]$ViewSize=0,
+        [IntPtr]$BaseAddress=0, 
+        [IntPtr]$ZeroBits=0,
+        [IntPtr]$CommitSize=0,
+        [NtApiDotNet.LargeInteger]$SectionOffset,
+        [NtApiDotNet.SectionInherit]$SectionInherit=[NtApiDotNet.SectionInherit]::ViewUnmap,
+        [NtApiDotNet.AllocationType]$AllocationType="None"
+    )
+
+    Write-Warning "This command has been superceded by Add-NtSection"
+    if ($Process -eq $null) {
+        $Process = Get-NtProcess -Current
+    }
+
+    $Section.Map($Process, $Protection, $ViewSize, $BaseAddress, `
+            $ZeroBits, $CommitSize, $SectionOffset, `
+            $SectionInherit, $AllocationType)
+}
+
+<#
+.SYNOPSIS
+Get a mapped view of a section.
+.DESCRIPTION
 This cmdlet calls the Map method on a section to map it into memory.
 .PARAMETER Section
 The section object to map.
@@ -3391,16 +3439,16 @@ The allocation type for the mapping.
 .OUTPUTS
 NtApiDotNet.NtMappedSection - The mapped section.
 .EXAMPLE
-Get-NtMappedSection -Section $sect -Protection ReadWrite
+Add-NtSection -Section $sect -Protection ReadWrite
 Map the section as Read/Write.
 .EXAMPLE
-Get-NtMappedSection -Section $sect -Protection ReadWrite -ViewSize 4096
+Add-NtSection -Section $sect -Protection ReadWrite -ViewSize 4096
 Map the first 4096 bytes of the section as Read/Write.
 .EXAMPLE
-Get-NtMappedSection -Section $sect -Protection ReadWrite -SectionOffset (64*1024)
+Add-NtSection -Section $sect -Protection ReadWrite -SectionOffset (64*1024)
 Map the section starting from offset 64k.
 #>
-function Get-NtMappedSection {
+function Add-NtSection {
     Param(
         [parameter(Mandatory, Position=0)]
         [NtApiDotNet.NtSection]$Section,
@@ -3422,7 +3470,57 @@ function Get-NtMappedSection {
 
     $Section.Map($Process, $Protection, $ViewSize, $BaseAddress, `
             $ZeroBits, $CommitSize, $SectionOffset, `
-            $SectionInherit, $AllocationType)
+            $SectionInherit, $AllocationType) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Unmap a view of a section.
+.DESCRIPTION
+This cmdlet unmaps a section from virtual memory.
+.PARAMETER Mapping
+The mapping to unmap.
+.PARAMETER Address
+The address to unmap.
+.PARAMETER Process
+Optional process to unmap from. Default is the current process.
+.PARAMETER Flags
+Optional flags for unmapping.
+.OUTPUTS
+None
+.EXAMPLE
+Remove-NtSection -Mapping $map
+Unmap an existing section created with Add-NtSection.
+.EXAMPLE
+Remove-NtSection -Address $addr
+Unmap an address
+.EXAMPLE
+Remove-NtSection -Address $addr -Process $p 
+Unmap an address in a specified process.
+#>
+function Remove-NtSection {
+    [CmdletBinding(DefaultParameterSetName="FromMapping")]
+    Param(
+        [parameter(Mandatory, Position=0, ParameterSetName="FromMapping")]
+        [NtApiDotNet.NtMappedSection]$Mapping,
+        [parameter(Mandatory, Position=0, ParameterSetName="FromAddress")]
+        [int64]$Address,
+        [parameter(Position=1, ParameterSetName="FromAddress")]
+        [NtApiDotNet.NtProcess]$Process,
+        [parameter(ParameterSetName="FromAddress")]
+        [NtApiDotNet.MemUnmapFlags]$Flags = 0
+    )
+
+    switch($PsCmdlet.ParameterSetName) {
+        "FromMapping" { $Mapping.Dispose() }
+        "FromAddress" { 
+            if ($Process -eq $null) {
+                $Process = Get-NtProcess -Current
+            }
+
+            $Process.Unmap($Address, $Flags)
+        }
+    }
 }
 
 <#
@@ -4464,103 +4562,6 @@ function Start-NtFileOplock {
 
 <#
 .SYNOPSIS
-Get a specified information for an object.
-.DESCRIPTION
-This cmdlet requests specified information through the QueryInformation system call for an object type. It can return the data as a
-buffer or a byte array.
-.PARAMETER InformationClass
-Specify the information class to query.
-.PARAMETER Object
-Specify the object to query.
-.PARAMETER AsBuffer
-Specify to return the information as an allocated buffer.
-.PARAMETER InitBuffer
-Specify a buffer to initialize the query.
-.PARAMETER QueryLength
-Specify the length of the query buffer if it needs to be fixed.
-.INPUTS
-None
-.OUTPUTS
-byte[] or SafeBuffer
-.EXAMPLE
-Get-NtObjectInformation $p 1
-Query information class #1 on object $p as a byte array.
-.EXAMPLE
-Get-NtObjectInformation $p 1 -AsBuffer
-Query information class #1 on object $p as a buffer.
-.EXAMPLE
-Get-NtObjectInformation $p 1 -QueryLength 1000
-Query information class #1 on object $p as a byte array with an initial size of 1000.
-#>
-function Get-NtObjectInformation {
-  Param(
-    [parameter(Mandatory, Position = 0)]
-    [NtApiDotNet.NtObject]$Object,
-    [parameter(Mandatory, Position = 1)]
-    [int]$InformationClass,
-    [switch]$AsBuffer,
-    [byte[]]$InitBuffer,
-    [int]$QueryLength
-    )
-  if ($null -eq $InitBuffer -and $QueryLength -gt 0) {
-    $InitBuffer = New-Object byte[] $QueryLength
-  }
-  if ($AsBuffer) {
-    $Object.QueryRawBuffer($InformationClass, $InitBuffer)
-  } else {
-    $Object.QueryRawBytes($InformationClass, $InitBuffer)
-  }
-}
-
-<#
-.SYNOPSIS
-Set a specified information class for an object.
-.DESCRIPTION
-This cmdlet sets specified information through the SetInformation system call for an object type.
-.PARAMETER InformationClass
-Specify the information class to set.
-.PARAMETER Object
-Specify the object to set.
-.PARAMETER Buffer
-Specify information as a buffer.
-.PARAMETER Bytes
-Specify information as bytes.
-.INPUTS
-None
-.OUTPUTS
-None
-.EXAMPLE
-Set-NtObjectInformation $p 1 [byte[]]@(0, 1, 2, 3)
-Set information class #1 on object $p as a byte array.
-.EXAMPLE
-Set-NtObjectInformation $p 1 $buffer
-Set information class #1 on object $p as a buffer.
-#>
-function Set-NtObjectInformation {
-  [CmdletBinding(DefaultParameterSetName="FromBytes")]
-  Param(
-    [parameter(Mandatory, Position = 0)]
-    [NtApiDotNet.NtObject]$Object,
-    [parameter(Mandatory, Position = 1)]
-    [int]$InformationClass,
-    [parameter(Mandatory, Position = 2, ParameterSetName="FromBytes")]
-    [byte[]]$Bytes,
-    [parameter(Mandatory, Position = 2, ParameterSetName="FromBuffer")]
-    [System.Runtime.InteropServices.SafeBuffer]$Buffer
-    )
-
-    switch($PsCmdlet.ParameterSetName) {
-        "FromBytes" {
-            $Object.SetBytes($InformationClass, $Bytes)
-        }
-        "FromBuffer" {
-            $Object.SetBuffer($InformationClass, $Buffer)
-        }
-    }
-}
-
-<#
-.SYNOPSIS
 Get a specified mitigation policy value for a process.
 .DESCRIPTION
 This cmdlet queries for a specific mitigation policy value from a process. The result is an enumeration or a raw value depending on the request.
@@ -5431,6 +5432,10 @@ Stop a process.
 This cmdlet stops/kills a process with an optional status code.
 .PARAMETER Process
 The process to stop.
+.PARAMETER ExitCode
+The NTSTATUS exit code.
+.PARAMETER ExitCodeInt
+The exit code as an integer.
 .INPUTS
 NtApiDotNet.NtProcess
 .OUTPUTS
@@ -5438,19 +5443,21 @@ None
 #>
 function Stop-NtProcess
 {
-    [CmdletBinding(DefaultParameterSetName = "FromProcess")]
+    [CmdletBinding(DefaultParameterSetName = "FromStatus")]
     Param(
-        [Parameter(Mandatory=$true, Position=0, ParameterSetName="FromProcess", ValueFromPipeline)]
+        [Parameter(Mandatory=$true, Position=0, ValueFromPipeline)]
         [NtApiDotNet.NtProcess[]]$Process,
-        [NtApiDotNet.NtStatus]$ExitCode = 0
+        [Parameter(Position = 1, ParameterSetName="FromStatus")]
+        [NtApiDotNet.NtStatus]$ExitStatus = 0,
+        [Parameter(Position = 1, ParameterSetName="FromInt")]
+        [int]$ExitCode = 0
     )
 
     PROCESS {
-        switch($PsCmdlet.ParameterSetName) {
-            "FromProcess" {
-                foreach($p in $Process) {
-                    $p.Terminate($ExitCode)
-                }
+        foreach($p in $Process) {
+            switch($PsCmdlet.ParameterSetName) {
+                "FromStatus" {  $p.Terminate($ExitStatus) }
+                "FromInt" { $p.Terminate($ExitCode) }
             }
         }
     }
@@ -6289,4 +6296,67 @@ NtApiDotNet.ProcessModule[]
 #>
 function Get-KernelModule {
     [NtApiDotNet.NtSystemInfo]::GetKernelModules() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets the information classes for a type.
+.DESCRIPTION
+This cmdlet gets the list of information classes for a type. You can get the query and set information classes.
+.PARAMETER Type
+The NT type to get information classes for.
+.PARAMETER Object
+The object to get information classes for.
+.PARAMETER Set
+Specify to get the set information classes which might differ.
+.INPUTS
+None
+.OUTPUTS
+KeyPair<string, int>[]
+#>
+function Get-NtObjectInformationClass {
+    [CmdletBinding(DefaultParameterSetName="FromType")]
+    Param(
+        [Parameter(Position=0, Mandatory, ParameterSetName="FromType")]
+        [NtApiDotNet.NtType]$Type,
+        [Parameter(Position=0, Mandatory, ParameterSetName="FromObject")]
+        [NtApiDotNet.NtObject]$Object,
+        [switch]$Set
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromObject") {
+        $Type = $Object.NtType
+    }
+
+    if ($Set) {
+        $Type.SetInformationClass | Write-Output
+    } else {
+        $Type.QueryInformationClass | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Compares two object handles to see if they're the same underlying object.
+.DESCRIPTION
+This cmdlet compares two handles to see if they're the same underlying object.
+On Window 10 this is a supported operation, for downlevel queries the address for
+the objects and compares that instead.
+.PARAMETER Left
+The left hand object to compare.
+.PARAMETER Right
+The right hand object to compare.
+.INPUTS
+None
+.OUTPUTS
+bool
+#>
+function Compare-NtObject {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.NtObject]$Left,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.NtObject]$Right
+    )
+    $Left.SameObject($Right) | Write-Output
 }
