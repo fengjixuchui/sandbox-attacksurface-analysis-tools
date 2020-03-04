@@ -247,6 +247,24 @@ namespace TokenViewer
             return GetSecurityDescriptor(obj.GetSecurityDescriptor(SecurityInformation.AllBasic, false).GetResultOrDefault());
         }
 
+        private static string GetElevationTypeName(NtToken token)
+        {
+            return string.Join(" - ", token.ElevationType, token.Elevated ? "Elevated" : "Not Elevated");
+        }
+
+        private static string GetChromeSandboxType(ProcessTokenEntry entry)
+        {
+            string[] args = Win32Utils.ParseCommandLine(entry.CommandLine);
+            foreach (var s in args)
+            {
+                if (s.StartsWith("--type="))
+                {
+                    return $"Sandbox: {s.Substring(7)}";
+                }
+            }
+            return "Unknown";
+        }
+
         public MainForm()
         {
             InitializeComponent();
@@ -259,7 +277,7 @@ namespace TokenViewer
             AddGrouping("Sandbox", p => GetSandboxName(p.ProcessToken));
             AddGrouping("Integrity Level", p => p.ProcessToken.IntegrityLevel.ToString());
             AddGrouping("User", p => p.ProcessToken.User.Name);
-            AddGrouping("Elevation Type", p => p.ProcessToken.ElevationType.ToString());
+            AddGrouping("Elevation Type", p => GetElevationTypeName(p.ProcessToken));
             AddGrouping("Authentication ID", p => p.ProcessToken.AuthenticationId.ToString());
             AddGrouping("Origin ID", p => p.ProcessToken.Origin.ToString());
             AddGrouping("Flags", p => p.ProcessToken.Flags.ToString());
@@ -274,6 +292,8 @@ namespace TokenViewer
             AddGrouping("Security Descriptor", p => GetSecurityDescriptor(p.ProcessToken));
             AddGrouping("Process Security Descriptor", p => GetSecurityDescriptor(p.ProcessSecurity));
             AddGrouping("Trust Level", p => p.ProcessToken.TrustLevel?.Name ?? "Untrusted");
+            AddGrouping("No Child Process", p => p.ProcessToken.NoChildProcess ? "No Child Process" : "Unrestricted");
+            AddGrouping("Chrome Sandbox Type", p => GetChromeSandboxType(p));
             RefreshProcessList(null, false, false);
 
             using (NtToken token = NtProcess.Current.OpenToken())
