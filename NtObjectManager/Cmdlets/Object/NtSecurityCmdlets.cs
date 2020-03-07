@@ -541,6 +541,16 @@ namespace NtObjectManager.Cmdlets.Object
         [Parameter(ParameterSetName = "FromAce", Mandatory = true, ValueFromPipeline = true, Position = 0)]
         public Ace AccessControlEntry { get; set; }
         /// <summary>
+        /// <para type="description">Specify a security information to get the access mask.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSecurityInformation", Mandatory = true)]
+        public SecurityInformation SecurityInformation { get; set; }
+        /// <summary>
+        /// <para type="description">Specify a to get the set security mask rather than the query.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSecurityInformation")]
+        public SwitchParameter SetSecurity { get; set; }
+        /// <summary>
         /// <para type="description">Return access as GenericAccess.</para>
         /// </summary>
         [Parameter]
@@ -579,12 +589,21 @@ namespace NtObjectManager.Cmdlets.Object
         /// </summary>
         protected override void ProcessRecord()
         {
-            AccessMask mask = 0;
-
+            AccessMask mask;
             switch (ParameterSetName)
             {
                 case "FromAce":
                     mask = AccessControlEntry.Mask;
+                    break;
+                case "FromSecurityInformation":
+                    if (SetSecurity)
+                    {
+                        mask = NtSecurity.SetSecurityAccessMask(SecurityInformation);
+                    }
+                    else
+                    {
+                        mask = NtSecurity.QuerySecurityAccessMask(SecurityInformation);
+                    }
                     break;
                 default:
                     mask = AccessMask;
@@ -862,13 +881,16 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify mapping the generic accesses based on the NT Type.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "FromToken"), Parameter(ParameterSetName = "FromSddl"), Parameter(ParameterSetName = "FromBytes"), Parameter(ParameterSetName = "FromKey")]
+        [Parameter(ParameterSetName = "FromSddl"), Parameter(ParameterSetName = "FromBytes"), Parameter(ParameterSetName = "FromKey")]
         public SwitchParameter MapType { get; set; }
 
         /// <summary>
         /// <para type="description">Specify a default NT type for the security descriptor.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "FromToken"), Parameter(ParameterSetName = "FromSddl"), Parameter(ParameterSetName = "FromBytes"), Parameter(ParameterSetName = "FromKey")]
+        [Parameter(ParameterSetName = "FromToken"), 
+            Parameter(ParameterSetName = "FromSddl"), 
+            Parameter(ParameterSetName = "FromBytes"), 
+            Parameter(ParameterSetName = "FromKey")]
         [ArgumentCompleter(typeof(NtTypeArgumentCompleter))]
         public NtType Type { get; set; }
 
@@ -904,6 +926,36 @@ namespace NtObjectManager.Cmdlets.Object
         public SecurityDescriptorControl Control { get; set; }
 
         /// <summary>
+        /// <para type="description">Specify optional object types for the new security descriptor.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public Guid[] ObjectTypes { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify new security descriptor is a directory.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public SwitchParameter IsDirectory { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify auto-inherit flags for new security descriptor.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public SecurityAutoInheritFlags AutoInherit { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify parent for new security descriptor.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public SecurityDescriptor Parent { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify creator for new security descriptor.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public SecurityDescriptor Creator { get; set; }
+
+        /// <summary>
         /// Overridden ProcessRecord method.
         /// </summary>
         protected override void ProcessRecord()
@@ -913,11 +965,19 @@ namespace NtObjectManager.Cmdlets.Object
                 WriteWarning("Must specify Type for MapType to work correctly.");
             }
 
-            SecurityDescriptor sd = null;
+            SecurityDescriptor sd;
             switch (ParameterSetName)
             {
                 case "FromToken":
-                    sd = new SecurityDescriptor(Token);
+                    {
+                        Type = Type ?? Parent?.NtType ?? Creator?.NtType;
+                        if (Type == null)
+                        {
+                            WriteWarning("Security descriptor type not specified, defaulting to File.");
+                            Type = NtType.GetTypeByType<NtFile>();
+                        }
+                        sd = SecurityDescriptor.Create(Parent, Creator, IsDirectory, AutoInherit, Token, Type.GenericMapping);
+                    }
                     break;
                 case "FromSddl":
                     sd = new SecurityDescriptor(Sddl);

@@ -2635,17 +2635,20 @@ function Get-NtSecurityDescriptor
                 [NtApiDotNet.SecurityDescriptor]::new($Process, [IntPtr]::new($Address))
             }
             "FromPath" {
-                Use-NtObject($obj = Get-NtObject -Path $Path -TypeName $TypeName -Access ReadControl) {
+                $mask = Get-NtAccessMask -SecurityInformation $SecurityInformation -ToGenericAccess
+                Use-NtObject($obj = Get-NtObject -Path $Path -TypeName $TypeName -Access $mask) {
                     $obj.GetSecurityDescriptor($SecurityInformation)
                 }
             }
             "FromPid" {
-                Use-NtObject($obj = Get-NtProcess -ProcessId $ProcessId -Access ReadControl) {
+                $mask = Get-NtAccessMask -SecurityInformation $SecurityInformation -ToSpecificAccess Process
+                Use-NtObject($obj = Get-NtProcess -ProcessId $ProcessId -Access $mask) {
                     $obj.GetSecurityDescriptor($SecurityInformation)
                 }
             }
             "FromTid" {
-                Use-NtObject($obj = Get-NtThread -ThreadId $ThreadId -Access ReadControl) {
+                $mask = Get-NtAccessMask -SecurityInformation $SecurityInformation -ToSpecificAccess Thread
+                Use-NtObject($obj = Get-NtThread -ThreadId $ThreadId -Access $mask) {
                     $obj.GetSecurityDescriptor($SecurityInformation)
                 }
             }
@@ -4929,6 +4932,15 @@ function Get-RpcClient {
         [switch]$EnableDebugging
     )
 
+    BEGIN {
+        if (Get-IsPSCore) {
+            if ($Provider -ne $null) {
+                Write-Warning "PowerShell Core doesn't support arbitrary providers. Using in-built C#."
+            }
+            $Provider = New-Object NtObjectManager.Utils.CoreCSharpCodeProvider
+        }
+    }
+
     PROCESS {
         if ($PSCmdlet.ParameterSetName -eq "FromServer") {
             $args = [NtApiDotNet.Win32.Rpc.RpcClientBuilderArguments]::new();
@@ -5734,24 +5746,69 @@ Outputs a hex dump for a byte array.
 This cmdlet converts a byte array to a hex dump.
 .PARAMETER Bytes
 The bytes to convert.
+.PARAMETER ShowHeader
+Display a header for the hex dump.
+.PARAMETER ShowAddress
+Display the address for the hex dump.
+.PARAMETER ShowAscii
+Display the ASCII dump along with the hex.
+.PARAMETER HideRepeating
+Hide repeating 16 byte patterns.
+.PARAMETER Buffer
+Show the contents of a safe buffer.
+.PARAMETER Offset
+Specify start offset into the safe buffer.
+.PARAMETER Length
+Specify length of safe buffer.
+.PARAMETER BaseAddress
+Specify base address for the display when ShowAddress is enabled.
 .INPUTS
 byte[]
 .OUTPUTS
 String
 #>
 function Out-HexDump {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
     Param(
-        [Parameter(Mandatory, Position=0, ValueFromPipeline)]
-        [byte[]]$Bytes
+        [Parameter(Mandatory, Position=0, ValueFromPipeline, ParameterSetName="FromBytes")]
+        [byte[]]$Bytes,
+        [Parameter(Mandatory, Position=0, ParameterSetName="FromBuffer")]
+        [System.Runtime.InteropServices.SafeBuffer]$Buffer,
+        [Parameter(ParameterSetName="FromBuffer")]
+        [int64]$Offset = 0,
+        [Parameter(ParameterSetName="FromBuffer")]
+        [int64]$Length = 0,
+        [Parameter(ParameterSetName="FromBytes")]
+        [int64]$BaseAddress = 0,
+        [switch]$ShowHeader,
+        [switch]$ShowAddress,
+        [switch]$ShowAscii,
+        [switch]$ShowAll,
+        [switch]$HideRepeating
     )
 
     BEGIN {
-        $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new();
+        if ($ShowAll) {
+            $ShowHeader = $true
+            $ShowAscii = $true
+            $ShowAddress = $true
+        }
+        switch($PsCmdlet.ParameterSetName) {
+            "FromBytes" {
+                $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new($ShowHeader, $ShowAddress, $ShowAscii, $HideRepeating, $BaseAddress);
+            }
+            "FromBuffer" {
+                $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new($Buffer, $Offset, $Length, $ShowHeader, $ShowAddress, $ShowAscii, $HideRepeating);
+            }
+        }
     }
 
     PROCESS {
-        $builder.Append($Bytes)
+        switch($PsCmdlet.ParameterSetName) {
+            "FromBytes" {
+                $builder.Append($Bytes)
+            }
+        }
     }
 
     END {
@@ -6342,7 +6399,7 @@ None
 .OUTPUTS
 NtApiDotNet.ProcessModule[]
 #>
-function Get-KernelModule {
+function Get-NtKernelModule {
     [NtApiDotNet.NtSystemInfo]::GetKernelModules() | Write-Output
 }
 
@@ -6407,4 +6464,147 @@ function Compare-NtObject {
         [NtApiDotNet.NtObject]$Right
     )
     $Left.SameObject($Right) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Edits an existing security descriptor.
+.DESCRIPTION
+This cmdlet edits an existing security descriptor based on 
+a new security descriptor and additional information. Returns the 
+updated security descriptor but leaves the original alonge.
+.PARAMETER SecurityDescriptor
+The security descriptor to edit.
+.PARAMETER NewSecurityDescriptor
+The security to update with.
+.PARAMETER SecurityInformation
+Specify the parts of the security descriptor to edit.
+.PARAMETER Token
+Specify optional token used to edit the security descriptor.
+.PARAMETER Flags
+Specify optional auto inherit flags.
+.PARAMETER Type
+Specify the NT type to use for the update. Defaults to using the 
+type from $SecurityDescriptor.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptor
+#>
+function Edit-NtSecurityDescriptor {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$NewSecurityDescriptor,
+        [Parameter(Position=2, Mandatory)]
+        [NtApiDotNet.SecurityInformation]$SecurityInformation,
+        [NtApiDotNet.NtToken]$Token,
+        [NtApiDotNet.SecurityAutoInheritFlags]$Flags = 0,
+        [NtApiDotNet.NtType]$Type
+    )
+
+    if ($Type -eq $null) {
+        $Type = $SecurityDescriptor.NtType
+        if ($Type -eq $null) {
+            Write-Warning "Original type not available, defaulting to File."
+            $Type = Get-NtType "File"
+        }
+    }
+
+    $SecurityDescriptor.Modify($NewSecurityDescriptor, $SecurityInformation, `
+        $Flags, $Token, $Type.GenericMapping) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Sets the owner for a security descriptor.
+.DESCRIPTION
+This cmdlet sets the owner of a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Owner
+The owner SID to set.
+.PARAMETER Defaulted
+Specify whether the owner is defaulted.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorOwner {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.Sid]$Owner,
+        [switch]$Defaulted
+    )
+    $SecurityDescriptor.Owner = [NtApiDotNet.SecurityDescriptorSid]::new($Owner, $Defaulted)
+}
+
+<#
+.SYNOPSIS
+Sets the group for a security descriptor.
+.DESCRIPTION
+This cmdlet sets the group of a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Group
+The group SID to set.
+.PARAMETER Defaulted
+Specify whether the group is defaulted.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorGroup {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.Sid]$Group,
+        [switch]$Defaulted
+    )
+    $SecurityDescriptor.Group = [NtApiDotNet.SecurityDescriptorSid]::new($Group, $Defaulted)
+}
+
+<#
+.SYNOPSIS
+Sets the integrity level for a security descriptor.
+.DESCRIPTION
+This cmdlet sets the integrity level for a security descriptor with a specified policy and flags.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Group
+The group SID to set.
+.PARAMETER Defaulted
+Specify whether the group is defaulted.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorIntegrityLevel {
+    [CmdletBinding(DefaultParameterSetName="FromLevel")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory, ParameterSetName="FromSid")]
+        [NtApiDotNet.Sid]$Sid,
+        [Parameter(Position=1, Mandatory, ParameterSetName="FromLevel")]
+        [NtApiDotNet.TokenIntegrityLevel]$IntegrityLevel,
+        [NtApiDotNet.AceFlags]$Flags = 0,
+        [NtApiDotNet.MandatoryLabelPolicy]$Policy = "NoWriteUp"
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromSid" {
+            $SecurityDescriptor.AddMandatoryLabel($Sid, $Flags, $Policy)
+        }
+        "FromLevel" {
+            $SecurityDescriptor.AddMandatoryLabel($IntegrityLevel, $Flags, $Policy)
+        }
+    }
 }

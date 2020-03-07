@@ -48,48 +48,6 @@ namespace NtApiDotNet
     }
 
     /// <summary>
-    /// A security descriptor SID which maintains defaulted state.
-    /// </summary>
-    public sealed class SecurityDescriptorSid
-    {
-        #region Public Properties
-        /// <summary>
-        /// The SID.
-        /// </summary>
-        public Sid Sid { get; set; }
-
-        /// <summary>
-        /// Indicates whether the SID was defaulted or not.
-        /// </summary>
-        public bool Defaulted { get; set; }
-        #endregion
-
-        #region Constructors
-        /// <summary>
-        /// Constructor from existing SID.
-        /// </summary>
-        /// <param name="sid">The SID.</param>
-        /// <param name="defaulted">Whether the SID was defaulted or not.</param>
-        public SecurityDescriptorSid(Sid sid, bool defaulted)
-        {
-            Sid = sid;
-            Defaulted = defaulted;
-        }
-        #endregion
-
-        #region Public Methods
-        /// <summary>
-        /// Convert to a string.
-        /// </summary>
-        /// <returns>The string form of the SID</returns>
-        public override string ToString()
-        {
-            return $"{Sid} - Defaulted: {Defaulted}";
-        }
-        #endregion
-    }
-
-    /// <summary>
     /// Security descriptor.
     /// </summary>
     public sealed class SecurityDescriptor
@@ -142,6 +100,7 @@ namespace NtApiDotNet
             }
             Revision = header.Revision;
             Control = header.Control & ~SecurityDescriptorControl.SelfRelative;
+            SelfRelative = header.HasFlag(SecurityDescriptorControl.SelfRelative);
             if (header.Control.HasFlag(SecurityDescriptorControl.RmControlValid))
             {
                 RmControl = header.Sbz1;
@@ -228,7 +187,8 @@ namespace NtApiDotNet
             {
                 RmControl = rm_control;
             }
-            Control = control;
+            Control = control & ~SecurityDescriptorControl.SelfRelative;
+            SelfRelative = control.HasFlagSet(SecurityDescriptorControl.SelfRelative);
             Revision = revision;
 
             return NtStatus.STATUS_SUCCESS;
@@ -386,6 +346,38 @@ namespace NtApiDotNet
             }
         }
 
+        /// <returns></returns>
+        private static NtResult<SafeProcessHeapBuffer> CreateBuffer(
+            SecurityDescriptor parent,
+            SecurityDescriptor creator,
+            Guid[] object_types,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping,
+            bool throw_on_error)
+        {
+            using (var list = new DisposableList())
+            {
+                var parent_buffer = list.AddResource(parent?.ToSafeBuffer() ?? SafeProcessHeapBuffer.Null);
+                var creator_buffer = list.AddResource(creator?.ToSafeBuffer() ?? SafeProcessHeapBuffer.Null);
+                if (object_types?.Length > 0)
+                {
+                    return NtRtl.RtlNewSecurityObjectWithMultipleInheritance(
+                        parent_buffer, creator_buffer, out SafeProcessHeapBuffer new_descriptor,
+                        object_types, object_types.Length, is_directory, flags, token.GetHandle(),
+                        ref generic_mapping).CreateResult(throw_on_error, () => new_descriptor);
+                }
+                else
+                {
+                    return NtRtl.RtlNewSecurityObjectEx(
+                        parent_buffer, creator_buffer, out SafeProcessHeapBuffer new_descriptor,
+                        null, is_directory, flags, token.GetHandle(),
+                        ref generic_mapping).CreateResult(throw_on_error, () => new_descriptor);
+                }
+            }
+        }
+
         #endregion
 
         #region Public Properties
@@ -426,12 +418,9 @@ namespace NtApiDotNet
         /// </summary>
         public Ace MandatoryLabel
         {
-            get
-            {
-                return GetMandatoryLabel()
+            get => GetMandatoryLabel()
                     ?? new MandatoryLabelAce(AceFlags.None, MandatoryLabelPolicy.NoWriteUp,
                         TokenIntegrityLevel.Medium);
-            }
 
             set
             {
@@ -458,23 +447,14 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the process trust label.
         /// </summary>
-        public Ace ProcessTrustLabel
-        {
-            get
-            {
-                return FindSaclAce(AceType.ProcessTrustLabel);
-            }
-        }
+        public Ace ProcessTrustLabel => FindSaclAce(AceType.ProcessTrustLabel);
 
         /// <summary>
         /// Get or set the integrity level
         /// </summary>
         public TokenIntegrityLevel IntegrityLevel
         {
-            get
-            {
-                return NtSecurity.GetIntegrityLevel(MandatoryLabel.Sid);
-            }
+            get => NtSecurity.GetIntegrityLevel(MandatoryLabel.Sid);
             set
             {
                 Ace label = MandatoryLabel;
@@ -575,6 +555,11 @@ namespace NtApiDotNet
         /// </summary>
         public int SaclAceCount => Sacl?.Count ?? 0;
 
+        /// <summary>
+        /// Indicates if the security descriptor was constructor from a self relative format.
+        /// </summary>
+        public bool SelfRelative { get; private set; }
+
         #endregion
 
         #region Public Methods
@@ -587,16 +572,26 @@ namespace NtApiDotNet
             return FindSaclAce(AceType.MandatoryLabel);
         }
 
-        /// <summary>
+        // <summary>
         /// Convert security descriptor to a byte array
         /// </summary>
         /// <returns>The binary security descriptor</returns>
-        public byte[] ToByteArray()
+        public byte[] ToArray()
         {
             using (var sd_buffer = CreateRelativeSecurityDescriptor(true))
             {
                 return sd_buffer.Result.ToArray();
             }
+        }
+
+        /// <summary>
+        /// Convert security descriptor to a byte array
+        /// </summary>
+        /// <returns>The binary security descriptor</returns>
+        [Obsolete("Use ToArray")]
+        public byte[] ToByteArray()
+        {
+            return ToArray();
         }
 
         /// <summary>
@@ -832,6 +827,72 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Modifies a security descriptor from a new descriptor.
+        /// </summary>
+        /// <param name="security_descriptor">The security descriptor to update with.</param>
+        /// <param name="security_information">The parts of the security descriptor to update.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The updated security descriptor.</returns>
+        public NtResult<SecurityDescriptor> Modify(
+            SecurityDescriptor security_descriptor,
+            SecurityInformation security_information,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping,
+            bool throw_on_error)
+        {
+            if (security_descriptor == null)
+            {
+                throw new ArgumentNullException(nameof(security_descriptor));
+            }
+
+            using (var list = new DisposableList())
+            {
+                var object_sd = list.AddResource(new SafeProcessHeapBuffer(ToArray()));
+                var modify_sd = list.AddResource(security_descriptor.ToSafeBuffer());
+
+                IntPtr ptr = object_sd.DangerousGetHandle();
+                try
+                {
+                    return NtRtl.RtlSetSecurityObjectEx(security_information,
+                        modify_sd, ref ptr, flags, ref generic_mapping, token.GetHandle()).CreateResult(throw_on_error, 
+                        () => new SecurityDescriptor(ptr) { NtType = NtType });
+                }
+                finally
+                {
+                    if (ptr != object_sd.DangerousGetHandle())
+                    {
+                        object_sd.SetHandleAsInvalid();
+                        NtHeap.Current.Free(HeapAllocFlags.None, ptr.ToInt64());
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Modifies a security descriptor from a new descriptor.
+        /// </summary>
+        /// <param name="security_descriptor">The security descriptor to update with.</param>
+        /// <param name="security_information">The parts of the security descriptor to update.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <returns>The updated security descriptor.</returns>
+        public SecurityDescriptor Modify(
+            SecurityDescriptor security_descriptor,
+            SecurityInformation security_information,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping)
+        {
+            return Modify(security_descriptor, security_information, 
+                flags, token, generic_mapping, true).Result;
+        }
+
+        /// <summary>
         /// Overridden ToString method.
         /// </summary>
         /// <returns>The security descriptor as an SDDL string.</returns>
@@ -905,7 +966,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Constructor from a token default DACL and ownership values.
         /// </summary>
-        /// <param name="token">The token to use for its default DACL</param>
+        /// <param name="token">The token to use for its default DACL.</param>
         public SecurityDescriptor(NtToken token) : this()
         {
             Owner = new SecurityDescriptorSid(token.Owner, true);
@@ -926,6 +987,7 @@ namespace NtApiDotNet
         /// <param name="base_object">Base object for security descriptor</param>
         /// <param name="token">Token for determining user rights</param>
         /// <param name="is_directory">True if a directory security descriptor</param>
+        [Obsolete("Use Create for a New Security Descriptor")]
         public SecurityDescriptor(NtObject base_object, NtToken token, bool is_directory) : this()
         {
             if ((base_object == null) && (token == null))
@@ -955,7 +1017,7 @@ namespace NtApiDotNet
 
             SafeBuffer parent_sd_buffer = SafeHGlobalBuffer.Null;
             SafeBuffer creator_sd_buffer = SafeHGlobalBuffer.Null;
-            SafeSecurityObjectBuffer security_obj = null;
+            SafeProcessHeapBuffer security_obj = null;
             try
             {
                 if (parent_sd != null)
@@ -1062,6 +1124,155 @@ namespace NtApiDotNet
         public static NtResult<SecurityDescriptor> Parse(string sddl, bool throw_on_error)
         {
             return NtSecurity.SddlToSecurityDescriptor(sddl, throw_on_error).Map(ba => new SecurityDescriptor(ba));
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="object_types">Optional list of object type GUIDs.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> Create(
+            SecurityDescriptor parent,
+            SecurityDescriptor creator,
+            Guid[] object_types,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping,
+            bool throw_on_error)
+        {
+            using (var buffer = CreateBuffer(parent, creator, object_types, is_directory, 
+                flags, token, generic_mapping, throw_on_error))
+            {
+                if (!buffer.IsSuccess)
+                {
+                    return buffer.Cast<SecurityDescriptor>();
+                }
+                return Parse(buffer.Result, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="object_types">Optional list of object type GUIDs.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static SecurityDescriptor Create(
+            SecurityDescriptor parent,
+            SecurityDescriptor creator,
+            Guid[] object_types,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping)
+        {
+            return Create(parent, creator, object_types, is_directory, flags, token, generic_mapping, true).Result;
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> Create(
+            SecurityDescriptor parent,
+            SecurityDescriptor creator,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping,
+            bool throw_on_error)
+        {
+            return Create(parent, creator, null, is_directory, flags, token, generic_mapping, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static SecurityDescriptor Create(
+            SecurityDescriptor parent,
+            SecurityDescriptor creator,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping)
+        {
+            return Create(parent, creator, is_directory, flags, token, generic_mapping, true).Result;
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent_object">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> Create(
+            NtObject parent_object,
+            SecurityDescriptor creator,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping,
+            bool throw_on_error)
+        {
+            var parent_sd = parent_object?.GetSecurityDescriptor(SecurityInformation.AllBasic, throw_on_error);
+            if (parent_sd.HasValue && !parent_sd.Value.IsSuccess)
+            {
+                return parent_sd.Value.Cast<SecurityDescriptor>();
+            }
+            return Create(parent_sd?.Result, creator, null, is_directory, flags, token, generic_mapping, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a new security descriptor from a parent.
+        /// </summary>
+        /// <param name="parent_object">The parent security descriptor. Can be null.</param>
+        /// <param name="creator">The creator security descriptor.</param>
+        /// <param name="is_directory">True if the objec to assign is a directory.</param>
+        /// <param name="flags">Auto inherit flags.</param>
+        /// <param name="token">Optional token for the security descriptor.</param>
+        /// <param name="generic_mapping">Generic mapping.</param>
+        /// <returns>The new security descriptor.</returns>
+        public static SecurityDescriptor Create(
+            NtObject parent_object,
+            SecurityDescriptor creator,
+            bool is_directory,
+            SecurityAutoInheritFlags flags,
+            NtToken token,
+            GenericMapping generic_mapping)
+        {
+            return Create(parent_object, creator, is_directory, flags, token, generic_mapping, true).Result;
         }
 
         #endregion
