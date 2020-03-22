@@ -22,7 +22,7 @@ namespace NtApiDotNet.Forms
     /// </summary>
     public partial class SecurityDescriptorViewerForm : Form
     {
-        private NtObject _obj;
+        private readonly NtObject _obj;
 
         private static SecurityDescriptor GetSecurityDescriptor(NtObject obj)
         {
@@ -79,6 +79,10 @@ namespace NtApiDotNet.Forms
             if (obj.IsAccessMaskGranted(GenericAccessRights.WriteDac) && !read_only)
             {
                 btnEditPermissions.Enabled = true;
+            }
+            else
+            {
+                tableLayoutPanel.RowStyles.RemoveAt(1);
             }
             _obj = obj;
         }

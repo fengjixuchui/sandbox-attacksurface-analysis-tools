@@ -22,10 +22,6 @@ namespace ViewSecurityDescriptor
 {
     static class Program
     {
-        private static void RunForm(Form form)
-        {
-        }
-
         /// <summary>
         /// The main entry point for the application.
         /// </summary>
@@ -49,7 +45,7 @@ namespace ViewSecurityDescriptor
                         bool read_only = args.Length > 1 ? args[1].Equals("--readonly") : false;
                         using (var obj = NtGeneric.FromHandle(handle))
                         {
-                            Application.Run(new SecurityDescriptorViewerForm(obj, read_only));
+                            Application.Run(new SecurityDescriptorViewerForm(obj.ToTypedObject(), read_only));
                         }
                     }
                     else
@@ -62,8 +58,7 @@ namespace ViewSecurityDescriptor
             }
             catch (Exception ex)
             {
-                //MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                MessageBox.Show(ex.ToString(), "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show(ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
     }
