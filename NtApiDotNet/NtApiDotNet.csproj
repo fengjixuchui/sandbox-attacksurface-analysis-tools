@@ -57,6 +57,7 @@
     <Compile Include="BoundaryDescriptor.cs" />
     <Compile Include="BufferUtils.cs" />
     <Compile Include="CachedEnumerable.cs" />
+    <Compile Include="ClaimSecurityAttribute.cs" />
     <Compile Include="KnownSids.cs" />
     <Compile Include="NtDesktopNative.cs" />
     <Compile Include="NtProcessCreateResult.cs" />
@@ -77,8 +78,12 @@
     <Compile Include="SafeProcessHeapBuffer.cs" />
     <Compile Include="SafeProcessParametersBuffer.cs" />
     <Compile Include="SafeStringBuffer.cs" />
+    <Compile Include="SafeTokenGroupsBuffer.cs" />
+    <Compile Include="SafeTokenPrivilegesBuffer.cs" />
     <Compile Include="SecurityDescriptorSid.cs" />
     <Compile Include="SidIdentifierAuthority.cs" />
+    <Compile Include="TokenGroupsBuilder.cs" />
+    <Compile Include="TokenPrivilegesBuilder.cs" />
     <Compile Include="UnicodeStringBytesSafeBuffer.cs" />
     <Compile Include="Utilities\Memory\CrossBitnessProcessMemoryReader.cs" />
     <Compile Include="Utilities\Memory\CrossBitnessTypeAttribute.cs" />

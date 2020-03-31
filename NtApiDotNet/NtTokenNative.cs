@@ -12,10 +12,8 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using NtApiDotNet.Token;
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -655,73 +653,31 @@ namespace NtApiDotNet
             [In] TokenSource TokenSource);
 
         [DllImport("ntdll.dll")]
+        public static extern NtStatus NtCreateTokenEx(
+            out SafeKernelObjectHandle TokenHandle,
+            TokenAccessRights DesiredAccess,
+            [In] ObjectAttributes ObjectAttributes,
+            TokenType TokenType,
+            [In] ref Luid AuthenticationId,
+            [In] ref LargeIntegerStruct ExpirationTime,
+            [In] ref TokenUser TokenUser,
+            [In] SafeTokenGroupsBuffer TokenGroups,
+            [In] SafeTokenPrivilegesBuffer TokenPrivileges,
+            [In] SafeBuffer UserAttributes,
+            [In] SafeBuffer DeviceAttributes,
+            [In] SafeTokenGroupsBuffer DeviceGroups,
+            [In] OptionalTokenMandatoryPolicy TokenMandatoryPolicy,
+            [In] OptionalTokenOwner TokenOwner,
+            [In] ref TokenPrimaryGroup TokenPrimaryGroup,
+            [In] OptionalTokenDefaultDacl TokenDefaultDacl,
+            [In] TokenSource TokenSource);
+
+        [DllImport("ntdll.dll")]
         public static extern NtStatus NtCompareTokens(
             SafeKernelObjectHandle FirstTokenHandle,
             SafeKernelObjectHandle SecondTokenHandle,
             out bool Equal
         );
-    }
-
-    internal class TokenPrivilegesBuilder
-    {
-        private List<LuidAndAttributes> _privs;
-
-        public TokenPrivilegesBuilder()
-        {
-            _privs = new List<LuidAndAttributes>();
-        }
-
-        public void AddPrivilege(Luid luid, PrivilegeAttributes attributes)
-        {
-            LuidAndAttributes priv = new LuidAndAttributes
-            {
-                Luid = luid,
-                Attributes = attributes
-            };
-            _privs.Add(priv);
-        }
-
-        public void AddPrivilege(TokenPrivilegeValue name, PrivilegeAttributes attributes)
-        {
-            Luid luid = new Luid((uint)name, 0);
-            AddPrivilege(luid, attributes);
-        }
-
-        public void AddPrivilege(string name, bool enable)
-        {
-            AddPrivilege(new TokenPrivilege(name, enable ? PrivilegeAttributes.Enabled : PrivilegeAttributes.Disabled));
-        }
-
-        public void AddPrivilege(TokenPrivilege privilege)
-        {
-            AddPrivilege(privilege.Luid, privilege.Attributes);
-        }
-
-        public void AddPrivilegeRange(IEnumerable<TokenPrivilege> privileges)
-        {
-            _privs.AddRange(privileges.Select(p => new LuidAndAttributes() { Luid = p.Luid, Attributes = p.Attributes }));
-        }
-
-        public SafeTokenPrivilegesBuffer ToBuffer()
-        {
-            return new SafeTokenPrivilegesBuffer(_privs.ToArray());
-        }
-    }
-
-    public class SafeTokenPrivilegesBuffer : SafeStructureInOutBuffer<TokenPrivileges>
-    {
-        public SafeTokenPrivilegesBuffer(LuidAndAttributes[] privs)
-            : base(new TokenPrivileges() { PrivilegeCount = privs.Length },
-                  Marshal.SizeOf(typeof(LuidAndAttributes)) * privs.Length, true)
-        {
-            Data.WriteArray(0, privs, 0, privs.Length);
-        }
-
-        private SafeTokenPrivilegesBuffer() : base(IntPtr.Zero, 0, false)
-        {
-        }
-
-        new public static SafeTokenPrivilegesBuffer Null { get { return new SafeTokenPrivilegesBuffer(); } }
     }
 
     [StructLayout(LayoutKind.Sequential), DataStart("Groups")]
@@ -730,79 +686,6 @@ namespace NtApiDotNet
         public int GroupCount;
         public SidAndAttributes Groups;
     }
-
-    public class SafeTokenGroupsBuffer : SafeStructureInOutBuffer<TokenGroups>
-    {
-        SafeHandleList _sids;
-        public SafeTokenGroupsBuffer(SidAndAttributes[] sid_and_attr, SafeHandleList sids)
-            : base(new TokenGroups() { GroupCount = sids.Count },
-                  Marshal.SizeOf(typeof(SidAndAttributes)) * sids.Count, true)
-        {
-            _sids = sids;
-            Data.WriteArray(0, sid_and_attr, 0, sid_and_attr.Length);
-        }
-
-        private SafeTokenGroupsBuffer() : base(IntPtr.Zero, 0, false)
-        {
-        }
-
-        new public static SafeTokenGroupsBuffer Null { get { return new SafeTokenGroupsBuffer(); } }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (_sids != null)
-            {
-                _sids.Dispose();
-            }
-            base.Dispose(disposing);
-        }
-    }
-
-    public sealed class TokenGroupsBuilder
-    {
-        private class InternalSidAndAttributes
-        {
-            public Sid sid;
-            public uint attr;
-        }
-
-        private List<InternalSidAndAttributes> _sid_and_attrs;
-
-        public TokenGroupsBuilder()
-        {
-            _sid_and_attrs = new List<InternalSidAndAttributes>();
-        }
-
-        public void AddGroup(Sid sid, GroupAttributes attributes)
-        {
-            _sid_and_attrs.Add(new InternalSidAndAttributes() { sid = sid, attr = (uint)attributes });
-        }
-
-        public void AddGroup(UserGroup group)
-        {
-            AddGroup(group.Sid, group.Attributes);
-        }
-
-        public SafeTokenGroupsBuffer ToBuffer()
-        {
-            using (SafeHandleList sids = new SafeHandleList(_sid_and_attrs.Count))
-            {
-                SidAndAttributes[] result = new SidAndAttributes[_sid_and_attrs.Count];
-                for (int i = 0; i < _sid_and_attrs.Count; ++i)
-                {
-                    sids.Add(_sid_and_attrs[i].sid.ToSafeBuffer());
-                    result[i] = new SidAndAttributes
-                    {
-                        Sid = sids[i].DangerousGetHandle(),
-                        Attributes = (GroupAttributes)_sid_and_attrs[i].attr
-                    };
-                }
-
-                return new SafeTokenGroupsBuffer(result, sids.DangerousMove());
-            }
-        }
-    }
-
 
     [StructLayout(LayoutKind.Sequential)]
     public class TokenStatistics
@@ -818,82 +701,5 @@ namespace NtApiDotNet
         public uint PrivilegeCount;
         public Luid ModifiedId;
     }
-
-    public sealed class ClaimSecurityAttribute
-    {
-        private static T[] ReadTyped<T>(IntPtr buffer, int count) where T : struct
-        {
-            int type_size = Marshal.SizeOf(typeof(T));
-            List<T> res = new List<T>();
-            while (count > 0)
-            {
-                res.Add((T)Marshal.PtrToStructure(buffer, typeof(T)));
-                buffer += type_size;
-                count--;
-            }
-            return res.ToArray();
-        }
-
-        private IEnumerable<object> ReadValues(IntPtr buffer, int count, ClaimSecurityValueType type)
-        {
-            if (buffer == IntPtr.Zero || count == 0)
-            {
-                return new object[0];
-            }
-
-            switch (type)
-            {
-                case ClaimSecurityValueType.Int64:
-                    return ReadTyped<long>(buffer, count).Cast<object>();
-                case ClaimSecurityValueType.UInt64:
-                    return ReadTyped<ulong>(buffer, count).Cast<object>();
-                case ClaimSecurityValueType.OctetString:
-                    return ReadTyped<ClaimSecurityAttributeOctetStringValue>(buffer, count).Select(v => v.ToArray()).Cast<object>();
-                case ClaimSecurityValueType.Sid:
-                    return ReadTyped<ClaimSecurityAttributeOctetStringValue>(buffer, count).Select(v => v.ToSid()).Cast<object>();
-                case ClaimSecurityValueType.Boolean:
-                    return ReadTyped<long>(buffer, count).Select(v => v != 0).Cast<object>();
-                case ClaimSecurityValueType.String:
-                    return ReadTyped<UnicodeStringOut>(buffer, count).Select(n => n.ToString());
-                case ClaimSecurityValueType.Fqbn:
-                    return ReadTyped<ClaimSecurityAttributeFqbnValue>(buffer, count).Select(v => new ClaimSecurityAttributeFqbn(v)).Cast<object>();
-                default:
-                    return new object[0];
-            }
-        }
-
-        public string Name { get; }
-        public ClaimSecurityValueType ValueType { get; }
-        public ClaimSecurityFlags Flags { get; }
-        public IEnumerable<object> Values { get; }
-        public int ValueCount { get; }
-
-        public ClaimSecurityAttributeBuilder ToBuilder()
-        {
-            return ClaimSecurityAttributeBuilder.Create(this);
-        }
-
-        internal ClaimSecurityAttribute(IntPtr ptr)
-        {
-            ClaimSecurityAttributeV1 v1 = (ClaimSecurityAttributeV1)Marshal.PtrToStructure(ptr, typeof(ClaimSecurityAttributeV1));
-            Name = v1.Name.ToString();
-            ValueType = v1.ValueType;
-            Flags = v1.Flags;
-            var values = ReadValues(v1.Values, v1.ValueCount, v1.ValueType).ToArray();
-            Values = values;
-            ValueCount = values.Length;
-        }
-
-        internal ClaimSecurityAttribute(string name, ClaimSecurityValueType value_type, ClaimSecurityFlags flags, IEnumerable<object> values)
-        {
-            Name = name;
-            ValueType = value_type;
-            Flags = flags;
-            var array = values.ToArray();
-            Values = array;
-            ValueCount = array.Length;
-        }
-    }
-
 #pragma warning restore 1591
 }

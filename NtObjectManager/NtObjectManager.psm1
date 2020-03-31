@@ -643,13 +643,14 @@ function Get-NtProcessMitigations
 {
   [CmdletBinding(DefaultParameterSetName="All")]
   Param(
-    [parameter(ParameterSetName="FromName")]
+    [parameter(ParameterSetName="FromName", Position = 0, Mandatory)]
     [string]$Name,
-    [parameter(ParameterSetName="FromProcessId")]
-    [int[]]$ProcessId
+    [parameter(ParameterSetName="FromProcessId", Position = 0, Mandatory)]
+    [int[]]$ProcessId,
+    [parameter(ParameterSetName="FromProcess")]
+    [NtApiDotNet.NtProcess[]]$Process
   )
     Set-NtTokenPrivilege SeDebugPrivilege | Out-Null
-
     $ps = switch($PSCmdlet.ParameterSetName) {
         "All" {
             Get-NtProcess -Access QueryInformation
@@ -661,6 +662,9 @@ function Get-NtProcessMitigations
             foreach($id in $ProcessId) {
                 Get-NtProcess -ProcessId $id
             }
+        }
+        "FromProcess" {
+            Copy-NtObject -Object $Process
         }
     }
     Use-NtObject($ps) {
@@ -3692,9 +3696,9 @@ function Get-NtCachedSigningLevel {
 
 <#
 .SYNOPSIS
-Adds an ACE to a security descriptor DACL.
+Adds an ACE to a security descriptor DACL. 
 .DESCRIPTION
-This cmdlet adds a new ACE to a security descriptor DACL.
+This cmdlet adds a new ACE to a security descriptor DACL. This cmdlet is deprecated.
 .PARAMETER SecurityDescriptor
 The security descriptor to add the ACE to.
 .PARAMETER Sid
@@ -3713,6 +3717,8 @@ The type of the ACE.
 The flags for the ACE.
 .PARAMETER Condition
 The condition string for the ACE.
+.PARAMETER PassThru
+Pass through the created ACE.
 .INPUTS
 None
 .OUTPUTS
@@ -3739,8 +3745,11 @@ function Add-NtSecurityDescriptorDaclAce {
         [NtApiDotNet.GenericAccessRights]$GenericAccess = 0,
         [NtApiDotNet.AceType]$Type = "Allowed",
         [NtApiDotNet.AceFlags]$Flags = "None",
-        [string]$Condition
+        [string]$Condition,
+        [switch]$PassThru
     )
+
+    Write-Warning "Use Add-NtSecurityDescriptorAce instead of this."
 
     switch($PSCmdlet.ParameterSetName) {
         "FromSid" {
@@ -3762,6 +3771,9 @@ function Add-NtSecurityDescriptorDaclAce {
             $ace.Condition = $Condition
         }
         $SecurityDescriptor.AddAce($ace)
+        if ($PassThru) {
+            Write-Output $ace
+        }
     }
 }
 
@@ -6627,4 +6639,29 @@ function Set-NtSecurityDescriptorIntegrityLevel {
             $SecurityDescriptor.AddMandatoryLabel($IntegrityLevel, $Flags, $Policy)
         }
     }
+}
+
+<#
+.SYNOPSIS
+Gets the application data for an ACE condition string expression.
+.DESCRIPTION
+This cmdlet gets the data for an ACE string expression. It parses the condition string expression and returns the bytes.
+.PARAMETER Condition
+The condition string expression.
+.INPUTS
+None
+.OUTPUTS
+byte[]
+.EXAMPLE
+Get-NtAceConditionData -Condition 'WIN://TokenId == "TEST"'
+Gets the data for the condition expression 'WIN://TokenId == "TEST"'
+#>
+function Get-NtAceConditionData {
+    [CmdletBinding(DefaultParameterSetName="FromLevel")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [string]$Condition
+    )
+
+    [NtApiDotNet.NtSecurity]::StringToConditionalAce($Condition)
 }

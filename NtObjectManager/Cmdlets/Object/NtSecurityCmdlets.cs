@@ -13,7 +13,9 @@
 //  limitations under the License.
 
 using NtApiDotNet;
+using NtApiDotNet.Token;
 using NtApiDotNet.Win32;
+using NtObjectManager.Utils;
 using System;
 using System.Management.Automation;
 
@@ -192,7 +194,8 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">Specify the relative identifiers.</para>
         /// </summary>
         [Parameter(Mandatory = true, ParameterSetName = "sid")]
-        public uint[] RelativeIdentifiers { get; set; }
+        [Alias("RelativeIdentifiers", "rid")]
+        public uint[] RelativeIdentifier { get; set; }
 
         /// <summary>
         /// <para type="description">Get a new logon session SID.</para>
@@ -291,7 +294,7 @@ namespace NtObjectManager.Cmdlets.Object
                                     : NtSecurity.GetCapabilitySid(CapabilityName);
                     break;
                 case "sid":
-                    sid = new Sid(SecurityAuthority, RelativeIdentifiers);
+                    sid = new Sid(SecurityAuthority, RelativeIdentifier);
                     break;
                 case "logon":
                     sid = NtSecurity.GetLogonSessionSid();
@@ -1066,6 +1069,328 @@ namespace NtObjectManager.Cmdlets.Object
             {
                 sd.DaclUntrusted = true;
             }
+        }
+    }
+
+    /// <summary>
+    /// <para type="synopsis">Adds an ACE to a security descriptor.</para>
+    /// <para type="description">This cmdlet adds an ACE to the specified security descriptor. It will
+    /// automatically select the DACL or SACL depending on the ACE type requested. It also supports
+    /// specifying a Condition for callback ACEs and Object GUIDs for Object ACEs. The Access property
+    /// changes behavior depending on the NtType property of the Security Descriptor.
+    /// </para>
+    /// </summary>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll</code>
+    ///   <para>Add Allowed ACE to DACL with Generic All access for the Everyone group.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll -Type Audit</code>
+    ///   <para>Add Audit ACE to SACL with Generic All access for the Everyone group.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll -Flags ObjectInherit, InheritOnly</code>
+    ///   <para>Add Allowed ACE to DACL with Generic All access for the Everyone group with Object Inherity and InheritOnly flags.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll -Type Denied</code>
+    ///   <para>Add Denied ACE to DACL with Generic All access for the Everyone group.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll -Type AllowedCallback -Condition 'APPID://PATH Contains "*"'</code>
+    ///   <para>Add Allowed ACE to DACL with a condition.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -Access GenericAll -Type AllowedObject -ObjectType "{AD39A509-02C7-4E9A-912A-A51168C10A4C}"</code>
+    ///   <para>Add Allowed Object ACE to DACL with an object type.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Add-NtSecurityDescriptorAce $sd -Sid "WD" -ServerSid "BA" -Access GenericAll -Type AllowedCompound</code>
+    ///   <para>Add Allowed Compound ACE to DACL with with Administrators SID as the Server SID.</para>
+    /// </example>
+    [Cmdlet(VerbsCommon.Add, "NtSecurityDescriptorAce", DefaultParameterSetName = "FromSid")]
+    [OutputType(typeof(Ace))]
+    public sealed class AddNtSecurityDescriptorAceCmdlet : PSCmdlet, IDynamicParameters
+    {
+        private RuntimeDefinedParameterDictionary _dict;
+
+        /// <summary>
+        /// <para type="description">Specify to create the security descriptor with a NULL DACL.</para>
+        /// </summary>
+        [Parameter(Position = 0, Mandatory = true)]
+        [SecurityDescriptor]
+        public SecurityDescriptor SecurityDescriptor { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to add ACE with SID.</para>
+        /// </summary>
+        [Parameter(Position = 1, Mandatory = true, ParameterSetName = "FromSid")]
+        public Sid Sid { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to add ACE from a user/group name.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, ParameterSetName = "FromName")]
+        public string Name { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to add ACE a known SID.</para>
+        /// </summary>
+        [Parameter(Mandatory = true, ParameterSetName = "FromKnownSid")]
+        public KnownSidValue KnownSid { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the type of ACE.</para>
+        /// </summary>
+        [Parameter]
+        public AceType Type { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the ACE flags.</para>
+        /// </summary>
+        [Parameter]
+        public AceFlags Flags { get; set; }
+
+        /// <summary>
+        /// <para type="description">Return the ACE added from the operation.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter PassThru { get; set; }
+
+        private Sid GetSid()
+        {
+            switch (ParameterSetName)
+            {
+                case "FromSid":
+                    return Sid;
+                case "FromKnownSid":
+                    return KnownSids.GetKnownSid(KnownSid);
+                case "FromName":
+                    return NtSecurity.LookupAccountName(Name);
+                default:
+                    throw new InvalidOperationException("Unknown parameter set");
+            }
+        }
+
+        /// <summary>
+        /// Process Record.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            if (!_dict.GetValue("Access", out Enum access))
+            {
+                throw new ArgumentException("Invalid access value.");
+            }
+
+            _dict.GetValue("Condition", out string condition);
+            _dict.GetValue("ObjectType", out Guid? object_type);
+            _dict.GetValue("InheritedObjectType", out Guid? inherited_object_type);
+            _dict.GetValue("ServerSid", out Sid server_sid);
+            _dict.GetValue("SecurityAttribute", out ClaimSecurityAttribute security_attribute);
+
+            Acl acl;
+
+            if (NtSecurity.IsSystemAceType(Type))
+            {
+                if (SecurityDescriptor.Sacl == null)
+                {
+                    SecurityDescriptor.Sacl = new Acl();
+                }
+                acl = SecurityDescriptor.Sacl;
+            }
+            else
+            {
+                if (SecurityDescriptor.Dacl == null)
+                {
+                    SecurityDescriptor.Dacl = new Acl();
+                }
+                acl = SecurityDescriptor.Dacl;
+            }
+
+            Ace ace = new Ace(Type, Flags, access, GetSid());
+            if ((NtSecurity.IsCallbackAceType(Type) || Type == AceType.AccessFilter) && !string.IsNullOrWhiteSpace(condition))
+            {
+                ace.Condition = condition;
+            }
+            if (NtSecurity.IsObjectAceType(Type))
+            {
+                ace.ObjectType = object_type;
+                ace.InheritedObjectType = inherited_object_type;
+            }
+            if (Type == AceType.AllowedCompound)
+            {
+                ace.ServerSid = server_sid;
+            }
+            if (Type == AceType.ResourceAttribute)
+            {
+                ace.ResourceAttribute = security_attribute;
+            }
+
+            acl.Add(ace);
+            if (PassThru)
+            {
+                WriteObject(ace);
+            }
+        }
+
+        object IDynamicParameters.GetDynamicParameters()
+        {
+            Type access_type = SecurityDescriptor?.NtType?.AccessRightsType ?? typeof(GenericAccessRights);
+            if (Type == AceType.MandatoryLabel)
+            {
+                access_type = typeof(MandatoryLabelPolicy);
+            }
+
+            _dict = new RuntimeDefinedParameterDictionary();
+            _dict.AddDynamicParameter("Access", access_type, true, 2);
+
+            if (NtSecurity.IsCallbackAceType(Type) || Type == AceType.AccessFilter)
+            {
+                _dict.AddDynamicParameter("Condition", typeof(string), false);
+            }
+
+            if (NtSecurity.IsObjectAceType(Type))
+            {
+                _dict.AddDynamicParameter("ObjectType", typeof(Guid?), false);
+                _dict.AddDynamicParameter("InheritedObjectType", typeof(Guid?), false);
+            }
+
+            if (Type == AceType.AllowedCompound)
+            {
+                _dict.AddDynamicParameter("ServerSid", typeof(Sid), true);
+            }
+
+            if (Type == AceType.ResourceAttribute)
+            {
+                _dict.AddDynamicParameter("SecurityAttribute", typeof(ClaimSecurityAttribute), true);
+            }
+
+            return _dict;
+        }
+    }
+
+    /// <summary>
+    /// <para type="synopsis">Creates a new security attribute.</para>
+    /// <para type="description">This cmdlet creates a new security attribute object.</para>
+    /// </summary>
+    /// <example>
+    ///   <code>New-NtSecurityAttribute -Name "TEST://ME" -StringValue "ABC"</code>
+    ///   <para>Creates the security attribute TEST://ME with the string value "ABC".</para>
+    /// </example>
+    /// <example>
+    ///   <code>New-NtSecurityAttribute -Name "TEST://ME2" -LongValue 1,10,30,100</code>
+    ///   <para>Creates the security attribute TEST://ME2 with the long values 1, 10, 30 and 100.</para>
+    /// </example>
+    [Cmdlet(VerbsCommon.New, "NtSecurityAttribute")]
+    [OutputType(typeof(ClaimSecurityAttribute))]
+    public sealed class NewNtSecurityAttributeCmdlet : PSCmdlet
+    {
+        /// <summary>
+        /// <para type="description">Specify the name of the attribute to add or update.</para>
+        /// </summary>
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromString")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromULong")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromLong")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromBool")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromSid")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromFqbn")]
+        [Parameter(Position = 0, Mandatory = true, ParameterSetName = "FromOctet")]
+        public string Name { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the attribute flags.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromString")]
+        [Parameter(ParameterSetName = "FromULong")]
+        [Parameter(ParameterSetName = "FromLong")]
+        [Parameter(ParameterSetName = "FromBool")]
+        [Parameter(ParameterSetName = "FromSid")]
+        [Parameter(ParameterSetName = "FromFqbn")]
+        [Parameter(ParameterSetName = "FromOctet")]
+        public ClaimSecurityFlags Flags { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the string values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromString")]
+        public string[] StringValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the ulong values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromULong")]
+        public ulong[] ULongValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the long values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromLong")]
+        public long[] LongValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the bool values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromBool")]
+        public bool[] BoolValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the SID values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSid")]
+        public Sid[] SidValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the fully qualified binary name values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromFqbn")]
+        public ClaimSecurityAttributeFqbn[] FqbnValue { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the octet values.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromOctet")]
+        public byte[][] OctetValue { get; set; }
+
+        /// <summary>
+        /// Overridden ProcessRecord method.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            WriteObject(CreateBuilder().ToAttribute());
+        }
+
+        private ClaimSecurityAttributeBuilder CreateBuilder()
+        {
+            if (StringValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, StringValue);
+            }
+            else if (ULongValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, ULongValue);
+            }
+            else if (LongValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, LongValue);
+            }
+            else if (BoolValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, BoolValue);
+            }
+            else if (SidValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, SidValue);
+            }
+            else if (FqbnValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, FqbnValue);
+            }
+            else if (OctetValue != null)
+            {
+                return ClaimSecurityAttributeBuilder.Create(Name, Flags, OctetValue);
+            }
+
+            throw new ArgumentException("Invalid security attribute type");
         }
     }
 }

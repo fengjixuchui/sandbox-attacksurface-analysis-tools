@@ -22,63 +22,16 @@ namespace NtApiDotNet
     /// </summary>
     public class Ace
     {
-        #region Private Members
-        private static bool IsObjectAceType(AceType type)
-        {
-            switch (type)
-            {
-                case AceType.AlarmCallbackObject:
-                case AceType.AllowedCallbackObject:
-                case AceType.AllowedObject:
-                case AceType.AuditCallbackObject:
-                case AceType.AuditObject:
-                case AceType.DeniedCallbackObject:
-                case AceType.DeniedObject:
-                    return true;
-            }
-            return false;
-        }
-
-        private static bool IsCallbackAceType(AceType type)
-        {
-            switch (type)
-            {
-                case AceType.AlarmCallbackObject:
-                case AceType.AllowedCallbackObject:
-                case AceType.AuditCallbackObject:
-                case AceType.DeniedCallbackObject:
-                case AceType.AlarmCallback:
-                case AceType.AllowedCallback:
-                case AceType.AuditCallback:
-                case AceType.DeniedCallback:
-                    return true;
-            }
-            return false;
-        }
-        #endregion
-
         #region Public Properties
         /// <summary>
         /// Check if the ACE is an Object ACE
         /// </summary>
-        public bool IsObjectAce
-        {
-            get
-            {
-                return IsObjectAceType(Type);
-            }
-        }
+        public bool IsObjectAce => NtSecurity.IsObjectAceType(Type);
 
         /// <summary>
         /// Check if the ACE is a callback ACE
         /// </summary>
-        public bool IsCallbackAce
-        {
-            get
-            {
-                return IsCallbackAceType(Type);
-            }
-        }
+        public bool IsCallbackAce => NtSecurity.IsCallbackAceType(Type);
 
         /// <summary>
         /// Check if ACE is a conditional ACE
@@ -102,27 +55,14 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Check if ACE is a resource attribute ACE.
+        /// </summary>
+        public bool IsResourceAttributeAce => Type == AceType.ResourceAttribute;
+
+        /// <summary>
         /// Check if ACE is an audit ACE.
         /// </summary>
-        public bool IsAuditAce
-        {
-            get
-            {
-                switch (Type)
-                {
-                    case AceType.Alarm:
-                    case AceType.AlarmCallback:
-                    case AceType.AlarmCallbackObject:
-                    case AceType.AlarmObject:
-                    case AceType.Audit:
-                    case AceType.AuditCallback:
-                    case AceType.AuditCallbackObject:
-                    case AceType.AuditObject:
-                        return true;
-                }
-                return false;
-            }
-        }
+        public bool IsAuditAce => NtSecurity.IsAuditAceType(Type);
 
         /// <summary>
         /// Check if ACE is a critical ACE.
@@ -147,18 +87,6 @@ namespace NtApiDotNet
         /// <summary>
         /// Get ACE type
         /// </summary>
-        [Obsolete("Use Type property")]
-        public AceType AceType { get { return Type; } set { Type = value; } }
-
-        /// <summary>
-        /// Get ACE flags
-        /// </summary>
-        [Obsolete("Use Flags property")]
-        public AceFlags AceFlags { get { return Flags; } set { Flags = value; } }
-
-        /// <summary>
-        /// Get ACE type
-        /// </summary>
         public AceType Type { get; set; }
 
         /// <summary>
@@ -175,6 +103,11 @@ namespace NtApiDotNet
         /// Get ACE Security Identifier
         /// </summary>
         public Sid Sid { get; set; }
+
+        /// <summary>
+        /// The type of compound ACE. When serialized always set to Impersonate.
+        /// </summary>
+        public CompoundAceType CompoundAceType { get; private set; }
 
         /// <summary>
         /// Get the client SID in a compound ACE.
@@ -223,6 +156,24 @@ namespace NtApiDotNet
                         case AceType.DeniedCallback:
                             Type = AceType.Denied;
                             break;
+                        case AceType.AllowedCallbackObject:
+                            Type = AceType.AllowedObject;
+                            break;
+                        case AceType.DeniedCallbackObject:
+                            Type = AceType.DeniedObject;
+                            break;
+                        case AceType.AlarmCallback:
+                            Type = AceType.Alarm;
+                            break;
+                        case AceType.AuditCallback:
+                            Type = AceType.Audit;
+                            break;
+                        case AceType.AlarmCallbackObject:
+                            Type = AceType.AlarmObject;
+                            break;
+                        case AceType.AuditCallbackObject:
+                            Type = AceType.AuditObject;
+                            break;
                     }
                 }
                 else
@@ -236,8 +187,46 @@ namespace NtApiDotNet
                         case AceType.Denied:
                             Type = AceType.DeniedCallback;
                             break;
+                        case AceType.Alarm:
+                            Type = AceType.AlarmCallback;
+                            break;
+                        case AceType.Audit:
+                            Type = AceType.AuditCallback;
+                            break;
+                        case AceType.AllowedObject:
+                            Type = AceType.AllowedCallbackObject;
+                            break;
+                        case AceType.DeniedObject:
+                            Type = AceType.DeniedCallbackObject;
+                            break;
+                        case AceType.AlarmObject:
+                            Type = AceType.AlarmCallbackObject;
+                            break;
+                        case AceType.AuditObject:
+                            Type = AceType.AuditCallbackObject;
+                            break;
                     }
                 }
+            }
+        }
+
+        /// <summary>
+        /// Get or set resource attribute.
+        /// </summary>
+        public ClaimSecurityAttribute ResourceAttribute
+        {
+            get
+            {
+                if (!IsResourceAttributeAce || ApplicationData == null || ApplicationData.Length == 0)
+                    return null;
+                return new ClaimSecurityAttribute(ApplicationData);
+            }
+
+            set
+            {
+                if (!IsResourceAttributeAce)
+                    throw new ArgumentException("Only supported for Resource Attribute ACEs.");
+                ApplicationData = value.ToBuilder().MarshalAttribute();
             }
         }
 
@@ -283,7 +272,7 @@ namespace NtApiDotNet
                     ace = new Ace(type);
                     break;
             }
-            ace.Flags = (AceFlags)reader.ReadByte();
+            ace.Flags = MapToFlags(type, reader.ReadByte());
             int ace_size = reader.ReadUInt16();
             ace.Mask = reader.ReadUInt32();
             if (ace.IsObjectAce)
@@ -301,12 +290,13 @@ namespace NtApiDotNet
 
             if (type == AceType.AllowedCompound)
             {
-                // Read out revision, or flags.
-                reader.ReadInt32();
+                // Read out compound ace type.
+                ace.CompoundAceType = (CompoundAceType)reader.ReadUInt16();
+                // Reserved.
+                reader.ReadInt16();
                 ace.ServerSid = new Sid(reader);
             }
             ace.Sid = new Sid(reader);
-
             int bytes_used = (int)(reader.BaseStream.Position - current_position);
             ace.ApplicationData = reader.ReadAllBytes(ace_size - bytes_used);
             return ace;
@@ -319,7 +309,7 @@ namespace NtApiDotNet
             {
                 MemoryStream stm = new MemoryStream();
                 BinaryWriter sidwriter = new BinaryWriter(stm);
-                sidwriter.Write(1);
+                sidwriter.Write((int)CompoundAceType.Impersonation);
                 sidwriter.Write(ServerSid.ToArray());
                 sidwriter.Write(sid_data);
                 sid_data = stm.ToArray();
@@ -354,7 +344,7 @@ namespace NtApiDotNet
             }
 
             writer.Write((byte)Type);
-            writer.Write((byte)Flags);
+            writer.Write(MapFromFlags(Type, Flags));
             writer.Write((ushort)total_length);
             writer.Write(Mask.Access);
             if (IsObjectAce)
@@ -421,7 +411,8 @@ namespace NtApiDotNet
             }
 
             return ace.Type == Type && ace.Flags == Flags && ace.Sid == Sid && ace.Mask == Mask
-                && ace.ObjectType == ObjectType && ace.InheritedObjectType == InheritedObjectType;
+                && ace.ObjectType == ObjectType && ace.InheritedObjectType == InheritedObjectType
+                && ace.ServerSid == ServerSid && NtObjectUtils.EqualByteArray(ApplicationData, ace.ApplicationData);
         }
 
         /// <summary>
@@ -430,7 +421,9 @@ namespace NtApiDotNet
         /// <returns>The hash code</returns>
         public override int GetHashCode()
         {
-            return Type.GetHashCode() ^ Flags.GetHashCode() ^ Mask.GetHashCode() ^ Sid.GetHashCode() ^ ObjectType.GetHashCode() ^ InheritedObjectType.GetHashCode();
+            return Type.GetHashCode() ^ Flags.GetHashCode() ^ Mask.GetHashCode()
+                ^ Sid.GetHashCode() ^ ObjectType.GetHashCode() ^ InheritedObjectType.GetHashCode()
+                ^ ServerSid?.GetHashCode() ?? 0 ^ NtObjectUtils.GetHashCodeByteArray(ApplicationData);
         }
         #endregion
 
@@ -471,6 +464,30 @@ namespace NtApiDotNet
         {
             return !(a == b);
         }
+        #endregion
+
+        #region Private Members
+        private static AceFlags MapToFlags(AceType type, byte flags)
+        {
+            AceFlags ret = (AceFlags)flags;
+            if (type == AceType.AccessFilter && ret.HasFlagSet(AceFlags.SuccessfulAccess))
+            {
+                ret &= ~AceFlags.SuccessfulAccess;
+                ret |= AceFlags.TrustProtected;
+            }
+            return ret;
+        }
+
+        private static byte MapFromFlags(AceType type, AceFlags flags)
+        {
+            byte ret = (byte)flags;
+            if (type == AceType.AccessFilter && flags.HasFlagSet(AceFlags.TrustProtected))
+            {
+                ret |= 0x40;
+            }
+            return ret;
+        }
+
         #endregion
     }
 }
