@@ -17,6 +17,7 @@ using NtApiDotNet.Token;
 using NtApiDotNet.Win32;
 using NtObjectManager.Utils;
 using System;
+using System.Collections.Generic;
 using System.Management.Automation;
 
 namespace NtObjectManager.Cmdlets.Object
@@ -870,6 +871,38 @@ namespace NtObjectManager.Cmdlets.Object
         public SwitchParameter NullDacl { get; set; }
 
         /// <summary>
+        /// <para type="description">Specify to create the security descriptor with a NULL SACL.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "EmptySd")]
+        public SwitchParameter NullSacl { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify thr owner for the new SD.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "EmptySd")]
+        public Sid Owner { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the group for the new SD.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "EmptySd")]
+        public Sid Group { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the DACL for the new SD. The ACL will be cloned.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "EmptySd")]
+        [AllowEmptyCollection]
+        public Acl Dacl { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the the SACL for the new SD. The ACL will be cloned.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "EmptySd")]
+        [AllowEmptyCollection]
+        public Acl Sacl { get; set; }
+
+        /// <summary>
         /// <para type="description">Specify to create the security descriptor from an SDDL representation.</para>
         /// </summary>
         [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromSddl")]
@@ -893,9 +926,20 @@ namespace NtObjectManager.Cmdlets.Object
         [Parameter(ParameterSetName = "FromToken"), 
             Parameter(ParameterSetName = "FromSddl"), 
             Parameter(ParameterSetName = "FromBytes"), 
-            Parameter(ParameterSetName = "FromKey")]
+            Parameter(ParameterSetName = "FromKey"),
+            Parameter(ParameterSetName = "EmptySd")]
         [ArgumentCompleter(typeof(NtTypeArgumentCompleter))]
         public NtType Type { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the security descriptor is for a container.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken"),
+            Parameter(ParameterSetName = "FromSddl"),
+            Parameter(ParameterSetName = "FromBytes"),
+            Parameter(ParameterSetName = "FromKey"),
+            Parameter(ParameterSetName = "EmptySd")]
+        public SwitchParameter Container { get; set; }
 
         /// <summary>
         /// <para type="description">Specify a byte array containing the security descriptor.</para>
@@ -925,7 +969,8 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify additional control flags to apply to the SD. Not all the flags are accepted.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "FromSddl")]
+        [Parameter(ParameterSetName = "FromSddl"),
+         Parameter(ParameterSetName = "EmptySd")]
         public SecurityDescriptorControl Control { get; set; }
 
         /// <summary>
@@ -995,80 +1040,30 @@ namespace NtObjectManager.Cmdlets.Object
                     sd = new SecurityDescriptor(KeyValue.Data);
                     break;
                 default:
-                    sd = new SecurityDescriptor
-                    {
-                        Dacl = new Acl()
-                    };
-                    sd.Dacl.NullAcl = NullDacl;
+                    sd = CreateNewSecurityDescriptor();
                     break;
             }
 
             sd.NtType = Type;
+            sd.Container = Container;
             if (MapType)
             {
                 sd.MapGenericAccess();
             }
 
-            UpdateSecurityDescriptorControl(sd, Control);
+            sd.Control |= Control;
             WriteObject(sd);
         }
 
-        private static void UpdateSecurityDescriptorControl(SecurityDescriptor sd, SecurityDescriptorControl control)
+        private SecurityDescriptor CreateNewSecurityDescriptor()
         {
-            if (control.HasFlag(SecurityDescriptorControl.OwnerDefaulted) && sd.Owner != null)
+            return new SecurityDescriptor
             {
-                sd.Owner.Defaulted = true;
-            }
-            if (control.HasFlag(SecurityDescriptorControl.GroupDefaulted) && sd.Group != null)
-            {
-                sd.Group.Defaulted = true;
-            }
-            if (sd.Dacl != null)
-            {
-                if (control.HasFlag(SecurityDescriptorControl.DaclDefaulted))
-                {
-                    sd.Dacl.Defaulted = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.DaclProtected))
-                {
-                    sd.Dacl.Protected = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.DaclAutoInherited))
-                {
-                    sd.Dacl.AutoInherited = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.DaclAutoInheritReq))
-                {
-                    sd.Dacl.AutoInheritReq = true;
-                }
-            }
-            if (sd.Sacl != null)
-            {
-                if (control.HasFlag(SecurityDescriptorControl.SaclDefaulted))
-                {
-                    sd.Sacl.Defaulted = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.SaclProtected))
-                {
-                    sd.Sacl.Protected = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.SaclAutoInherited))
-                {
-                    sd.Sacl.AutoInherited = true;
-                }
-                if (control.HasFlag(SecurityDescriptorControl.SaclAutoInheritReq))
-                {
-                    sd.Sacl.AutoInheritReq = true;
-                }
-            }
-            if (control.HasFlag(SecurityDescriptorControl.ServerSecurity))
-            {
-                sd.ServerSecurity = true;
-            }
-            if (control.HasFlag(SecurityDescriptorControl.DaclUntrusted))
-            {
-                sd.DaclUntrusted = true;
-            }
+                Dacl = Dacl?.Clone() ?? new Acl() { NullAcl = NullDacl },
+                Sacl = Sacl?.Clone() ?? (NullSacl ? new Acl() { NullAcl = NullSacl } : null),
+                Owner = Owner != null ? new SecurityDescriptorSid(Owner, false) : null,
+                Group = Group != null ? new SecurityDescriptorSid(Group, false) : null
+            };
         }
     }
 
@@ -1118,13 +1113,14 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">Specify to create the security descriptor with a NULL DACL.</para>
         /// </summary>
         [Parameter(Position = 0, Mandatory = true)]
-        [SecurityDescriptor]
+        [SecurityDescriptorTransform]
         public SecurityDescriptor SecurityDescriptor { get; set; }
 
         /// <summary>
         /// <para type="description">Specify to add ACE with SID.</para>
         /// </summary>
         [Parameter(Position = 1, Mandatory = true, ParameterSetName = "FromSid")]
+        [SidTransform]
         public Sid Sid { get; set; }
 
         /// <summary>
@@ -1235,15 +1231,8 @@ namespace NtObjectManager.Cmdlets.Object
 
         object IDynamicParameters.GetDynamicParameters()
         {
-            Type access_type = SecurityDescriptor?.NtType?.AccessRightsType ?? typeof(GenericAccessRights);
-            if (Type == AceType.MandatoryLabel)
-            {
-                access_type = typeof(MandatoryLabelPolicy);
-            }
-
+            bool access_mandatory = true;
             _dict = new RuntimeDefinedParameterDictionary();
-            _dict.AddDynamicParameter("Access", access_type, true, 2);
-
             if (NtSecurity.IsCallbackAceType(Type) || Type == AceType.AccessFilter)
             {
                 _dict.AddDynamicParameter("Condition", typeof(string), false);
@@ -1263,10 +1252,297 @@ namespace NtObjectManager.Cmdlets.Object
             if (Type == AceType.ResourceAttribute)
             {
                 _dict.AddDynamicParameter("SecurityAttribute", typeof(ClaimSecurityAttribute), true);
+                access_mandatory = false;
             }
+
+            Type access_type = SecurityDescriptor?.AccessRightsType ?? typeof(GenericAccessRights);
+            if (Type == AceType.MandatoryLabel)
+            {
+                access_type = typeof(MandatoryLabelPolicy);
+            }
+            _dict.AddDynamicParameter("Access", access_type, access_mandatory, 2);
 
             return _dict;
         }
+    }
+
+    /// <summary>
+    /// ACL type for ACE removal.
+    /// </summary>
+    [Flags]
+    public enum AclType
+    {
+        /// <summary>
+        /// Only remove from the DACL.
+        /// </summary>
+        Dacl = 1,
+        /// <summary>
+        /// Only remove from the SACL.
+        /// </summary>
+        Sacl = 2,
+        /// <summary>
+        /// Remove from both ACL and SACL.
+        /// </summary>
+        Both = Dacl | Sacl,
+    }
+
+    /// <summary>
+    /// <para type="synopsis">Adds an ACE to a security descriptor.</para>
+    /// <para type="description">This cmdlet adds an ACE to the specified security descriptor. It will
+    /// automatically select the DACL or SACL depending on the ACE type requested. It also supports
+    /// specifying a Condition for callback ACEs and Object GUIDs for Object ACEs. The Access property
+    /// changes behavior depending on the NtType property of the Security Descriptor.
+    /// </para>
+    /// </summary>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Sid "WD"</code>
+    ///   <para>Remove all ACEs from DACL and SACL with the World SID.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Type Denied</code>
+    ///   <para>Remove all Denied ACEs from DACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Flags Inherited -AclType Dacl</code>
+    ///   <para>Remove all inherited ACEs from the DACL only.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Flags ObjectInherit,ContainerInherit -AllFlags</code>
+    ///   <para>Remove all ACEs with Flags set to ObjectInherit and ContainerInherit from the DACL and SACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Access 0x20019</code>
+    ///   <para>Remove all ACEs with the Access Mask set to 0x20019 from the DACL and SACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Filter { $_.IsConditionalAce }</code>
+    ///   <para>Remove all condition ACEs from the DACL and SACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Ace @($a1, $a2)</code>
+    ///   <para>Remove all ACEs which match a list from the DACL and SACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>@($a1, $a2) | Remove-NtSecurityDescriptorAce $sd</code>
+    ///   <para>Remove all ACEs which match a list from the DACL and SACL.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Sid "WD" -WhatIf</code>
+    ///   <para>Test what ACEs would be removed from DACL and SACL with the World SID.</para>
+    /// </example>
+    /// <example>
+    ///   <code>Remove-NtSecurityDescriptorAce $sd -Sid "WD" -Confirm</code>
+    ///   <para>Remove all ACEs from DACL and SACL with the World SID with confirmation.</para>
+    /// </example>
+    [Cmdlet(VerbsCommon.Remove, "NtSecurityDescriptorAce", DefaultParameterSetName = "FromSid", SupportsShouldProcess = true)]
+    [OutputType(typeof(Ace))]
+    public sealed class RemoveNtSecurityDescriptorAceCmdlet : PSCmdlet
+    {
+        #region Constructors
+        /// <summary>
+        /// Constuctor.
+        /// </summary>
+        public RemoveNtSecurityDescriptorAceCmdlet()
+        {
+            AclType = AclType.Both;
+        }
+        #endregion
+
+        #region Public Properties
+        /// <summary>
+        /// <para type="description">Specify to create the security descriptor with a NULL DACL.</para>
+        /// </summary>
+        [Parameter(Position = 0, Mandatory = true)]
+        [SecurityDescriptorTransform]
+        public SecurityDescriptor SecurityDescriptor { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to add ACE with SID.</para>
+        /// </summary>
+        [Parameter(Position = 1, ParameterSetName = "FromSid")]
+        public Sid Sid { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the type of ACE.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSid")]
+        public AceType? Type { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the ACE flags.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSid")]
+        public AceFlags? Flags { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the ACE flags must all match. The default is to select on a partial match.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSid")]
+        public SwitchParameter AllFlags { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the access.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromSid")]
+        public AccessMask? Access { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify a filter to select what to remove.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromFilter", Position = 1)]
+        public ScriptBlock Filter { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify what ACLs to remove the ACEs from.</para>
+        /// </summary>
+        public AclType AclType { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify list of ACEs to remove.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromAce", Position = 1, ValueFromPipeline = true)]
+        public Ace[] Ace { get; set; }
+
+        /// <summary>
+        /// <para type="description">Return the ACEs removed by the operation.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter PassThru { get; set; }
+
+        #endregion
+
+        #region Protected Members
+        /// <summary>
+        /// Process Record.
+        /// </summary>
+        protected override void ProcessRecord()
+        {
+            IEnumerable<Ace> aces = new Ace[0];
+            switch (ParameterSetName)
+            {
+                case "FromSid":
+                    aces = FilterFromSid();
+                    break;
+                case "FromFilter":
+                    aces = FilterFromFilter();
+                    break;
+                case "FromAce":
+                    aces = FilterFromAce();
+                    break;
+            }
+
+            if (PassThru)
+            {
+                WriteObject(aces, true);
+            }
+        }
+        #endregion
+
+        #region Private Members
+        private bool ProcessAce(List<Ace> removed, Ace ace, bool dacl, Func<Ace, bool> filter)
+        {
+            if (!filter(ace))
+            {
+                return false;
+            }
+
+            if (!ShouldProcess($"Type:{ace.Type} Sid:{ace.Sid} Mask:{ace.Mask:X08} in {(dacl ? "DACL" : "SACL")}"))
+            {
+                return false;
+            }
+
+            removed.Add(ace);
+
+            return true;
+        }
+
+        private static bool HasAcl(Acl acl)
+        {
+            return acl != null && !acl.NullAcl;
+        }
+
+        private void FilterWithFilter(List<Ace> removed, Acl acl, bool dacl, Func<Ace, bool> filter)
+        {
+            if (!HasAcl(acl))
+            {
+                return;
+            }
+
+            acl.RemoveAll(a => ProcessAce(removed, a, dacl, filter));
+        }
+
+        private IEnumerable<Ace> FilterWithFilter(Func<Ace, bool> filter)
+        {
+            List<Ace> removed = new List<Ace>();
+            if (AclType.HasFlag(AclType.Dacl))
+            {
+                FilterWithFilter(removed, SecurityDescriptor.Dacl, true, filter);
+            }
+            if (AclType.HasFlag(AclType.Sacl))
+            {
+                FilterWithFilter(removed, SecurityDescriptor.Sacl, false, filter);
+            }
+            return removed;
+        }
+
+        private IEnumerable<Ace> FilterFromFilter()
+        {
+            return FilterWithFilter(a => Filter.InvokeWithArg(false, a));
+        }
+
+        private bool CheckSid(Ace ace)
+        {
+            if (Sid != null && ace.Sid != Sid)
+            {
+                return false;
+            }
+            if (Type.HasValue && ace.Type != Type)
+            {
+                return false;
+            }
+            if (Access.HasValue && ace.Mask != Access)
+            {
+                return false;
+            }
+            if (Flags.HasValue)
+            {
+                if (AllFlags)
+                {
+                    if (ace.Flags != Flags)
+                    {
+                        return false;
+                    }
+                }
+                else
+                {
+                    if ((ace.Flags & Flags) != Flags)
+                    {
+                        return false;
+                    }
+                }
+
+            }
+            return true;
+        }
+
+        private IEnumerable<Ace> FilterFromSid()
+        {
+            if (Sid == null && !Type.HasValue && !Access.HasValue && !Flags.HasValue)
+            {
+                WriteWarning("No filter parameters specified. Not removing any ACEs.");
+                return new Ace[0];
+            }
+
+            return FilterWithFilter(CheckSid);
+        }
+
+        private IEnumerable<Ace> FilterFromAce()
+        {
+            HashSet<Ace> aces = new HashSet<Ace>(Ace);
+            return FilterWithFilter(a => aces.Contains(a));
+        }
+
+        #endregion
     }
 
     /// <summary>

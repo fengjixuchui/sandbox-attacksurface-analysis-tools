@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using System;
+using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
 
@@ -138,9 +139,18 @@ namespace NtApiDotNet
         {
             if (Sacl != null && !Sacl.NullAcl)
             {
-                return Sacl.Where(ace => ace.Type == type).FirstOrDefault();
+                return Sacl.FindAce(type);
             }
             return null;
+        }
+
+        private IEnumerable<Ace> FindAllSaclAce(AceType type)
+        {
+            if (Sacl != null && !Sacl.NullAcl)
+            {
+                return Sacl.FindAllAce(type).ToList().AsReadOnly();
+            }
+            return new Ace[0];
         }
 
         private delegate NtStatus QuerySidFunc(SafeBuffer SecurityDescriptor, out IntPtr sid, out bool defaulted);
@@ -448,6 +458,36 @@ namespace NtApiDotNet
             }
         }
 
+        private void UpdateControl(SecurityDescriptorControl control)
+        {
+            if (Owner != null)
+            {
+                Owner.Defaulted = control.HasFlag(SecurityDescriptorControl.OwnerDefaulted);
+            }
+
+            if (Group != null)
+            {
+                Group.Defaulted = control.HasFlag(SecurityDescriptorControl.GroupDefaulted);
+            }
+
+            if (Dacl != null)
+            {
+                Dacl.Defaulted = control.HasFlag(SecurityDescriptorControl.DaclDefaulted);
+                Dacl.Protected = control.HasFlag(SecurityDescriptorControl.DaclProtected);
+                Dacl.AutoInherited = control.HasFlag(SecurityDescriptorControl.DaclAutoInherited);
+                Dacl.AutoInheritReq = control.HasFlag(SecurityDescriptorControl.DaclAutoInheritReq);
+            }
+            if (Sacl != null)
+            {
+                Sacl.Defaulted = control.HasFlag(SecurityDescriptorControl.SaclDefaulted);
+                Sacl.Protected = control.HasFlag(SecurityDescriptorControl.SaclProtected);
+                Sacl.AutoInherited = control.HasFlag(SecurityDescriptorControl.SaclAutoInherited);
+                Sacl.AutoInheritReq = control.HasFlag(SecurityDescriptorControl.SaclAutoInheritReq);
+            }
+            ServerSecurity = control.HasFlag(SecurityDescriptorControl.ServerSecurity);
+            DaclUntrusted = control.HasFlag(SecurityDescriptorControl.DaclUntrusted);
+        }
+
         #endregion
 
         #region Public Properties
@@ -468,9 +508,14 @@ namespace NtApiDotNet
         /// </summary>
         public SecurityDescriptorSid Group { get; set; }
         /// <summary>
-        /// Control flags. This is computed based on the current state of the SD.
+        /// Get or set Control flags. This is computed based on the current state of the SD.
         /// </summary>
-        public SecurityDescriptorControl Control => ComputeControl();
+        public SecurityDescriptorControl Control
+        {
+            get => ComputeControl();
+            set => UpdateControl(value);
+        }
+
         /// <summary>
         /// Revision value
         /// </summary>
@@ -520,6 +565,21 @@ namespace NtApiDotNet
         public Ace ProcessTrustLabel => FindSaclAce(AceType.ProcessTrustLabel);
 
         /// <summary>
+        /// Get list of access filters.
+        /// </summary>
+        public IEnumerable<Ace> AccessFilters => FindAllSaclAce(AceType.AccessFilter);
+
+        /// <summary>
+        /// Get list of resource attributes.
+        /// </summary>
+        public IEnumerable<Ace> ResourceAttributes => FindAllSaclAce(AceType.ResourceAttribute);
+
+        /// <summary>
+        /// Get list of scoped policy IDs.
+        /// </summary>
+        public IEnumerable<Ace> ScopedPolicyIds => FindAllSaclAce(AceType.ScopedPolicyId);
+
+        /// <summary>
         /// Get or set the integrity level
         /// </summary>
         public TokenIntegrityLevel IntegrityLevel
@@ -567,6 +627,37 @@ namespace NtApiDotNet
         /// Indicates if the security descriptor was constructed from a self relative format.
         /// </summary>
         public bool SelfRelative { get; private set; }
+
+        /// <summary>
+        /// Indicates if the SD's DACL is canonical.
+        /// </summary>
+        public bool IsDaclCanonical => Dacl?.IsCanonical(true) ?? true;
+
+        /// <summary>
+        /// Indicates if the SD's SACL is canonical.
+        /// </summary>
+        public bool IsSaclCanonical => Sacl?.IsCanonical(false) ?? true;
+
+        /// <summary>
+        /// Indicates if the SD came from a container.
+        /// </summary>
+        public bool Container { get; set; }
+
+        /// <summary>
+        /// Get the access rights enum type for this SD based on the NT Type property.
+        /// </summary>
+        public Type AccessRightsType
+        {
+            get
+            {
+                if (NtType == null)
+                {
+                    return typeof(GenericAccessRights);
+                }
+
+                return Container ? NtType.ContainerAccessRightsType : NtType.AccessRightsType;
+            }
+        }
 
         #endregion
 
@@ -915,6 +1006,26 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Canonicalize the DACL if it exists.
+        /// </summary>
+        public void CanonicalizeDacl()
+        {
+            if (Dacl == null || Dacl.NullAcl)
+                return;
+            Dacl = Dacl.Canonicalize(true);
+        }
+
+        /// <summary>
+        /// Canonicalize the SACL if it exists.
+        /// </summary>
+        public void CanonicalizeSacl()
+        {
+            if (Sacl == null || Sacl.NullAcl)
+                return;
+            Sacl = Sacl.Canonicalize(false);
+        }
+
+        /// <summary>
         /// Overridden ToString method.
         /// </summary>
         /// <returns>The security descriptor as an SDDL string.</returns>
@@ -1108,11 +1219,23 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="buffer">Safe buffer to security descriptor.</param>
         /// <param name="type">The NT type for the security descriptor.</param>
+        /// <param name="container">True if the security descriptor is from a container.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        public static NtResult<SecurityDescriptor> Parse(SafeBuffer buffer, NtType type, bool container, bool throw_on_error)
+        {
+            SecurityDescriptor sd = new SecurityDescriptor(type) { Container = container };
+            return sd.ParseSecurityDescriptor(buffer).CreateResult(throw_on_error, () => sd);
+        }
+
+        /// <summary>
+        /// Parse a security descriptor.
+        /// </summary>
+        /// <param name="buffer">Safe buffer to security descriptor.</param>
+        /// <param name="type">The NT type for the security descriptor.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         public static NtResult<SecurityDescriptor> Parse(SafeBuffer buffer, NtType type, bool throw_on_error)
         {
-            SecurityDescriptor sd = new SecurityDescriptor(type);
-            return sd.ParseSecurityDescriptor(buffer).CreateResult(throw_on_error, () => sd);
+            return Parse(buffer, type, false, throw_on_error);
         }
 
         /// <summary>

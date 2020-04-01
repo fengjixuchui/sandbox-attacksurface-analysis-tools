@@ -1363,7 +1363,7 @@
       </TableControl>
     </View>
     <View>
-      <Name>SecurityDescriptor</Name>
+      <Name>SecurityDescriptorTable</Name>
       <ViewSelectedBy>
         <TypeName>NtApiDotNet.SecurityDescriptor</TypeName>
       </ViewSelectedBy>
@@ -1371,22 +1371,18 @@
         <TableHeaders>
           <TableColumnHeader>
             <Label>Owner</Label>
-            <Width>30</Width>
             <Alignment>left</Alignment>
           </TableColumnHeader>
           <TableColumnHeader>
             <Label>DACL ACE Count</Label>
-            <Width>14</Width>
             <Alignment>left</Alignment>
           </TableColumnHeader>
           <TableColumnHeader>
             <Label>SACL ACE Count</Label>
-            <Width>14</Width>
             <Alignment>left</Alignment>
           </TableColumnHeader>
           <TableColumnHeader>
             <Label>Integrity Level</Label>
-            <Width>15</Width>
             <Alignment>left</Alignment>
           </TableColumnHeader>
         </TableHeaders>
@@ -1394,13 +1390,13 @@
           <TableRowEntry>
             <TableColumnItems>
               <TableColumnItem>
-                  <ScriptBlock>$_.Owner.Sid.Name</ScriptBlock>
+                <ScriptBlock>$_.Owner.Sid.Name</ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>DaclAceCount</PropertyName>
+                <ScriptBlock>if (-not $_.DaclPresent) { "NO DACL" } elseif ($_.Dacl.NullAcl) { "NULL DACL" } else { $_.DaclAceCount }</ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>SaclAceCount</PropertyName>
+                <ScriptBlock>if (-not $_.SaclPresent) { "NO SACL" } elseif ($_.Sacl.NullAcl) { "NULL SACL" } else { $_.SaclAceCount }</ScriptBlock>
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>IntegrityLevel</PropertyName>
