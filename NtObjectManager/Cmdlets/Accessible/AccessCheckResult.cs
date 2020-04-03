@@ -58,6 +58,11 @@ namespace NtObjectManager.Cmdlets.Accessible
         public string SecurityDescriptor { get; }
 
         /// <summary>
+        /// The security descriptor associated with this access check in base64 format.
+        /// </summary>
+        public string SecurityDescriptorBase64 { get; }
+
+        /// <summary>
         /// The SID owner of the resource from the security descriptor.
         /// </summary>
         public string Owner { get; }
@@ -106,7 +111,8 @@ namespace NtObjectManager.Cmdlets.Accessible
             GrantedAccess = granted_access;
             GenericMapping = generic_mapping;
             TokenInfo = token_info;
-            SecurityDescriptor = sd?.ToSddl() ?? string.Empty;
+            SecurityDescriptor = sd?.ToSddl(SecurityInformation.All, false).GetResultOrDefault() ?? string.Empty;
+            SecurityDescriptorBase64 = sd?.ToBase64() ?? string.Empty;
             Owner = sd?.Owner?.Sid.ToString() ?? string.Empty;
             IsRead = generic_mapping.HasRead(granted_access);
             IsWrite = generic_mapping.HasWrite(granted_access) 
@@ -115,8 +121,8 @@ namespace NtObjectManager.Cmdlets.Accessible
                 || granted_access.IsAccessGranted(GenericAccessRights.Delete);
             IsExecute = generic_mapping.HasExecute(granted_access);
             IsAll = generic_mapping.HasAll(granted_access);
-            GrantedAccessString = NtObjectUtils.GrantedAccessAsString(granted_access, generic_mapping, enum_type, false);
-            GrantedGenericAccessString = NtObjectUtils.GrantedAccessAsString(granted_access, generic_mapping, enum_type, true);
+            GrantedAccessString = NtSecurity.AccessMaskToString(granted_access, enum_type, generic_mapping, false);
+            GrantedGenericAccessString = NtSecurity.AccessMaskToString(granted_access, enum_type, generic_mapping, true);
             TokenId = token_info.TokenId.ToInt64();
             IsDirectory = is_directory;
         }

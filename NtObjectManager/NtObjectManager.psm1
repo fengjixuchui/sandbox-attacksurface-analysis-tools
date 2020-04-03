@@ -1430,7 +1430,7 @@ function Get-ExecutableManifest
 {
     [CmdletBinding()]
     param (
-        [parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
+        [parameter(Mandatory, Position=0, ValueFromPipeline)]
         [string]$Path
     )
     PROCESS {
@@ -1438,6 +1438,18 @@ function Get-ExecutableManifest
         $manifest = [NtApiDotNet.Win32.ExecutableManifest]::GetManifests($fullpath)
         Write-Output $manifest
     }
+}
+
+function Format-ObjectTable {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        $InputObject,
+        [switch]$HideTableHeaders
+    )
+
+    $output = $InputObject | Format-Table -HideTableHeaders:$HideTableHeaders | Out-String
+    $output -Split "`r`n" | ? {-not [string]::IsNullOrWhiteSpace($_)} | Write-Output
+    Write-Output ""
 }
 
 <#
@@ -1459,10 +1471,18 @@ Show privilege information.
 Show integrity information.
 .PARAMETER SecurityAttributes
 Show token security attributes.
+.PARAMETER UserClaims
+Show token user claim attributes.
+.PARAMETER DeviceClaims
+Show token device claim attributes.
 .PARAMETER TrustLevel
 Show token trust level.
 .PARAMETER Information
 Show token information such as type, impersonation level and ID.
+.PARAMETER Owner
+Show token owner.
+.PARAMETER PrimaryGroup
+Show token primary group.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1476,17 +1496,34 @@ Format-NtToken -Token $token -User -Group
 Print the user and groups of the token.
 #>
 function Format-NtToken {
+    [CmdletBinding(DefaultParameterSetName="Basic")]
     Param(
-    [parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
-    [NtApiDotNet.NtToken]$Token,
-    [switch]$All,
-    [switch]$Group,
-    [switch]$Privilege,
-    [switch]$User,
-    [switch]$Integrity,
-    [switch]$SecurityAttributes,
-    [switch]$TrustLevel,
-    [switch]$Information
+        [parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
+        [NtApiDotNet.NtToken]$Token,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$All,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Group,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Privilege,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$User,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Integrity,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$SecurityAttributes,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$UserClaims,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$DeviceClaims,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$TrustLevel,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Information,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Owner,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$PrimaryGroup
   )
 
   if ($All) {
@@ -1495,13 +1532,15 @@ function Format-NtToken {
     $Privilege = $true
     $Integrity = $true
     $SecurityAttributes = $true
+    $DeviceClaims = $true
+    $UserClaims = $true
     $TrustLevel = $true
     $Information = $true
+    $Owner = $true
+    $PrimaryGroup = $true
   }
 
-  if (!$User -and !$Group -and !$Privilege `
-    -and !$Integrity -and !$TrustLevel `
-    -and !$SecurityAttributes -and !$Information) {
+  if ($PSCmdlet.ParameterSetName -eq "Basic") {
     $token.User.ToString()
     return
   }
@@ -1509,20 +1548,32 @@ function Format-NtToken {
   if ($User) {
     "USER INFORMATION"
     "----------------"
-    $token.User | Format-Table
+    Format-ObjectTable $token.User.Sid | Write-Output
+  }
+
+  if ($Owner) {
+    "OWNER INFORMATION"
+    "---------------- "
+    Format-ObjectTable $token.Owner | Write-Output
+  }
+
+  if ($PrimaryGroup) {
+    "PRIMARY GROUP INFORMATION"
+    "-------------------------"
+    Format-ObjectTable $token.PrimaryGroup | Write-Output
   }
 
   if ($Group) {
     if ($Token.GroupCount -gt 0) {
         "GROUP SID INFORMATION"
         "-----------------"
-        $token.Groups | Format-Table
+        Format-ObjectTable $token.Groups | Write-Output
     }
 
     if ($token.AppContainer -and $token.Capabilities.Length -gt 0) {
       "CAPABILITY SID INFORMATION"
       "----------------------"
-      $token.Capabilities | Format-Table
+      Format-ObjectTable $token.Capabilities | Write-Output
     }
 
     if ($token.Restricted -and $token.RestrictedSids.Length -gt 0) {
@@ -1533,38 +1584,47 @@ function Format-NtToken {
         "RESTRICTED SID INFORMATION"
         "--------------------------"
       }
-      $token.RestrictedSids | Format-Table
+      Format-ObjectTable $token.RestrictedSids | Write-Output
     }
   }
 
   if ($Privilege -and $Token.Privileges.Length -gt 0) {
     "PRIVILEGE INFORMATION"
     "---------------------"
-    $token.Privileges | Format-Table
+    Format-ObjectTable $token.Privileges | Write-Output
   }
 
   if ($Integrity) {
     "INTEGRITY LEVEL"
     "---------------"
-    $token.IntegrityLevel | Format-Table
-    ""
+    Format-ObjectTable $token.IntegrityLevel | Write-Output
   }
 
   if ($TrustLevel) {
-    "TRUST LEVEL"
-    "-----------"
     $trust_level = $token.TrustLevel
-    if ($trust_level -eq $null) {
-      $trust_level = Get-NtSid "S-1-19-0-0"
+    if ($trust_level -ne $null) {
+        "TRUST LEVEL"
+        "-----------"
+        Format-ObjectTable $trust_level | Write-Output
     }
-    $trust_level | Write-Output
-    ""
   }
 
   if ($SecurityAttributes -and $Token.SecurityAttributes.Length -gt 0) {
     "SECURITY ATTRIBUTES"
     "-------------------"
-    $token.SecurityAttributes | Format-Table
+    Format-ObjectTable $token.SecurityAttributes | Write-Output
+  }
+
+  if ($UserClaims -and $Token.UserClaimAttributes.Length -gt 0) {
+    "USER CLAIM ATTRIBUTES"
+    "-------------------"
+    Format-ObjectTable $token.UserClaimAttributes | Write-Output
+  }
+
+  if ($DeviceClaims -and $Token.DeviceClaimAttributes.Length -gt 0) {
+    "DEVICE CLAIM ATTRIBUTES"
+    "-------------------"
+    Format-ObjectTable $token.DeviceClaimAttributes | Write-Output
   }
 
   if ($Information) {
@@ -1600,8 +1660,18 @@ Show privilege information.
 Show integrity information.
 .PARAMETER SecurityAttributes
 Show token security attributes.
+.PARAMETER UserClaims
+Show token user claim attributes.
+.PARAMETER DeviceClaims
+Show token device claim attributes.
 .PARAMETER TrustLevel
 Show token trust level.
+.PARAMETER Information
+Show token information such as type, impersonation level and ID.
+.PARAMETER Owner
+Show token owner.
+.PARAMETER PrimaryGroup
+Show token primary group.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1615,20 +1685,55 @@ Show-NtTokenEffective -User -Group
 Show the user and groups of the current token.
 #>
 function Show-NtTokenEffective {
+    [CmdletBinding(DefaultParameterSetName="Basic")]
     Param(
-    [switch]$All,
-    [switch]$Group,
-    [switch]$Privilege,
-    [switch]$User,
-    [switch]$Integrity,
-    [switch]$SecurityAttributes,
-    [switch]$TrustLevel
+        [parameter(ParameterSetName="Complex")]
+        [switch]$All,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Group,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Privilege,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$User,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Integrity,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$SecurityAttributes,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$UserClaims,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$DeviceClaims,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$TrustLevel,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Information,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Owner,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$PrimaryGroup
     )
 
   Use-NtObject($token = Get-NtToken -Effective) {
-    Format-NtToken -Token $token -All:$All -Group:$Group -Privilege:$Privilege `
-        -User:$User -Integrity:$Integrity -SecurityAttributes:$SecurityAttributes `
-        -TrustLevel:$TrustLevel
+    if ($PsCmdlet.ParameterSetName -eq "Basic") {
+        Format-NtToken -Token $token
+    } else {
+        $args = @{
+            All = $All
+            Group = $Group
+            Privilege = $Privilege
+            User = $User
+            Integrity = $Integrity
+            SecurityAttributes = $SecurityAttributes
+            UserClaims = $UserClaims
+            DeviceClaims = $DeviceClaims
+            TrustLevel = $TrustLevel
+            Information = $Information
+            Owner = $Owner
+            PrimaryGroup = $PrimaryGroup
+            Token = $token
+        }
+        Format-NtToken @args
+    }
   }
 }
 
@@ -1752,14 +1857,9 @@ function Format-NtAce {
         $mask = $ace.Mask
         $access_name = "Access"
         $mask_str = if ($ace.Type -eq "MandatoryLabel") {
-            $mask.ToMandatoryLabelPolicy().ToString()
+            [NtApiDotNet.NtSecurity]::AccessMaskToString($mask.ToMandatoryLabelPolicy())
             $access_name = "Policy"
-        } elseif ($ace.IsInheritOnly) {
-            $mask.ToGenericAccess().ToString()
         } else {
-            if ($MapGeneric) {
-                $mask = $Type.MapGenericRights($mask)
-            }
             $Type.AccessMaskToString($Container, $mask, $MapGeneric)
         }
 
@@ -1869,7 +1969,9 @@ function Format-NtAcl {
 .SYNOPSIS
 Formats an object's security descriptor as text.
 .DESCRIPTION
-This cmdlet formats the security descriptor to text for display in the console or piped to a file.
+This cmdlet formats the security descriptor to text for display in the console or piped to a file. Note that 
+by default the SACL won't be disabled even if you pass in a SD object with the SACL present. In those cases
+change the SecurityInformation parameter to add Sacl or use ShowAll.
 .PARAMETER Object
 Specify an object to use for the security descriptor.
 .PARAMETER SecurityDescriptor
@@ -1890,6 +1992,10 @@ Specify a ACL to format.
 Specify the ACL is a SACL otherwise a DACL.
 .PARAMETER Summary
 Specify to only print a shortened format removing redundant information.
+.PARAMETER ShowAll
+Specify to format all security descriptor information including the SACL.
+.PARAMETER HideHeader
+Specify to not print the security descriptor header.
 .OUTPUTS
 None
 .EXAMPLE
@@ -1937,7 +2043,9 @@ function Format-NtSecurityDescriptor {
         [NtApiDotNet.SecurityInformation]$SecurityInformation = "AllBasic",
         [switch]$MapGeneric,
         [switch]$ToSddl,
-        [switch]$Summary
+        [switch]$Summary,
+        [switch]$ShowAll,
+        [switch]$HideHeader
     )
 
     PROCESS {
@@ -1961,7 +2069,7 @@ function Format-NtSecurityDescriptor {
                     if ($sd_type -eq $null) {
                         $sd_type = $Type
                     }
-                    ($SecurityDescriptor, $sd_type, "UNKNOWN")
+                    ($SecurityDescriptor, $sd_type, "")
                 }
                 "FromAcl" {
                     $fake_sd = New-NtSecurityDescriptor
@@ -1972,18 +2080,23 @@ function Format-NtSecurityDescriptor {
                         $fake_sd.Dacl = $Acl
                         $SecurityInformation = "Dacl"
                     }
-                    ($fake_sd, $Type, "UNKNOWN")
+                    ($fake_sd, $Type, "")
                 }
                 "FromAccessCheck" {
-                    $Check_sd = New-NtSecurityDescriptor $AccessCheckResult.SecurityDescriptor
+                    $check_sd = New-NtSecurityDescriptor -Sddl $AccessCheckResult.SecurityDescriptor
                     $Type = Get-NtType $AccessCheckResult.TypeName
                     $Name = $AccessCheckResult.Name
-                    ($Check_sd, $Type, $Name)
+                    ($check_sd, $Type, $Name)
                 }
             }
 
+            $si = $SecurityInformation
+            if ($ShowAll) {
+                $si = [NtApiDotNet.SecurityInformation]::All
+            }
+
             if ($ToSddl) {
-               $sd.ToSddl($SecurityInformation) | Write-Output
+               $sd.ToSddl($si) | Write-Output
                return
             }
 
@@ -1996,8 +2109,10 @@ function Format-NtSecurityDescriptor {
                 $Container = $sd.Container
             }
 
-            if (!$Summary) {
-                Write-Output "Path: $n"
+            if (!$Summary -and !$HideHeader) {
+                if ($n -ne "") {
+                    Write-Output "Path: $n"
+                }
                 Write-Output "Type: $($t.Name)"
                 Write-Output "Control: $($sd.Control)"
                 if ($sd.RmControl -ne $null) {
@@ -2006,7 +2121,7 @@ function Format-NtSecurityDescriptor {
                 Write-Output ""
             }
 
-            if ($sd.Owner -ne $null -and (($SecurityInformation -band "Owner") -ne 0)) {
+            if ($sd.Owner -ne $null -and (($si -band "Owner") -ne 0)) {
                 $title = if ($sd.Owner.Defaulted) {
                     "<Owner> (Defaulted)"
                 } else {
@@ -2021,7 +2136,7 @@ function Format-NtSecurityDescriptor {
                     Write-Output ""
                 }
             }
-            if ($sd.Group -ne $null -and (($SecurityInformation -band "Group") -ne 0)) {
+            if ($sd.Group -ne $null -and (($si -band "Group") -ne 0)) {
                 $title = if ($sd.Group.Defaulted) {
                     "<Group> (Defaulted)"
                 } else {
@@ -2036,23 +2151,23 @@ function Format-NtSecurityDescriptor {
                     Write-Output ""
                 }
             }
-            if ($sd.DaclPresent -and (($SecurityInformation -band "Dacl") -ne 0)) {
+            if ($sd.DaclPresent -and (($si -band "Dacl") -ne 0)) {
                 Format-NtAcl $sd.Dacl $t "<DACL>" -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container
             }
-            if ($sd.SaclPresent -and (($SecurityInformation -band "Sacl") -ne 0)) {
+            if ($sd.HasAuditAce -and (($si -band "Sacl") -ne 0)) {
                 Format-NtAcl $sd.Sacl $t "<SACL>" -MapGeneric:$MapGeneric -AuditOnly -Summary:$Summary -Container:$Container
             }
             $label = $sd.GetMandatoryLabel()
-            if ($label -ne $null -and (($SecurityInformation -band "Label") -ne 0)) {
+            if ($label -ne $null -and (($si -band "Label") -ne 0)) {
                 Write-Output "<Mandatory Label>" 
                 Format-NtAce -Ace $label -Type $t -Summary:$Summary -Container:$Container
             }
             $trust = $sd.ProcessTrustLabel
-            if ($trust -ne $null -and (($SecurityInformation -band "ProcessTrustLabel") -ne 0)) {
+            if ($trust -ne $null -and (($si -band "ProcessTrustLabel") -ne 0)) {
                 Write-Output "<Process Trust Label>"
                 Format-NtAce -Ace $trust -Type $t -Summary:$Summary -Container:$Container
             }
-            if (($SecurityInformation -band "Attribute") -ne 0) {
+            if (($si -band "Attribute") -ne 0) {
                 $attrs = $sd.ResourceAttributes
                 if ($attrs.Count -gt 0) {
                     Write-Output "<Resource Attributes>"
@@ -2061,7 +2176,7 @@ function Format-NtSecurityDescriptor {
                     }
                 }
             }
-            if (($SecurityInformation -band "AccessFilter") -ne 0) {
+            if (($si -band "AccessFilter") -ne 0) {
                 $filters = $sd.AccessFilters
                 if ($filters.Count -gt 0) {
                     Write-Output "<Access Filters>"
@@ -2070,7 +2185,7 @@ function Format-NtSecurityDescriptor {
                     }
                 }
             }
-            if (($SecurityInformation -band "Scope") -ne 0) {
+            if (($si -band "Scope") -ne 0) {
                 $scopes = $sd.ScopedPolicyIDs
                 if ($scopes.Count -gt 0) {
                     Write-Output "<Scoped Policy IDs>"
@@ -6613,22 +6728,45 @@ This cmdlet sets the owner of a security descriptor.
 The security descriptor to modify.
 .PARAMETER Owner
 The owner SID to set.
+.PARAMETER Name
+The name of the group to set.
+.PARAMETER KnownSid
+The well known SID to set.
 .PARAMETER Defaulted
 Specify whether the owner is defaulted.
+.PARAMETER 
 .INPUTS
 None
 .OUTPUTS
 None
 #>
 function Set-NtSecurityDescriptorOwner {
+    [CmdletBinding(DefaultParameterSetName="FromSid")]
     Param(
         [Parameter(Position=0, Mandatory)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
-        [Parameter(Position=1, Mandatory)]
+        [Parameter(Position=1, Mandatory, ParameterSetName="FromSid")]
         [NtApiDotNet.Sid]$Owner,
+        [Parameter(Mandatory, ParameterSetName = "FromName")]
+        [string]$Name,
+        [Parameter(Mandatory, ParameterSetName = "FromKnownSid")]
+        [NtApiDotNet.KnownSidValue]$KnownSid,
         [switch]$Defaulted
     )
-    $SecurityDescriptor.Owner = [NtApiDotNet.SecurityDescriptorSid]::new($Owner, $Defaulted)
+
+    $sid = switch($PsCmdlet.ParameterSetName) {
+        "FromSid" {
+            $Owner
+        }
+        "FromName" {
+            Get-NtSid -Name $Name
+        }
+        "FromKnownSid" {
+            Get-NtSid -KnownSid $KnownSid
+        }
+    }
+
+    $SecurityDescriptor.Owner = [NtApiDotNet.SecurityDescriptorSid]::new($sid, $Defaulted)
 }
 
 <#
@@ -6660,6 +6798,10 @@ This cmdlet sets the group of a security descriptor.
 The security descriptor to modify.
 .PARAMETER Group
 The group SID to set.
+.PARAMETER Name
+The name of the group to set.
+.PARAMETER KnownSid
+The well known SID to set.
 .PARAMETER Defaulted
 Specify whether the group is defaulted.
 .INPUTS
@@ -6668,14 +6810,32 @@ None
 None
 #>
 function Set-NtSecurityDescriptorGroup {
+    [CmdletBinding(DefaultParameterSetName="FromSid")]
     Param(
         [Parameter(Position=0, Mandatory)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
-        [Parameter(Position=1, Mandatory)]
+        [Parameter(Position=1, Mandatory, ParameterSetName="FromSid")]
         [NtApiDotNet.Sid]$Group,
+        [Parameter(Mandatory, ParameterSetName = "FromName")]
+        [string]$Name,
+        [Parameter(Mandatory, ParameterSetName = "FromKnownSid")]
+        [NtApiDotNet.KnownSidValue]$KnownSid,
         [switch]$Defaulted
     )
-    $SecurityDescriptor.Group = [NtApiDotNet.SecurityDescriptorSid]::new($Group, $Defaulted)
+
+    $sid = switch($PsCmdlet.ParameterSetName) {
+        "FromSid" {
+            $Group
+        }
+        "FromName" {
+            Get-NtSid -Name $Name
+        }
+        "FromKnownSid" {
+            Get-NtSid -KnownSid $KnownSid
+        }
+    }
+
+    $SecurityDescriptor.Group = [NtApiDotNet.SecurityDescriptorSid]::new($sid, $Defaulted)
 }
 
 <#
@@ -6764,11 +6924,13 @@ function Get-NtAceConditionData {
 
 <#
 .SYNOPSIS
-Converts a security descriptor to a self-relative byte array.
+Converts a security descriptor to a self-relative byte array or base64 string.
 .DESCRIPTION
-This cmdlet converts a security descriptor to a self-relative byte array.
+This cmdlet converts a security descriptor to a self-relative byte array or a base64 string.
 .PARAMETER SecurityDescriptor
 The security descriptor to convert.
+.PARAMETER Base64
+Converts the self-relative SD to base64 string.
 .INPUTS
 None
 .OUTPUTS
@@ -6776,13 +6938,60 @@ byte[]
 .EXAMPLE
 ConvertFrom-NtSecurityDescriptor -SecurityDescriptor "O:SYG:SYD:(A;;GA;;;WD)"
 Converts security descriptor to byte array.
+.EXAMPLE
+ConvertFrom-NtSecurityDescriptor -SecurityDescriptor "O:SYG:SYD:(A;;GA;;;WD)" -ToBase64
+Converts security descriptor to a base64 string.
+.EXAMPLE
+ConvertFrom-NtSecurityDescriptor -SecurityDescriptor "O:SYG:SYD:(A;;GA;;;WD)" -ToBase64 -InsertLineBreaks
+Converts security descriptor to a base64 string with line breaks.
 #>
 function ConvertFrom-NtSecurityDescriptor {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="ToBytes")]
     Param(
-        [Parameter(Position=0, Mandatory)]
-        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+        [Parameter(Position=0, Mandatory, ValueFromPipeline)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Mandatory, ParameterSetName="ToBase64")]
+        [switch]$Base64,
+        [switch]$InsertLineBreaks
     )
 
-    $SecurityDescriptor.ToByteArray() | Write-Output -NoEnumerate
+    PROCESS {
+        if ($Base64) {
+            $SecurityDescriptor.ToBase64($InsertLineBreaks) | Write-Output
+        } else {
+            $SecurityDescriptor.ToByteArray() | Write-Output -NoEnumerate
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Creates a new UserGroup object from SID and Attributes.
+.DESCRIPTION
+This cmdlet creates a new UserGroup object from SID and Attributes.
+.PARAMETER Sid
+List of SIDs to use to create object.
+.PARAMETER Attribute
+Common attributes for the new object.
+.INPUTS
+NtApiDotNet.Sid[]
+.OUTPUTS
+NtApiDotNet.UserGroup[]
+.EXAMPLE
+New-NtUserGroup -Sid "WD" -Attribute Enabled
+Creates a new UserGroup with the World SID and the Enabled Flag.
+#>
+function New-NtUserGroup {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position=0, Mandatory, ValueFromPipeline)]
+        [NtApiDotNet.Sid[]]$Sid,
+        [NtApiDotNet.GroupAttributes]$Attribute = 0
+    )
+
+    PROCESS {
+        foreach($s in $Sid) {
+            New-Object NtApiDotNet.UserGroup -ArgumentList $s, $Attribute
+        }
+    }
 }
