@@ -427,6 +427,17 @@ namespace NtApiDotNet
             AddAce(AceType.Allowed, mask, flags, NtSecurity.SidFromSddl(sid));
         }
 
+        private static SafeBuffer BuildObjectTypeList(DisposableList list, Guid[] object_types)
+        {
+            int total_size = object_types.Length * (IntPtr.Size + 16);
+            int guid_base = object_types.Length * IntPtr.Size;
+            var buffer = list.AddResource(new SafeHGlobalBuffer(total_size));
+            IntPtr[] ptrs = Enumerable.Range(0, object_types.Length).Select(i => buffer.DangerousGetHandle() + (i * 16 + guid_base)).ToArray();
+            buffer.WriteArray(0, ptrs, 0, ptrs.Length);
+            buffer.WriteArray((ulong)guid_base, object_types, 0, object_types.Length);
+            return buffer;
+        }
+
         private static NtResult<SafeProcessHeapBuffer> CreateBuffer(
             SecurityDescriptor parent,
             SecurityDescriptor creator,
@@ -445,7 +456,7 @@ namespace NtApiDotNet
                 {
                     return NtRtl.RtlNewSecurityObjectWithMultipleInheritance(
                         parent_buffer, creator_buffer, out SafeProcessHeapBuffer new_descriptor,
-                        object_types, object_types.Length, is_directory, flags, token.GetHandle(),
+                        BuildObjectTypeList(list, object_types), object_types.Length, is_directory, flags, token.GetHandle(),
                         ref generic_mapping).CreateResult(throw_on_error, () => new_descriptor);
                 }
                 else
@@ -488,6 +499,41 @@ namespace NtApiDotNet
             DaclUntrusted = control.HasFlag(SecurityDescriptorControl.DaclUntrusted);
         }
 
+        private static void MapAcl(Acl acl, GenericMapping generic_mapping)
+        {
+            if (acl == null)
+                return;
+            foreach (Ace ace in acl)
+            {
+                if (!ace.IsInheritOnly && !ace.IsMandatoryLabel)
+                {
+                    ace.Mask = generic_mapping.MapMask(ace.Mask);
+                }
+            }
+        }
+
+        private void MoveFrom(SecurityDescriptor sd, bool clone)
+        {
+            if (clone)
+            {
+                Dacl = sd.Dacl?.Clone();
+                Sacl = sd.Sacl?.Clone();
+                Owner = sd.Owner?.Clone();
+                Group = sd.Group?.Clone();
+            }
+            else
+            {
+                Dacl = sd.Dacl;
+                Sacl = sd.Sacl;
+                Owner = sd.Owner;
+                Group = sd.Group;
+            }
+            Control = sd.Control;
+            Revision = sd.Revision;
+            RmControl = sd.RmControl;
+            NtType = sd.NtType;
+        }
+
         #endregion
 
         #region Public Properties
@@ -515,7 +561,6 @@ namespace NtApiDotNet
             get => ComputeControl();
             set => UpdateControl(value);
         }
-
         /// <summary>
         /// Revision value
         /// </summary>
@@ -533,16 +578,17 @@ namespace NtApiDotNet
         /// </summary>
         public Ace MandatoryLabel
         {
+            // TODO: Remove this fallback at some point.
             get => GetMandatoryLabel()
                     ?? new MandatoryLabelAce(AceFlags.None, MandatoryLabelPolicy.NoWriteUp,
                         TokenIntegrityLevel.Medium);
 
             set
             {
-                Ace label = GetMandatoryLabel();
-                if (label != null)
+                RemoveMandatoryLabel();
+                if (value == null)
                 {
-                    Sacl.Remove(label);
+                    return;
                 }
 
                 if (Sacl == null)
@@ -631,12 +677,32 @@ namespace NtApiDotNet
         /// <summary>
         /// Indicates if the SD's DACL is canonical.
         /// </summary>
-        public bool IsDaclCanonical => Dacl?.IsCanonical(true) ?? true;
+        public bool DaclCanonical => Dacl?.IsCanonical(true) ?? true;
 
         /// <summary>
         /// Indicates if the SD's SACL is canonical.
         /// </summary>
-        public bool IsSaclCanonical => Sacl?.IsCanonical(false) ?? true;
+        public bool SaclCanonical => Sacl?.IsCanonical(false) ?? true;
+
+        /// <summary>
+        /// Indicates if the SD's DACL is defaulted.
+        /// </summary>
+        public bool DaclDefaulted => Dacl?.Defaulted ?? false;
+
+        /// <summary>
+        /// Indicates if the SD's SACL is defaulted.
+        /// </summary>
+        public bool SaclDefaulted => Sacl?.Defaulted ?? false;
+
+        /// <summary>
+        /// Indicates if the SD's DACL is auto-inherited.
+        /// </summary>
+        public bool DaclAutoInherited => Dacl?.AutoInherited ?? false;
+
+        /// <summary>
+        /// Indicates if the SD's SACL is auto-inherited.
+        /// </summary>
+        public bool SaclAutoInherited => Sacl?.AutoInherited ?? false;
 
         /// <summary>
         /// Indicates if the SD came from a container.
@@ -930,6 +996,18 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Removes the mandatory label if it exists.
+        /// </summary>
+        public void RemoveMandatoryLabel()
+        {
+            Ace label = GetMandatoryLabel();
+            if (label != null)
+            {
+                Sacl.Remove(label);
+            }
+        }
+
+        /// <summary>
         /// Map all generic access in this security descriptor to the default type specified by NtType.
         /// </summary>
         public void MapGenericAccess()
@@ -954,18 +1032,8 @@ namespace NtApiDotNet
         /// <param name="generic_mapping">The generic mapping.</param>
         public void MapGenericAccess(GenericMapping generic_mapping)
         {
-            if (Dacl != null)
-            {
-                foreach (Ace ace in Dacl)
-                {
-                    ace.Mask = generic_mapping.MapMask(ace.Mask);
-                }
-            }
-
-            if (ProcessTrustLabel != null)
-            {
-                ProcessTrustLabel.Mask = generic_mapping.MapMask(ProcessTrustLabel.Mask);
-            }
+            MapAcl(Dacl, generic_mapping);
+            MapAcl(Sacl, generic_mapping);
         }
 
         /// <summary>
@@ -977,8 +1045,8 @@ namespace NtApiDotNet
         /// <param name="token">Optional token for the security descriptor.</param>
         /// <param name="generic_mapping">Generic mapping.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
-        /// <returns>The updated security descriptor.</returns>
-        public NtResult<SecurityDescriptor> Modify(
+        /// <returns>The NT status code.</returns>
+        public NtStatus Modify(
             SecurityDescriptor security_descriptor,
             SecurityInformation security_information,
             SecurityAutoInheritFlags flags,
@@ -999,9 +1067,13 @@ namespace NtApiDotNet
                 IntPtr ptr = object_sd.DangerousGetHandle();
                 try
                 {
-                    return NtRtl.RtlSetSecurityObjectEx(security_information,
-                        modify_sd, ref ptr, flags, ref generic_mapping, token.GetHandle()).CreateResult(throw_on_error, 
-                        () => new SecurityDescriptor(ptr) { NtType = NtType });
+                    NtStatus status = NtRtl.RtlSetSecurityObjectEx(security_information,
+                        modify_sd, ref ptr, flags, ref generic_mapping, token.GetHandle());
+                    if (status.IsSuccess())
+                    {
+                        MoveFrom(new SecurityDescriptor(ptr) { NtType = NtType }, false);
+                    }
+                    return status.ToNtException(throw_on_error);
                 }
                 finally
                 {
@@ -1022,16 +1094,15 @@ namespace NtApiDotNet
         /// <param name="flags">Auto inherit flags.</param>
         /// <param name="token">Optional token for the security descriptor.</param>
         /// <param name="generic_mapping">Generic mapping.</param>
-        /// <returns>The updated security descriptor.</returns>
-        public SecurityDescriptor Modify(
+        public void Modify(
             SecurityDescriptor security_descriptor,
             SecurityInformation security_information,
             SecurityAutoInheritFlags flags,
             NtToken token,
             GenericMapping generic_mapping)
         {
-            return Modify(security_descriptor, security_information, 
-                flags, token, generic_mapping, true).Result;
+            Modify(security_descriptor, security_information, 
+                flags, token, generic_mapping, true);
         }
 
         /// <summary>
@@ -1052,6 +1123,17 @@ namespace NtApiDotNet
             if (Sacl == null || Sacl.NullAcl)
                 return;
             Sacl = Sacl.Canonicalize(false);
+        }
+
+        /// <summary>
+        /// Clone the security descriptor.
+        /// </summary>
+        /// <returns>The cloned security descriptor.</returns>
+        public SecurityDescriptor Clone()
+        {
+            SecurityDescriptor ret = new SecurityDescriptor();
+            ret.MoveFrom(this, true);
+            return ret;
         }
 
         /// <summary>
@@ -1228,7 +1310,6 @@ namespace NtApiDotNet
             }
             NtType = type;
         }
-
         #endregion
 
         #region Static Methods
@@ -1358,7 +1439,6 @@ namespace NtApiDotNet
             return ParseBase64(base64, true).Result;
         }
 
-
         /// <summary>
         /// Create a new security descriptor from a parent.
         /// </summary>
@@ -1388,7 +1468,7 @@ namespace NtApiDotNet
                 {
                     return buffer.Cast<SecurityDescriptor>();
                 }
-                return Parse(buffer.Result, throw_on_error);
+                return Parse(buffer.Result, null, is_directory, throw_on_error);
             }
         }
 

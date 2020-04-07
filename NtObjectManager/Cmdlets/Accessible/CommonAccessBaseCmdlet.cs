@@ -60,7 +60,7 @@ namespace NtObjectManager.Cmdlets.Accessible
         private protected virtual void WriteAccessCheckResult(string name, string type_name, AccessMask granted_access,
             GenericMapping generic_mapping, SecurityDescriptor sd, Type enum_type, bool is_directory, TokenInformation token_info)
         {
-            WriteObject(new AccessCheckResult(name, type_name, granted_access, generic_mapping, 
+            WriteObject(new CommonAccessCheckResult(name, type_name, granted_access, generic_mapping, 
                 sd, enum_type, is_directory, token_info));
         }
 
@@ -317,14 +317,27 @@ namespace NtObjectManager.Cmdlets.Accessible
             return null;
         }
 
-        private static Lazy<bool> _has_impersonate_privilege = new Lazy<bool>(CheckImpersonatePrivilege);
-        private static Lazy<NtToken> _system_token = new Lazy<NtToken>(FindSystemToken);
+        private protected bool HasSecurityPrivilege()
+        {
+            if (!_has_security_privilege.HasValue)
+            {
+                using (var token = NtToken.OpenProcessToken())
+                {
+                    _has_security_privilege = token.GetPrivilege(TokenPrivilegeValue.SeSecurityPrivilege)?.Enabled ?? false;
+                }
+            }
+            return _has_security_privilege.Value;
+        }
+
+        private bool? _has_security_privilege;
+        private static readonly Lazy<bool> _has_impersonate_privilege = new Lazy<bool>(CheckImpersonatePrivilege);
+        private static readonly Lazy<NtToken> _system_token = new Lazy<NtToken>(FindSystemToken);
     }
 
     /// <summary>
     /// Base class for path based accessible checks.
     /// </summary>
-    public abstract class GetAccessiblePathCmdlet<A> : CommonAccessBaseWithAccessCmdlet<A>
+    public abstract class GetAccessiblePathCmdlet<A> : CommonAccessBaseWithAccessCmdlet<A> where A : Enum
     {
         /// <summary>
         /// <para type="description">Specify a list of native paths to check.</para>
@@ -401,7 +414,7 @@ namespace NtObjectManager.Cmdlets.Accessible
             }
         }
 
-        internal int GetMaxDepth()
+        private protected int GetMaxDepth()
         {
             return MaxDepth ?? int.MaxValue;
         }

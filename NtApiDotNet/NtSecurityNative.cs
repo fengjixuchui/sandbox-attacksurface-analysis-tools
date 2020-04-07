@@ -41,7 +41,8 @@ namespace NtApiDotNet
         UnprotectedDacl = 0x20000000,
         UnprotectedSacl = 0x10000000,
         AllBasic = Dacl | Owner | Group | Label | ProcessTrustLabel,
-        All = AllBasic | Sacl | Attribute | Scope | AccessFilter
+        AllNoSacl = AllBasic | Attribute | Scope | AccessFilter,
+        All = AllNoSacl | Sacl
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -315,10 +316,21 @@ namespace NtApiDotNet
         /// </summary>
         public SidNameSource Source { get; }
 
-        internal SidName(string name, SidNameSource source)
+        /// <summary>
+        /// Used for caching. Indicates the lookup name was denied rather than not available.
+        /// </summary>
+        internal bool LookupDenied { get; }
+
+        internal SidName(string name, SidNameSource source, bool lookup_denied)
         {
             Name = name;
             Source = source;
+            LookupDenied = lookup_denied;
+        }
+
+        internal SidName(string name, SidNameSource source)
+            : this(name, source, false)
+        {
         }
     }
 
@@ -680,7 +692,7 @@ namespace NtApiDotNet
              SafeBuffer ParentDescriptor,
              SafeBuffer CreatorDescriptor,
              out SafeProcessHeapBuffer NewDescriptor,
-             [MarshalAs(UnmanagedType.LPArray), Out] Guid[] ObjectTypes,
+             SafeBuffer ObjectTypes, // GUID**
              int GuidCount,
              [MarshalAs(UnmanagedType.U1)] bool IsDirectoryObject,
              SecurityAutoInheritFlags AutoInheritFlags,

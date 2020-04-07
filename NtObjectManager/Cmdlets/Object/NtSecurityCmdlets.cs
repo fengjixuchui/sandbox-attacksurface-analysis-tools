@@ -860,45 +860,57 @@ namespace NtObjectManager.Cmdlets.Object
     ///   <code>$sd = New-NtSecurityDescriptor -Key $key -ValueName SD</code>
     ///   <para>Create a new security descriptor with the contents from the key $Key and value "SD".</para>
     /// </example>
-    [Cmdlet(VerbsCommon.New, "NtSecurityDescriptor", DefaultParameterSetName = "EmptySd")]
+    [Cmdlet(VerbsCommon.New, "NtSecurityDescriptor", DefaultParameterSetName = "NewSd")]
     [OutputType(typeof(SecurityDescriptor))]
     public sealed class NewNtSecurityDescriptorCmdlet : PSCmdlet
     {
         /// <summary>
         /// <para type="description">Specify to create the security descriptor with a NULL DACL.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         public SwitchParameter NullDacl { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to create the security descriptor with an empty DACL.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "NewSd")]
+        public SwitchParameter EmptyDacl { get; set; }
 
         /// <summary>
         /// <para type="description">Specify to create the security descriptor with a NULL SACL.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         public SwitchParameter NullSacl { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to create the security descriptor with an empty SACL.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "NewSd")]
+        public SwitchParameter EmptySacl { get; set; }
 
         /// <summary>
         /// <para type="description">Specify thr owner for the new SD.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         public Sid Owner { get; set; }
 
         /// <summary>
         /// <para type="description">Specify the group for the new SD.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         public Sid Group { get; set; }
 
         /// <summary>
         /// <para type="description">Specify the DACL for the new SD. The ACL will be cloned.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         [AllowEmptyCollection]
         public Acl Dacl { get; set; }
 
         /// <summary>
         /// <para type="description">Specify the the SACL for the new SD. The ACL will be cloned.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "EmptySd")]
+        [Parameter(ParameterSetName = "NewSd")]
         [AllowEmptyCollection]
         public Acl Sacl { get; set; }
 
@@ -917,7 +929,8 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify to create the security descriptor from the default DACL of a token object.</para>
         /// </summary>
-        [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromToken")]
+        [Parameter(Position = 0, ParameterSetName = "FromToken")]
+        [AllowNull]
         public NtToken Token { get; set; }
 
         /// <summary>
@@ -929,12 +942,12 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify a default NT type for the security descriptor.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "FromToken"), 
+        [Parameter(ParameterSetName = "FromToken"),
             Parameter(ParameterSetName = "FromSddl"),
             Parameter(ParameterSetName = "FromBase64"),
             Parameter(ParameterSetName = "FromBytes"), 
             Parameter(ParameterSetName = "FromKey"),
-            Parameter(ParameterSetName = "EmptySd")]
+            Parameter(ParameterSetName = "NewSd")]
         [ArgumentCompleter(typeof(NtTypeArgumentCompleter))]
         public NtType Type { get; set; }
 
@@ -946,7 +959,7 @@ namespace NtObjectManager.Cmdlets.Object
             Parameter(ParameterSetName = "FromBase64"),
             Parameter(ParameterSetName = "FromBytes"),
             Parameter(ParameterSetName = "FromKey"),
-            Parameter(ParameterSetName = "EmptySd")]
+            Parameter(ParameterSetName = "NewSd")]
         public SwitchParameter Container { get; set; }
 
         /// <summary>
@@ -978,20 +991,14 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">Specify additional control flags to apply to the SD. Not all the flags are accepted.</para>
         /// </summary>
         [Parameter(ParameterSetName = "FromSddl"),
-         Parameter(ParameterSetName = "EmptySd")]
+         Parameter(ParameterSetName = "NewSd")]
         public SecurityDescriptorControl Control { get; set; }
 
         /// <summary>
         /// <para type="description">Specify optional object types for the new security descriptor.</para>
         /// </summary>
         [Parameter(ParameterSetName = "FromToken")]
-        public Guid[] ObjectTypes { get; set; }
-
-        /// <summary>
-        /// <para type="description">Specify new security descriptor is a directory.</para>
-        /// </summary>
-        [Parameter(ParameterSetName = "FromToken")]
-        public SwitchParameter IsDirectory { get; set; }
+        public Guid[] ObjectType { get; set; }
 
         /// <summary>
         /// <para type="description">Specify auto-inherit flags for new security descriptor.</para>
@@ -1010,6 +1017,12 @@ namespace NtObjectManager.Cmdlets.Object
         /// </summary>
         [Parameter(ParameterSetName = "FromToken")]
         public SecurityDescriptor Creator { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to use the current Token for a new security descriptor.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "FromToken")]
+        public SwitchParameter EffectiveToken { get; set; }
 
         /// <summary>
         /// Overridden ProcessRecord method.
@@ -1032,7 +1045,16 @@ namespace NtObjectManager.Cmdlets.Object
                             WriteWarning("Security descriptor type not specified, defaulting to File.");
                             Type = NtType.GetTypeByType<NtFile>();
                         }
-                        sd = SecurityDescriptor.Create(Parent, Creator, IsDirectory, AutoInherit, Token, Type.GenericMapping);
+
+                        using (var list = new DisposableList())
+                        {
+                            if (EffectiveToken)
+                            {
+                                Token = list.AddResource(NtToken.OpenEffectiveToken());
+                            }
+                            sd = SecurityDescriptor.Create(Parent, Creator, ObjectType, 
+                                Container, AutoInherit, Token, Type.GenericMapping);
+                        }
                     }
                     break;
                 case "FromSddl":
@@ -1066,12 +1088,21 @@ namespace NtObjectManager.Cmdlets.Object
             WriteObject(sd);
         }
 
+        private static Acl CreateAcl(bool empty_acl, bool null_acl)
+        {
+            if (!empty_acl && !null_acl)
+            {
+                return null;
+            }
+            return new Acl() { NullAcl = null_acl };
+        }
+
         private SecurityDescriptor CreateNewSecurityDescriptor()
         {
             return new SecurityDescriptor
             {
-                Dacl = Dacl?.Clone() ?? new Acl() { NullAcl = NullDacl },
-                Sacl = Sacl?.Clone() ?? (NullSacl ? new Acl() { NullAcl = NullSacl } : null),
+                Dacl = Dacl?.Clone() ?? CreateAcl(EmptyDacl, NullDacl),
+                Sacl = Sacl?.Clone() ?? CreateAcl(EmptySacl, NullSacl),
                 Owner = Owner != null ? new SecurityDescriptorSid(Owner, false) : null,
                 Group = Group != null ? new SecurityDescriptorSid(Group, false) : null
             };
@@ -1164,6 +1195,12 @@ namespace NtObjectManager.Cmdlets.Object
         [Parameter]
         public SwitchParameter PassThru { get; set; }
 
+        /// <summary>
+        /// <para type="description">Specify a raw access mask.</para>
+        /// </summary>
+        [Parameter]
+        public AccessMask? RawAccess { get; set; }
+
         private Sid GetSid()
         {
             switch (ParameterSetName)
@@ -1186,7 +1223,14 @@ namespace NtObjectManager.Cmdlets.Object
         {
             if (!_dict.GetValue("Access", out Enum access))
             {
-                throw new ArgumentException("Invalid access value.");
+                if (!RawAccess.HasValue)
+                {
+                    throw new ArgumentException("Invalid access value.");
+                }
+                else
+                {
+                    access = GenericAccessRights.None;
+                }
             }
 
             _dict.GetValue("Condition", out string condition);
@@ -1214,7 +1258,13 @@ namespace NtObjectManager.Cmdlets.Object
                 acl = SecurityDescriptor.Dacl;
             }
 
-            Ace ace = new Ace(Type, Flags, access, GetSid());
+            AccessMask mask = access;
+            if (RawAccess.HasValue)
+            {
+                mask |= RawAccess.Value;
+            }
+
+            Ace ace = new Ace(Type, Flags, mask, GetSid());
             if ((NtSecurity.IsCallbackAceType(Type) || Type == AceType.AccessFilter) && !string.IsNullOrWhiteSpace(condition))
             {
                 ace.Condition = condition;
@@ -1242,7 +1292,7 @@ namespace NtObjectManager.Cmdlets.Object
 
         object IDynamicParameters.GetDynamicParameters()
         {
-            bool access_mandatory = true;
+            bool access_mandatory = !RawAccess.HasValue;
             _dict = new RuntimeDefinedParameterDictionary();
             if (NtSecurity.IsCallbackAceType(Type) || Type == AceType.AccessFilter)
             {

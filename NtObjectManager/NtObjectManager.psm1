@@ -54,7 +54,7 @@ Specify a list process objects to use for their tokens.
 .INPUTS
 None
 .OUTPUTS
-NtObjectManager.Cmdlets.Accessible.AccessCheckResult
+NtObjectManager.Cmdlets.Accessible.CommonAccessCheckResult
 .NOTES
 For best results run this function as an administrator with SeDebugPrivilege available.
 .EXAMPLE
@@ -83,12 +83,18 @@ Set the state of a token's privileges.
 .DESCRIPTION
 This cmdlet will set the state of a token's privileges. This is commonly used to enable debug/backup privileges to perform privileged actions.
 If no token is specified then the current process token is used.
-.PARAMETER Privileges
+.PARAMETER Privilege
 A list of privileges to set their state.
 .PARAMETER Token
 Optional token object to use to set privileges. Must be accesible for AdjustPrivileges right.
-.PARAMETER Attributes
+.PARAMETER Attribute
 Specify the actual attributes to set. Defaults to Enabled.
+.PARAMETER All
+Set attributes for all privileges in the token.
+.PARAMETER PassThru
+Passthrough the updated privilege results.
+.PARAMETER Disable
+Disable the specified privileges.
 .INPUTS
 None
 .OUTPUTS
@@ -105,16 +111,20 @@ Enable SeBackupPrivilege and SeRestorePrivilege on an explicit token object.
 #>
 function Set-NtTokenPrivilege
 {
-  [CmdletBinding(DefaultParameterSetName="FromAttributes")]
+  [CmdletBinding(DefaultParameterSetName="FromPrivilege")]
   Param(
-    [Parameter(Mandatory=$true, Position=0)]
-    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
     [NtApiDotNet.NtToken]$Token,
-    [Parameter(ParameterSetName="FromAttributes")]
-    [NtApiDotNet.PrivilegeAttributes]$Attributes = "Enabled",
-    [Parameter(ParameterSetName="FromDisable")]
-    [switch]$Disable
-    )
+    [Parameter(Mandatory, Position=0, ParameterSetName="FromPrivilege")]
+    [alias("Privileges")]
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
+    [alias("Attributes")]
+    [NtApiDotNet.PrivilegeAttributes]$Attribute = "Enabled",
+    [switch]$Disable,
+    [Parameter(Mandatory, ParameterSetName="FromAllAttributes")]
+    [switch]$All,
+    [switch]$PassThru
+  )
+
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary
   } else {
@@ -122,19 +132,25 @@ function Set-NtTokenPrivilege
   }
 
   if ($Disable) {
-    $Attributes = 0
+    $Attribute = "Disabled"
+  }
+
+  if ($All) {
+    $Privilege = $Token.Privileges.Value
   }
 
   Use-NtObject($Token) {
     $result = @()
-    foreach($priv in $Privileges) {
-      if ($Token.SetPrivilege($priv, $Attributes)) {
+    foreach($priv in $Privilege) {
+      if ($Token.SetPrivilege($priv, $Attribute)) {
         $result += @($Token.GetPrivilege($priv))
       } else {
         Write-Warning "Couldn't set privilege $priv"
       }
     }
-    return $result
+    if ($PassThru) {
+        $result | Write-Output
+    }
   }
 }
 
@@ -143,7 +159,7 @@ function Set-NtTokenPrivilege
 Get the state of a token's privileges.
 .DESCRIPTION
 This cmdlet will get the state of a token's privileges.
-.PARAMETER Privileges
+.PARAMETER Privilege
 A list of privileges to get their state.
 .PARAMETER Token
 Optional token object to use to get privileges. Must be accesible for Query right.
@@ -158,28 +174,29 @@ Get all privileges on the current process token.
 Get-NtTokenPrivilege -Token $token
 Get all privileges on an explicit  token.
 .EXAMPLE
-Get-NtTokenPrivilege -Privileges SeDebugPrivilege 
+Get-NtTokenPrivilege -Privilege SeDebugPrivilege 
 Get state of SeDebugPrivilege on the current process token
 .EXAMPLE
-Get-NtTokenPrivilege -Privileges SeBackupPrivilege, SeRestorePrivilege -Token $token
+Get-NtTokenPrivilege -Privilege SeBackupPrivilege, SeRestorePrivilege -Token $token
 Get SeBackupPrivilege and SeRestorePrivilege status on an explicit token object.
 #>
 function Get-NtTokenPrivilege
 {
   Param(
-    [Parameter(Position=0)]
+    [Parameter(Position=0, ValueFromPipeline)]
     [NtApiDotNet.NtToken]$Token,
-    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges
+    [alias("Privileges")]
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privilege
   )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary -Access Query
-  } else {
+  } elseif (!$Token.IsPseudoToken) {
     $Token = $Token.Duplicate()
   }
 
   Use-NtObject($Token) {
-    if ($Privileges -ne $null -and $Privileges.Count -gt 0) {
-        foreach($priv in $Privileges) {
+    if ($Privilege -ne $null -and $Privilege.Count -gt 0) {
+        foreach($priv in $Privilege) {
             $val = $Token.GetPrivilege($priv)
             if ($val -ne $null) {
                 $val | Write-Output
@@ -223,7 +240,7 @@ Get groups that are enabled.
 function Get-NtTokenGroup {
   [CmdletBinding(DefaultParameterSetName="Normal")]
   Param(
-    [Parameter(Position = 0)]
+    [Parameter(Position = 0, ValueFromPipeline)]
     [NtApiDotNet.NtToken]$Token,
     [Parameter(Mandatory, ParameterSetName = "Restricted")]
     [switch]$Restricted,
@@ -233,7 +250,7 @@ function Get-NtTokenGroup {
   )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary -Access Query
-  } else {
+  } elseif (!$Token.IsPseudoToken) {
     $Token = $Token.Duplicate()
   }
 
@@ -335,7 +352,7 @@ Get the default owner SID.
 function Get-NtTokenSid {
   [CmdletBinding(DefaultParameterSetName="User")]
   Param(
-    [Parameter(Position = 0)]
+    [Parameter(Position = 0, ValueFromPipeline)]
     [NtApiDotNet.NtToken]$Token,
     [Parameter(Mandatory, ParameterSetName="Owner")]
     [switch]$Owner,
@@ -354,7 +371,7 @@ function Get-NtTokenSid {
   )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary -Access Query
-  } else {
+  } elseif (!$Token.IsPseudoToken) {
     $Token = $Token.Duplicate()
   }
 
@@ -438,7 +455,7 @@ function Set-NtTokenSid {
 
 <#
 .SYNOPSIS
-Get a token's default owner of group.
+Get a token's default owner or group.
 .DESCRIPTION
 This cmdlet will get the default owner or group for a token.
 .PARAMETER Group
@@ -467,7 +484,7 @@ function Get-NtTokenOwner {
   )
   if ($null -eq $Token) {
     $Token = Get-NtToken -Primary -Access Query
-  } else {
+  } elseif (!$Token.IsPseudoToken) {
     $Token = $Token.Duplicate()
   }
 
@@ -504,7 +521,8 @@ function Remove-NtTokenPrivilege
 {
   Param(
     [Parameter(Mandatory=$true, Position=0)]
-    [NtApiDotNet.TokenPrivilegeValue[]]$Privileges,
+    [alias("Privilege")]
+    [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
     [NtApiDotNet.NtToken]$Token
     )
   if ($null -eq $Token) {
@@ -515,7 +533,7 @@ function Remove-NtTokenPrivilege
 
   Use-NtObject($Token) {
     $result = @()
-    foreach($priv in $Privileges) {
+    foreach($priv in $Privilege) {
       if (!$Token.RemovePrivilege($priv)) {
         Write-Warning "Can't remove $priv from token."
       }
@@ -1483,25 +1501,37 @@ Show token information such as type, impersonation level and ID.
 Show token owner.
 .PARAMETER PrimaryGroup
 Show token primary group.
+.PARAMETER DefaultDacl
+Show token default DACL.
+.PARAMETER Basic
+Show basic token information, User, Group, Privilege and Integrity.
 .OUTPUTS
 Text data
 .EXAMPLE
 Format-NtToken -Token $token
 Print the user name of the token.
 .EXAMPLE
+Format-NtToken -Token $token -Basic
+Print basic details for the token.
+.EXAMPLE
 Format-NtToken -Token $token -All
 Print all details for the token.
 .EXAMPLE
 Format-NtToken -Token $token -User -Group
 Print the user and groups of the token.
+.EXAMPLE
+Format-NtToken -Token $token -DefaultDacl
+Print the default DACL of the token.
 #>
 function Format-NtToken {
-    [CmdletBinding(DefaultParameterSetName="Basic")]
+    [CmdletBinding(DefaultParameterSetName="UserOnly")]
     Param(
         [parameter(Mandatory=$true, Position=0, ValueFromPipeline=$true)]
         [NtApiDotNet.NtToken]$Token,
         [parameter(ParameterSetName="Complex")]
         [switch]$All,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Basic,
         [parameter(ParameterSetName="Complex")]
         [switch]$Group,
         [parameter(ParameterSetName="Complex")]
@@ -1523,7 +1553,9 @@ function Format-NtToken {
         [parameter(ParameterSetName="Complex")]
         [switch]$Owner,
         [parameter(ParameterSetName="Complex")]
-        [switch]$PrimaryGroup
+        [switch]$PrimaryGroup,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$DefaultDacl
   )
 
   if ($All) {
@@ -1538,9 +1570,15 @@ function Format-NtToken {
     $Information = $true
     $Owner = $true
     $PrimaryGroup = $true
+    $DefaultDacl = $true
+  } elseif ($Basic) {
+    $Group = $true
+    $User = $true
+    $Privilege = $true
+    $Integrity = $true
   }
 
-  if ($PSCmdlet.ParameterSetName -eq "Basic") {
+  if ($PSCmdlet.ParameterSetName -eq "UserOnly") {
     $token.User.ToString()
     return
   }
@@ -1627,6 +1665,11 @@ function Format-NtToken {
     Format-ObjectTable $token.DeviceClaimAttributes | Write-Output
   }
 
+  if ($DefaultDacl -and $Token.DefaultDacl -ne $null) {
+    "DEFAULT DACL"
+    Format-NtAcl -Acl $Token.DefaultDacl -Type "Directory" -Name "------------" | Write-Output
+  }
+
   if ($Information) {
     "TOKEN INFORMATION"
     "-----------------"
@@ -1672,6 +1715,10 @@ Show token information such as type, impersonation level and ID.
 Show token owner.
 .PARAMETER PrimaryGroup
 Show token primary group.
+.PARAMETER DefaultDacl
+Show token default DACL.
+.PARAMETER Basic
+Show basic token information, User, Group, Privilege and Integrity.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1679,16 +1726,21 @@ Show-NtTokenEffective
 Show only the user name of the current token.
 .EXAMPLE
 Show-NtTokenEffective -All
-Show the user, groups, privileges and integrity of the current token.
+Show all details for the current token.
+.EXAMPLE
+Show-NtTokenEffective -Basic
+Show basic details for the current token.
 .EXAMPLE
 Show-NtTokenEffective -User -Group
 Show the user and groups of the current token.
 #>
 function Show-NtTokenEffective {
-    [CmdletBinding(DefaultParameterSetName="Basic")]
+    [CmdletBinding(DefaultParameterSetName="UserOnly")]
     Param(
         [parameter(ParameterSetName="Complex")]
         [switch]$All,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$Basic,
         [parameter(ParameterSetName="Complex")]
         [switch]$Group,
         [parameter(ParameterSetName="Complex")]
@@ -1710,15 +1762,18 @@ function Show-NtTokenEffective {
         [parameter(ParameterSetName="Complex")]
         [switch]$Owner,
         [parameter(ParameterSetName="Complex")]
-        [switch]$PrimaryGroup
+        [switch]$PrimaryGroup,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$DefaultDacl
     )
 
   Use-NtObject($token = Get-NtToken -Effective) {
-    if ($PsCmdlet.ParameterSetName -eq "Basic") {
+    if ($PsCmdlet.ParameterSetName -eq "UserOnly") {
         Format-NtToken -Token $token
     } else {
         $args = @{
             All = $All
+            Basic = $Basic
             Group = $Group
             Privilege = $Privilege
             User = $User
@@ -1731,6 +1786,7 @@ function Show-NtTokenEffective {
             Owner = $Owner
             PrimaryGroup = $PrimaryGroup
             Token = $token
+            DefaultDacl = $DefaultDacl
         }
         Format-NtToken @args
     }
@@ -1777,7 +1833,7 @@ function Show-NtSecurityDescriptor {
     [Parameter(ParameterSetName = "FromObject")]
     [switch]$ReadOnly,
     [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true)]
-    [NtObjectManager.Cmdlets.Accessible.AccessCheckResult]$AccessCheckResult,
+    [NtObjectManager.Cmdlets.Accessible.CommonAccessCheckResult]$AccessCheckResult,
     [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true)]
     [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
     [Parameter(Position = 1, ParameterSetName = "FromSecurityDescriptor")]
@@ -1831,11 +1887,12 @@ function Show-NtSecurityDescriptor {
         Start-Process -FilePath "$PSScriptRoot\ViewSecurityDescriptor.exe" -ArgumentList @("`"$Name`"", "-$sd","`"$($Type.Name)`"", "$Container") -Wait:$Wait
     }
     "FromAccessCheck" {
-        if ($AccessCheckResult.SecurityDescriptor -eq "") {
+        if ($AccessCheckResult.SecurityDescriptorBase64 -eq "") {
             return
         }
 
-        Show-NtSecurityDescriptor -SecurityDescriptor $AccessCheckResult.SecurityDescriptor `
+        $sd = New-NtSecurityDescriptor -Base64 $AccessCheckResult.SecurityDescriptorBase64
+        Show-NtSecurityDescriptor -SecurityDescriptor $sd `
                 -Type $AccessCheckResult.TypeName -Name $AccessCheckResult.Name
     }
   }
@@ -1870,6 +1927,14 @@ function Format-NtAce {
             }
             if ($ace.IsResourceAttributeAce) {
                 $cond = "($($ace.ResourceAttribute.ToSddl()))"
+            }
+            if ($ace.IsObjectAce) {
+                if ($ace.ObjectType -ne $null) {
+                    $cond += "(OBJ:$($ace.ObjectType))"
+                }
+                if ($ace.InheritedObjectType -ne $null) {
+                    $cond += "(IOBJ:$($ace.InheritedObjectType))"
+                }
             }
             Write-Output "$($ace.Sid.Name): ($($ace.Type))($($ace.Flags))($mask_str)$cond"
         } else {
@@ -1913,7 +1978,6 @@ function Format-NtAcl {
         [NtApiDotNet.NtType]$Type,
         [Parameter(Position = 2, Mandatory)]
         [string]$Name,
-        [Parameter(Mandatory = $true)]
         [switch]$MapGeneric,
         [switch]$AuditOnly,
         [switch]$Summary,
@@ -1947,6 +2011,7 @@ function Format-NtAcl {
         } else {
             Write-Output $Name
             Write-Output " - <NULL ACL>"
+            Write-Output ""
         }
     } elseif ($Acl.Count -eq 0) {
         if ($Summary) {
@@ -1954,6 +2019,7 @@ function Format-NtAcl {
         } else {
             Write-Output $Name
             Write-Output " - <EMPTY ACL>"
+            Write-Output ""
         }
     } else {
         Write-Output $Name
@@ -2028,7 +2094,7 @@ function Format-NtSecurityDescriptor {
         [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true, ValueFromPipeline)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
         [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true, ValueFromPipeline)]
-        [NtObjectManager.Cmdlets.Accessible.AccessCheckResult]$AccessCheckResult,
+        [NtObjectManager.Cmdlets.Accessible.CommonAccessCheckResult]$AccessCheckResult,
         [Parameter(Position = 0, ParameterSetName = "FromAcl", Mandatory = $true)]
         [AllowEmptyCollection()]
         [NtApiDotNet.Acl]$Acl,
@@ -2083,7 +2149,10 @@ function Format-NtSecurityDescriptor {
                     ($fake_sd, $Type, "")
                 }
                 "FromAccessCheck" {
-                    $check_sd = New-NtSecurityDescriptor -Sddl $AccessCheckResult.SecurityDescriptor
+                    if ($AccessCheckResult.SecurityDescriptorBase64 -eq "") {
+                        return
+                    }
+                    $check_sd = New-NtSecurityDescriptor -Base64 $AccessCheckResult.SecurityDescriptorBase64
                     $Type = Get-NtType $AccessCheckResult.TypeName
                     $Name = $AccessCheckResult.Name
                     ($check_sd, $Type, $Name)
@@ -2119,6 +2188,12 @@ function Format-NtSecurityDescriptor {
                     Write-Output $("RmControl: 0x{0:X02}" -f $sd.RmControl)
                 }
                 Write-Output ""
+            }
+
+            if ($sd.Owner -eq $null -and $sd.Group -eq $null `
+                -and $sd.Dacl -eq $null -and $sd.Sacl -eq $null) {
+                Write-Output "<NO SECURITY INFORMATION>"
+                return
             }
 
             if ($sd.Owner -ne $null -and (($si -band "Owner") -ne 0)) {
@@ -2550,61 +2625,6 @@ function Show-NtToken {
             Start-Process "$PSScriptRoot\TokenViewer.exe" -Verb $verb
         }
       }
-    }
-}
-
-<#
-.SYNOPSIS
-Invokes a script block while impersonating a token.
-.DESCRIPTION
-This cmdlet invokes a script block while impersonating a token. 
-.PARAMETER Token
-The token to impersonate, if the token is a primary token it will be duplicated.
-.PARAMETER Script
-The script block to execute during impersonation.
-.PARAMETER ImpersonationLevel
-When the token is duplicated specify the impersonation level to use.
-.PARAMETER Anonymous
-Impersonate the anonymous token and run the script.
-.OUTPUTS
-Result of the script block.
-.EXAMPLE
-Invoke-NtToken -Token $token -Script { Get-NtFile \Path\To\File }
-Open a file under impersonation.
-.EXAMPLE
-Invoke-NtToken -Token $token -ImpersonationLevel Identification -Script { Get-NtToken -Impersonation -OpenAsSelf }
-Open the impersontation token under identification level impersonation.
-.EXAMPLE
-Invoke-NtToken -Script { Get-NtProcess -ProcessId 1234 } -Anonymous
-Open a process while impersonating the anonymous token.
-#>
-function Invoke-NtToken {
-    [CmdletBinding(DefaultParameterSetName="FromToken")]
-    param(
-        [Parameter(Mandatory=$true, Position=0, ParameterSetName="FromToken")]
-        [NtApiDotNet.NtToken]$Token,
-        [Parameter(Mandatory=$true, Position=1, ParameterSetName="FromToken")]
-        [Parameter(Mandatory=$true, Position=0, ParameterSetName="FromAnonymous")]
-        [ScriptBlock]$Script,
-        [Parameter(Position=2, ParameterSetName="FromToken")]
-        [NtApiDotNet.SecurityImpersonationLevel]$ImpersonationLevel = "Impersonation",
-        [Parameter(Mandatory=$true, ParameterSetName="FromAnonymous")]
-        [switch]$Anonymous
-    )
-
-    if ($PSCmdlet.ParameterSetName -eq "FromToken") {
-        if ($Token.TokenType -eq "Impersonation" -and $Token.ImpersonationLevel -lt $ImpersonationLevel) {
-            Write-Error "Impersonation level can't be raised, specify an appropriate impersonation level"
-            return
-        }
-
-        $cb = [System.Func[Object]]{ & $Script }
-        $Token.RunUnderImpersonate($cb, $ImpersonationLevel)
-    } else {
-        $th = Get-NtThread -Current
-        Use-NtObject($imp = $th.ImpersonateAnonymousToken()) {
-            & $Script
-        }
     }
 }
 
@@ -6671,11 +6691,31 @@ function Compare-NtObject {
 
 <#
 .SYNOPSIS
+Copies a security descriptor to a new one.
+.DESCRIPTION
+This cmdlet copies the details from a security descriptor into a new object so
+that it can be modified without affecting the other.
+.PARAMETER SecurityDescriptor
+The security descriptor to copy.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptor
+#>
+function Copy-NtSecurityDescriptor {
+    Param(
+        [Parameter(Position=0, Mandatory, ValueFromPipeline)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.Clone() | Write-Output
+}
+
+<#
+.SYNOPSIS
 Edits an existing security descriptor.
 .DESCRIPTION
-This cmdlet edits an existing security descriptor based on 
-a new security descriptor and additional information. Returns the 
-updated security descriptor but leaves the original alonge.
+This cmdlet edits an existing security descriptor in-place. This can be based on 
+a new security descriptor and additional information.
 .PARAMETER SecurityDescriptor
 The security descriptor to edit.
 .PARAMETER NewSecurityDescriptor
@@ -6689,34 +6729,74 @@ Specify optional auto inherit flags.
 .PARAMETER Type
 Specify the NT type to use for the update. Defaults to using the 
 type from $SecurityDescriptor.
+.PARAMETER MapGeneric
+Map generic access rights to specific access rights.
+.PARAMETER PassThru
+Passthrough the security descriptor.
 .INPUTS
 None
 .OUTPUTS
 NtApiDotNet.SecurityDescriptor
+.EXAMPLE 
+Edit-NtSecurityDescriptor $sd -CanonicalizeDacl
+Canonicalize the security descriptor's DACL.
+.EXAMPLE 
+Edit-NtSecurityDescriptor $sd -MapGenericAccess
+Map the security descriptor's generic access to type specific access.
+.EXAMPLE 
+Copy-NtSecurityDescriptor $sd | Edit-NtSecurityDescriptor -MapGenericAccess -PassThru
+Make a copy of a security descriptor and edit the copy.
 #>
 function Edit-NtSecurityDescriptor {
     Param(
-        [Parameter(Position=0, Mandatory)]
+        [Parameter(Position=0, Mandatory, ValueFromPipeline)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
-        [Parameter(Position=1, Mandatory)]
+        [Parameter(Position=1, Mandatory, ParameterSetName = "ModifySd")]
         [NtApiDotNet.SecurityDescriptor]$NewSecurityDescriptor,
-        [Parameter(Position=2, Mandatory)]
+        [Parameter(Position=2, Mandatory, ParameterSetName = "ModifySd")]
         [NtApiDotNet.SecurityInformation]$SecurityInformation,
+        [Parameter(ParameterSetName = "ModifySd")]
         [NtApiDotNet.NtToken]$Token,
+        [Parameter(ParameterSetName = "ModifySd")]
         [NtApiDotNet.SecurityAutoInheritFlags]$Flags = 0,
-        [NtApiDotNet.NtType]$Type
+        [Parameter(ParameterSetName = "ModifySd")]
+        [NtApiDotNet.NtType]$Type,
+        [Parameter(ParameterSetName = "CanonicalizeSd")]
+        [switch]$CanonicalizeDacl,
+        [Parameter(ParameterSetName = "CanonicalizeSd")]
+        [switch]$CanonicalizeSacl,
+        [Parameter(ParameterSetName = "MapGenericSd")]
+        [switch]$MapGeneric,
+        [switch]$PassThru
     )
 
-    if ($Type -eq $null) {
-        $Type = $SecurityDescriptor.NtType
+    if ($PSCmdlet.ParameterSetName -ne "CanonicalizeSd") {
         if ($Type -eq $null) {
-            Write-Warning "Original type not available, defaulting to File."
-            $Type = Get-NtType "File"
+            $Type = $SecurityDescriptor.NtType
+            if ($Type -eq $null) {
+                Write-Warning "Original type not available, defaulting to File."
+                $Type = Get-NtType "File"
+            }
         }
     }
 
-    $SecurityDescriptor.Modify($NewSecurityDescriptor, $SecurityInformation, `
-        $Flags, $Token, $Type.GenericMapping) | Write-Output
+    if ($PsCmdlet.ParameterSetName -eq "ModifySd") {
+        $SecurityDescriptor.Modify($NewSecurityDescriptor, $SecurityInformation, `
+            $Flags, $Token, $Type.GenericMapping)
+    } elseif($PsCmdlet.ParameterSetName -eq "CanonicalizeSd") {
+        if ($CanonicalizeDacl) {
+            $SecurityDescriptor.CanonicalizeDacl()
+        }
+        if ($CanonicalizeSacl) {
+            $SecurityDescriptor.CanonicalizeSacl()
+        }
+    } elseif($PsCmdlet.ParameterSetName -eq "MapGenericSd") {
+        $SecurityDescriptor.MapGenericAccess($Type)
+    }
+
+    if ($PassThru) {
+        $SecurityDescriptor | Write-Output
+    }
 }
 
 <#
@@ -6767,6 +6847,559 @@ function Set-NtSecurityDescriptorOwner {
     }
 
     $SecurityDescriptor.Owner = [NtApiDotNet.SecurityDescriptorSid]::new($sid, $Defaulted)
+}
+
+<#
+.SYNOPSIS
+Test various properties of the security descriptor..
+.DESCRIPTION
+This cmdlet tests various properties of the security descriptor. The default is
+to check if the DACL is present.
+.PARAMETER SecurityDescriptor
+The security descriptor to test.
+.PARAMETER DaclPresent
+Test if the DACL is present.
+.PARAMETER SaclPresent
+Test if the SACL is present.
+.PARAMETER DaclCanonical
+Test if the DACL is canonical.
+.PARAMETER SaclCanonical
+Test if the SACL is canonical.
+.PARAMETER DaclDefaulted
+Test if the DACL is defaulted.
+.PARAMETER DaclAutoInherited
+Test if the DACL is auto-inherited.
+.PARAMETER SaclDefaulted
+Test if the DACL is defaulted.
+.PARAMETER SaclAutoInherited
+Test if the DACL is auto-inherited.
+.INPUTS
+None
+.OUTPUTS
+Boolean or PSObject.
+#>
+function Test-NtSecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName="DaclPresent")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(ParameterSetName="DaclPresent")]
+        [switch]$DaclPresent,
+        [Parameter(Mandatory, ParameterSetName="SaclPresent")]
+        [switch]$SaclPresent,
+        [Parameter(Mandatory, ParameterSetName="DaclCanonical")]
+        [switch]$DaclCanonical,
+        [Parameter(Mandatory, ParameterSetName="SaclCanonical")]
+        [switch]$SaclCanonical,
+        [Parameter(Mandatory, ParameterSetName="DaclDefaulted")]
+        [switch]$DaclDefaulted,
+        [Parameter(Mandatory, ParameterSetName="DaclAutoInherited")]
+        [switch]$DaclAutoInherited,
+        [Parameter(Mandatory, ParameterSetName="SaclDefaulted")]
+        [switch]$SaclDefaulted,
+        [Parameter(Mandatory, ParameterSetName="SaclAutoInherited")]
+        [switch]$SaclAutoInherited
+    )
+
+    $obj = switch($PSCmdlet.ParameterSetName) {
+        "DaclPresent" { $SecurityDescriptor.DaclPresent }
+        "SaclPresent" { $SecurityDescriptor.SaclPresent }
+        "DaclCanonical" { $SecurityDescriptor.DaclCanonical }
+        "SaclCanonical" { $SecurityDescriptor.SaclCanonical }
+        "DaclDefaulted" { $SecurityDescriptor.DaclDefaulted }
+        "SaclDefaulted" { $SecurityDescriptor.SaclDefaulted }
+        "DaclAutoInherited" { $SecurityDescriptor.DaclAutoInherited }
+        "SaclAutoInherited" { $SecurityDescriptor.SaclAutoInherited }
+    }
+    Write-Output $obj
+}
+
+<#
+.SYNOPSIS
+Get the owner from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Owner field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptorSid
+#>
+function Get-NtSecurityDescriptorOwner {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.Owner | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get the group from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Group field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptorSid
+#>
+function Get-NtSecurityDescriptorGroup {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.Group | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get the DACL from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Dacl field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Acl
+#>
+function Get-NtSecurityDescriptorDacl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    Write-Output $SecurityDescriptor.Dacl -NoEnumerate
+}
+
+<#
+.SYNOPSIS
+Get the SACL from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Sacl field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Acl
+#>
+function Get-NtSecurityDescriptorSacl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    Write-Output $SecurityDescriptor.Sacl -NoEnumerate
+}
+
+<#
+.SYNOPSIS
+Get the Control from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Control field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptorControl
+#>
+function Get-NtSecurityDescriptorControl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    Write-Output $SecurityDescriptor.Control
+}
+
+<#
+.SYNOPSIS
+Get the Integrity Level from a security descriptor.
+.DESCRIPTION
+This cmdlet gets the Integrity Level field from a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to query.
+.PARAMETER Sid
+Get the Integrity Level as a SID.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Sid or NtApiDotNet.TokenIntegrityLevel
+#>
+function Get-NtSecurityDescriptorIntegrityLevel {
+    [CmdletBinding(DefaultParameterSetName="ToIL")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(ParameterSetName="ToSid")]
+        [switch]$AsSid,
+        [Parameter(ParameterSetName="ToAce")]
+        [switch]$AsAce
+    )
+
+    if (!$SecurityDescriptor.HasMandatoryLabelAce) {
+        return
+    }
+
+    switch($PSCmdlet.ParameterSetName) {
+        "ToIL" {
+            $SecurityDescriptor.IntegrityLevel
+        }
+        "ToSid" {
+            $SecurityDescriptor.MandatoryLabel.Sid
+        }
+        "ToAce" {
+            $SecurityDescriptor.MandatoryLabel
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Sets Control flags for a security descriptor.
+.DESCRIPTION
+This cmdlet sets Control flags for a security descriptor. Note that you can't 
+remove the DaclPresent or SaclPresent. For that use Remove-NtSecurityDescriptorDacl 
+or Remove-NtSecurityDescriptorSacl. 
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Control
+The control flags to set.
+.PARAMETER PassThru
+Pass through the final control flags.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorControl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.SecurityDescriptorControl]$Control,
+        [switch]$PassThru
+    )
+    $SecurityDescriptor.Control = $Control
+    if ($PassThru) {
+        $SecurityDescriptor.Control | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Adds Control flags for a security descriptor.
+.DESCRIPTION
+This cmdlet adds Control flags for a security descriptor. Note that you can't 
+remove the DaclPresent or SaclPresent. For that use Remove-NtSecurityDescriptorDacl 
+or Remove-NtSecurityDescriptorSacl. 
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Control
+The control flags to add.
+.PARAMETER PassThru
+Pass through the final control flags.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Add-NtSecurityDescriptorControl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.SecurityDescriptorControl]$Control,
+        [switch]$PassThru
+    )
+
+    $curr_flags = $SecurityDescriptor.Control
+    $new_flags = [int]$curr_flags -bor $Control
+    $SecurityDescriptor.Control = $new_flags
+    if ($PassThru) {
+        $SecurityDescriptor.Control | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Removes Control flags for a security descriptor.
+.DESCRIPTION
+This cmdlet removes Control flags for a security descriptor. Note that you can't 
+remove the DaclPresent or SaclPresent. For that use Remove-NtSecurityDescriptorDacl 
+or Remove-NtSecurityDescriptorSacl. 
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Control
+The control flags to remove.
+.PARAMETER PassThru
+Pass through the final control flags.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtSecurityDescriptorControl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.SecurityDescriptorControl]$Control,
+        [switch]$PassThru
+    )
+
+    $curr_flags = $SecurityDescriptor.Control
+    $new_flags = [int]$curr_flags -band -bnot $Control
+    $SecurityDescriptor.Control = $new_flags
+    if ($PassThru) {
+        $SecurityDescriptor.Control | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Creates a new ACL object.
+.DESCRIPTION
+This cmdlet creates a new ACL object.
+.PARAMETER Ace
+List of ACEs to create the ACL from.
+.PARAMETER Defaulted
+Specify whether the ACL is defaulted.
+.PARAMETER NullAcl
+Specify whether the ACL is NULL.
+.PARAMETER AutoInheritReq
+Specify to set the Auto Inherit Requested flag.
+.PARAMETER AutoInherited
+Specify to set the Auto Inherited flag.
+.PARAMETER Protected
+Specify to set the Protected flag.
+.PARAMETER Defaulted
+Specify to set the Defaulted flag.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Acl
+#>
+function New-NtAcl {
+    [CmdletBinding(DefaultParameterSetName="FromAce")]
+    Param(
+        [Parameter(Mandatory, ParameterSetName = "NullAcl")]
+        [switch]$NullAcl,
+        [Parameter(ParameterSetName = "FromAce")]
+        [NtApiDotNet.Ace[]]$Ace,
+        [switch]$AutoInheritReq,
+        [switch]$AutoInherited,
+        [switch]$Protected,
+        [switch]$Defaulted
+    )
+
+    $acl = New-Object NtApiDotNet.Acl
+    $acl.AutoInherited = $AutoInherited
+    $acl.AutoInheritReq = $AutoInheritReq
+    $acl.Protected = $Protected
+    $acl.Defaulted = $Defaulted
+    switch($PsCmdlet.ParameterSetName) {
+        "FromAce" {
+            if ($Ace -ne $null) {
+                $acl.AddRange($Ace)
+            }
+        }
+        "NullAcl" {
+            $acl.NullAcl = $true
+        }
+    }
+
+    Write-Output $acl -NoEnumerate
+}
+
+<#
+.SYNOPSIS
+Sets the DACL for a security descriptor.
+.DESCRIPTION
+This cmdlet sets the DACL of a security descriptor. It'll replace any existing DACL assigned.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Ace
+List of ACEs to create the ACL from.
+.PARAMETER Defaulted
+Specify whether the ACL is defaulted.
+.PARAMETER NullAcl
+Specify whether the ACL is NULL.
+.PARAMETER AutoInheritReq
+Specify to set the Auto Inherit Requested flag.
+.PARAMETER AutoInherited
+Specify to set the Auto Inherited flag.
+.PARAMETER Protected
+Specify to set the Protected flag.
+.PARAMETER Defaulted
+Specify to set the Defaulted flag.
+.PARAMETER PassThru
+Specify to return the new ACL.
+.PARAMETER Remove
+Specify to remove the ACL.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorDacl {
+    [CmdletBinding(DefaultParameterSetName="FromAce")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Mandatory, ParameterSetName = "NullAcl")]
+        [switch]$NullAcl,
+        [Parameter(ParameterSetName = "FromAce")]
+        [NtApiDotNet.Ace[]]$Ace,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$AutoInheritReq,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$AutoInherited,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$Protected,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$Defaulted,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$PassThru
+    )
+
+    $args = @{
+        AutoInheritReq = $AutoInheritReq
+        AutoInherited = $AutoInherited
+        Protected = $Protected
+        Defaulted = $Defaulted
+    }
+
+    $SecurityDescriptor.Dacl = if ($PSCmdlet.ParameterSetName -eq "NullAcl") {
+        New-NtAcl @args -NullAcl
+    } else {
+        New-NtAcl @args -Ace $Ace
+    }
+
+    if ($PassThru) {
+        Write-Output $SecurityDescriptor.Dacl -NoEnumerate
+    }
+}
+
+<#
+.SYNOPSIS
+Sets the SACL for a security descriptor.
+.DESCRIPTION
+This cmdlet sets the SACL of a security descriptor. It'll replace any existing SACL assigned.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.PARAMETER Ace
+List of ACEs to create the ACL from.
+.PARAMETER Defaulted
+Specify whether the ACL is defaulted.
+.PARAMETER NullAcl
+Specify whether the ACL is NULL.
+.PARAMETER AutoInheritReq
+Specify to set the Auto Inherit Requested flag.
+.PARAMETER AutoInherited
+Specify to set the Auto Inherited flag.
+.PARAMETER Protected
+Specify to set the Protected flag.
+.PARAMETER Defaulted
+Specify to set the Defaulted flag.
+.PARAMETER PassThru
+Specify to return the new ACL.
+.PARAMETER Remove
+Specify to remove the ACL.
+.PARAMETER 
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-NtSecurityDescriptorSacl {
+    [CmdletBinding(DefaultParameterSetName="FromAce")]
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Mandatory, ParameterSetName = "NullAcl")]
+        [switch]$NullAcl,
+        [Parameter(ParameterSetName = "FromAce")]
+        [NtApiDotNet.Ace[]]$Ace,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$AutoInheritReq,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$AutoInherited,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$Protected,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$Defaulted,
+        [Parameter(ParameterSetName = "NullAcl")]
+        [Parameter(ParameterSetName = "FromAce")]
+        [switch]$PassThru
+    )
+
+    $args = @{
+        AutoInheritReq = $AutoInheritReq
+        AutoInherited = $AutoInherited
+        Protected = $Protected
+        Defaulted = $Defaulted
+    }
+
+    $SecurityDescriptor.Sacl = if ($PSCmdlet.ParameterSetName -eq "NullAcl") {
+        New-NtAcl @args -NullAcl
+    } else {
+        New-NtAcl @args -Ace $Ace
+    }
+    if ($PassThru) {
+        Write-Output $SecurityDescriptor.Sacl -NoEnumerate
+    }
+}
+
+<#
+.SYNOPSIS
+Removes the DACL for a security descriptor.
+.DESCRIPTION
+This cmdlet removes the DACL of a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtSecurityDescriptorDacl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.Dacl = $null
+}
+
+<#
+.SYNOPSIS
+Removes the SACL for a security descriptor.
+.DESCRIPTION
+This cmdlet removes the SACL of a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtSecurityDescriptorSacl {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.Sacl = $null
 }
 
 <#
@@ -6860,15 +7493,39 @@ function Remove-NtSecurityDescriptorGroup {
 
 <#
 .SYNOPSIS
+Removes the integrity level for a security descriptor.
+.DESCRIPTION
+This cmdlet removes the integrity level of a security descriptor.
+.PARAMETER SecurityDescriptor
+The security descriptor to modify.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtSecurityDescriptorIntegrityLevel {
+    Param(
+        [Parameter(Position=0, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor
+    )
+    $SecurityDescriptor.RemoveMandatoryLabel()
+}
+
+<#
+.SYNOPSIS
 Sets the integrity level for a security descriptor.
 .DESCRIPTION
 This cmdlet sets the integrity level for a security descriptor with a specified policy and flags.
 .PARAMETER SecurityDescriptor
 The security descriptor to modify.
-.PARAMETER Group
-The group SID to set.
-.PARAMETER Defaulted
-Specify whether the group is defaulted.
+.PARAMETER IntegrityLevel
+Specify the integrity level.
+.PARAMETER Sid
+Specify the integrity level as a SID.
+.PARAMETER Flags
+Specify the ACE flags.
+.PARAMETER Policy
+Specify the ACE flags.
 .INPUTS
 None
 .OUTPUTS
@@ -6883,7 +7540,11 @@ function Set-NtSecurityDescriptorIntegrityLevel {
         [NtApiDotNet.Sid]$Sid,
         [Parameter(Position=1, Mandatory, ParameterSetName="FromLevel")]
         [NtApiDotNet.TokenIntegrityLevel]$IntegrityLevel,
+        [Parameter(ParameterSetName="FromLevel")]
+        [Parameter(ParameterSetName="FromSid")]
         [NtApiDotNet.AceFlags]$Flags = 0,
+        [Parameter(ParameterSetName="FromLevel")]
+        [Parameter(ParameterSetName="FromSid")]
         [NtApiDotNet.MandatoryLabelPolicy]$Policy = "NoWriteUp"
     )
 
@@ -6992,6 +7653,58 @@ function New-NtUserGroup {
     PROCESS {
         foreach($s in $Sid) {
             New-Object NtApiDotNet.UserGroup -ArgumentList $s, $Attribute
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Sets a security descriptor using the Win32 APIs.
+.DESCRIPTION
+This cmdlet sets the security descriptor on an object using the Win32 SetSecurityInfo APIs.
+.PARAMETER Name
+The name of the object.
+.PARAMETER Object
+Handle to an object.
+.PARAMETER Handle
+Handle to an object.
+.PARAMETER Type
+The type of object.
+.PARAMETER SecurityDescriptor
+The security descriptor to set.
+.PARAMETER SecurityInformation
+Specify the security information to set.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-Win32SecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName="FromName")]
+    Param(
+        [Parameter(Position=0, Mandatory, ParameterSetName="FromName")]
+        [string]$Name,
+        [Parameter(Position=0, Mandatory, ParameterSetName="FromObject")]
+        [NtApiDotNet.NtObject]$Object,
+        [Parameter(Position=0, Mandatory, ParameterSetName="FromHandle")]
+        [System.Runtime.InteropServices.SafeHandle]$Handle,
+        [Parameter(Position=1, Mandatory)]
+        [NtApiDotNet.Win32.Security.SeObjectType]$Type,
+        [Parameter(Position=2, Mandatory)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(Position=3, Mandatory)]
+        [NtApiDotNet.SecurityInformation]$SecurityInformation
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Name, $Type, $SecurityInformation, $SecurityDescriptor)
+        }
+        "FromObject" {
+            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Object, $Type, $SecurityInformation, $SecurityDescriptor)
+        }
+        "FromHandle" {
+            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Handle, $Type, $SecurityInformation, $SecurityDescriptor)
         }
     }
 }
