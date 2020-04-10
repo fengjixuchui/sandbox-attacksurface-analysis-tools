@@ -1922,6 +1922,9 @@ function Format-NtAce {
 
         if ($Summary) {
             $cond = ""
+            if ($ace.IsCompoundAce) {
+                $cond += "(Server:$($ace.ServerSID.Name))"
+            }
             if ($ace.IsConditionalAce) {
                 $cond = "($($ace.Condition))"
             }
@@ -1936,16 +1939,15 @@ function Format-NtAce {
                     $cond += "(IOBJ:$($ace.InheritedObjectType))"
                 }
             }
+
             Write-Output "$($ace.Sid.Name): ($($ace.Type))($($ace.Flags))($mask_str)$cond"
         } else {
             Write-Output " - Type  : $($ace.Type)"
             Write-Output " - Name  : $($ace.Sid.Name)"
             Write-Output " - SID   : $($ace.Sid)"
-            if ($ace.Type -eq "AllowedCompound") {
+            if ($ace.IsCompoundAce) {
                 Write-Output " - ServerName: $($ace.ServerSid.Name)"
-                if(!$Summary) {
-                    Write-Output " - ServerSID : $($ace.ServerSid)"
-                }
+                Write-Output " - ServerSID : $($ace.ServerSid)"
             }
             Write-Output " - Mask  : 0x$($mask.ToString("X08"))"
             Write-Output " - $($access_name): $mask_str"
@@ -1958,10 +1960,10 @@ function Format-NtAce {
             }
             if ($ace.IsObjectAce) {
                 if ($ace.ObjectType -ne $null) {
-                    Write-Output " - ObjectType  : $($ace.ObjectType)"
+                    Write-Output " - ObjectType: $($ace.ObjectType)"
                 }
                 if ($ace.InheritedObjectType -ne $null) {
-                    Write-Output " - InheritedObjectType  : $($ace.InheritedObjectType)"
+                    Write-Output " - InheritedObjectType: $($ace.InheritedObjectType)"
                 }
             }
             Write-Output ""
@@ -2062,6 +2064,8 @@ Specify to only print a shortened format removing redundant information.
 Specify to format all security descriptor information including the SACL.
 .PARAMETER HideHeader
 Specify to not print the security descriptor header.
+.PARAMETER DisplayPath
+Specify to display a path when using SecurityDescriptor or Acl formatting.
 .OUTPUTS
 None
 .EXAMPLE
@@ -2089,13 +2093,13 @@ Format the security descriptor of an object as SDDL with only DACL and Label.
 function Format-NtSecurityDescriptor {
     [CmdletBinding(DefaultParameterSetName = "FromObject")]
     Param(
-        [Parameter(Position = 0, ParameterSetName = "FromObject", Mandatory = $true, ValueFromPipeline)]
+        [Parameter(Position = 0, ParameterSetName = "FromObject", Mandatory, ValueFromPipeline)]
         [NtApiDotNet.NtObject]$Object,
-        [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory = $true, ValueFromPipeline)]
+        [Parameter(Position = 0, ParameterSetName = "FromSecurityDescriptor", Mandatory, ValueFromPipeline)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
-        [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory = $true, ValueFromPipeline)]
+        [Parameter(Position = 0, ParameterSetName = "FromAccessCheck", Mandatory, ValueFromPipeline)]
         [NtObjectManager.Cmdlets.Accessible.CommonAccessCheckResult]$AccessCheckResult,
-        [Parameter(Position = 0, ParameterSetName = "FromAcl", Mandatory = $true)]
+        [Parameter(Position = 0, ParameterSetName = "FromAcl", Mandatory)]
         [AllowEmptyCollection()]
         [NtApiDotNet.Acl]$Acl,
         [Parameter(ParameterSetName = "FromAcl")]
@@ -2104,14 +2108,17 @@ function Format-NtSecurityDescriptor {
         [Parameter(Position = 1, ParameterSetName = "FromAcl")]
         [NtApiDotNet.NtType]$Type,
         [switch]$Container,
-        [Parameter(Position = 0, ParameterSetName = "FromPath", Mandatory = $true, ValueFromPipeline)]
+        [Parameter(Position = 0, ParameterSetName = "FromPath", Mandatory, ValueFromPipeline)]
         [string]$Path,
         [NtApiDotNet.SecurityInformation]$SecurityInformation = "AllBasic",
         [switch]$MapGeneric,
         [switch]$ToSddl,
         [switch]$Summary,
         [switch]$ShowAll,
-        [switch]$HideHeader
+        [switch]$HideHeader,
+        [Parameter(ParameterSetName = "FromSecurityDescriptor")]
+        [Parameter(ParameterSetName = "FromAcl")]
+        [string]$DisplayPath = ""
     )
 
     PROCESS {
@@ -2135,7 +2142,7 @@ function Format-NtSecurityDescriptor {
                     if ($sd_type -eq $null) {
                         $sd_type = $Type
                     }
-                    ($SecurityDescriptor, $sd_type, "")
+                    ($SecurityDescriptor, $sd_type, $DisplayPath)
                 }
                 "FromAcl" {
                     $fake_sd = New-NtSecurityDescriptor
@@ -2146,7 +2153,7 @@ function Format-NtSecurityDescriptor {
                         $fake_sd.Dacl = $Acl
                         $SecurityInformation = "Dacl"
                     }
-                    ($fake_sd, $Type, "")
+                    ($fake_sd, $Type, $DisplayPath)
                 }
                 "FromAccessCheck" {
                     if ($AccessCheckResult.SecurityDescriptorBase64 -eq "") {
@@ -2229,7 +2236,7 @@ function Format-NtSecurityDescriptor {
             if ($sd.DaclPresent -and (($si -band "Dacl") -ne 0)) {
                 Format-NtAcl $sd.Dacl $t "<DACL>" -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container
             }
-            if ($sd.HasAuditAce -and (($si -band "Sacl") -ne 0)) {
+            if (($sd.HasAuditAce -or $sd.NullSacl) -and (($si -band "Sacl") -ne 0)) {
                 Format-NtAcl $sd.Sacl $t "<SACL>" -MapGeneric:$MapGeneric -AuditOnly -Summary:$Summary -Container:$Container
             }
             $label = $sd.GetMandatoryLabel()
@@ -6715,7 +6722,8 @@ function Copy-NtSecurityDescriptor {
 Edits an existing security descriptor.
 .DESCRIPTION
 This cmdlet edits an existing security descriptor in-place. This can be based on 
-a new security descriptor and additional information.
+a new security descriptor and additional information. If PassThru is specified
+the the SD is not editing in place, a clone of the SD will be returned.
 .PARAMETER SecurityDescriptor
 The security descriptor to edit.
 .PARAMETER NewSecurityDescriptor
@@ -6760,15 +6768,28 @@ function Edit-NtSecurityDescriptor {
         [Parameter(ParameterSetName = "ModifySd")]
         [NtApiDotNet.SecurityAutoInheritFlags]$Flags = 0,
         [Parameter(ParameterSetName = "ModifySd")]
+        [Parameter(ParameterSetName = "ToAutoInherit")]
+        [Parameter(ParameterSetName = "MapGenericSd")]
         [NtApiDotNet.NtType]$Type,
         [Parameter(ParameterSetName = "CanonicalizeSd")]
         [switch]$CanonicalizeDacl,
         [Parameter(ParameterSetName = "CanonicalizeSd")]
         [switch]$CanonicalizeSacl,
-        [Parameter(ParameterSetName = "MapGenericSd")]
+        [Parameter(Mandatory, ParameterSetName = "MapGenericSd")]
         [switch]$MapGeneric,
+        [Parameter(Mandatory, ParameterSetName = "ToAutoInherit")]
+        [switch]$ConvertToAutoInherit,
+        [Parameter(ParameterSetName = "ToAutoInherit")]
+        [switch]$Container,
+        [Parameter(ParameterSetName = "ToAutoInherit")]
+        [NtApiDotNet.SecurityDescriptor]$Parent,
+        [Nullable[Guid]]$ObjectType = $null,
         [switch]$PassThru
     )
+
+    if ($PassThru) {
+        $SecurityDescriptor = Copy-NtSecurityDescriptor $SecurityDescriptor
+    }
 
     if ($PSCmdlet.ParameterSetName -ne "CanonicalizeSd") {
         if ($Type -eq $null) {
@@ -6792,6 +6813,9 @@ function Edit-NtSecurityDescriptor {
         }
     } elseif($PsCmdlet.ParameterSetName -eq "MapGenericSd") {
         $SecurityDescriptor.MapGenericAccess($Type)
+    } elseif ($PsCmdlet.ParameterSetName -eq "ToAutoInherit") {
+        $SecurityDescriptor.ConvertToAutoInherit($Parent, 
+            $ObjectType, $Container, $Type.GenericMapping)
     }
 
     if ($PassThru) {
@@ -7659,52 +7683,54 @@ function New-NtUserGroup {
 
 <#
 .SYNOPSIS
-Sets a security descriptor using the Win32 APIs.
+Formats an object's security descriptor as text.
 .DESCRIPTION
-This cmdlet sets the security descriptor on an object using the Win32 SetSecurityInfo APIs.
-.PARAMETER Name
-The name of the object.
-.PARAMETER Object
-Handle to an object.
-.PARAMETER Handle
-Handle to an object.
+This cmdlet formats the security descriptor to text for display in the console or piped to a file
+Uses Get-Win32SecurityDescriptor API to query the SD then uses the Format-NtSecurityDescriptor to
+display.
 .PARAMETER Type
-The type of object.
-.PARAMETER SecurityDescriptor
-The security descriptor to set.
+Specify the SE object type for the path. Defaults to File.
+.PARAMETER Name
+Specify the name of the object for the security descriptor.
 .PARAMETER SecurityInformation
-Specify the security information to set.
-.INPUTS
-None
+Specify what parts of the security descriptor to format.
+.PARAMETER Summary
+Specify to only print a shortened format removing redundant information.
+.PARAMETER ShowAll
+Specify to format all security descriptor information including the SACL.
+.PARAMETER HideHeader
+Specify to not print the security descriptor header.
 .OUTPUTS
 None
+.EXAMPLE
+Format-Win32SecurityDescriptor -Name "c:\windows".
+Format the security descriptor for the c:\windows folder..
+.EXAMPLE
+Format-NtSecurityDescriptor -Name "c:\windows" -ToSddl
+Format the security descriptor of an object as SDDL.
+.EXAMPLE
+Format-NtSecurityDescriptor -Name "c:\windows" -ToSddl -SecurityInformation Dacl, Label
+Format the security descriptor of an object as SDDL with only DACL and Label.
+.EXAMPLE
+Format-NtSecurityDescriptor -Name "Machine\Software" -Type RegistryKey
+Format the security descriptor of a registry key.
 #>
-function Set-Win32SecurityDescriptor {
-    [CmdletBinding(DefaultParameterSetName="FromName")]
+function Format-Win32SecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName = "FromName")]
     Param(
-        [Parameter(Position=0, Mandatory, ParameterSetName="FromName")]
+        [Parameter(Position = 0, ParameterSetName = "FromName", Mandatory)]
         [string]$Name,
-        [Parameter(Position=0, Mandatory, ParameterSetName="FromObject")]
-        [NtApiDotNet.NtObject]$Object,
-        [Parameter(Position=0, Mandatory, ParameterSetName="FromHandle")]
-        [System.Runtime.InteropServices.SafeHandle]$Handle,
-        [Parameter(Position=1, Mandatory)]
-        [NtApiDotNet.Win32.Security.SeObjectType]$Type,
-        [Parameter(Position=2, Mandatory)]
-        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
-        [Parameter(Position=3, Mandatory)]
-        [NtApiDotNet.SecurityInformation]$SecurityInformation
+        [NtApiDotNet.Win32.Security.SeObjectType]$Type = "File",
+        [NtApiDotNet.SecurityInformation]$SecurityInformation = "AllBasic",
+        [switch]$Container,
+        [switch]$ToSddl,
+        [switch]$Summary,
+        [switch]$ShowAll,
+        [switch]$HideHeader
     )
 
-    switch($PSCmdlet.ParameterSetName) {
-        "FromName" {
-            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Name, $Type, $SecurityInformation, $SecurityDescriptor)
-        }
-        "FromObject" {
-            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Object, $Type, $SecurityInformation, $SecurityDescriptor)
-        }
-        "FromHandle" {
-            [NtApiDotNet.Win32.Security.Win32Security]::SetSecurityInfo($Handle, $Type, $SecurityInformation, $SecurityDescriptor)
-        }
-    }
+    Get-Win32SecurityDescriptor -Name $Name -SecurityInformation $SecurityInformation `
+        -Type $Type | Format-NtSecurityDescriptor -SecurityInformation $SecurityInformation `
+        -Container:$Container -ToSddl:$ToSddl -Summary:$Summary -ShowAll:$ShowAll -HideHeader:$HideHeader `
+        -DisplayPath $Name
 }

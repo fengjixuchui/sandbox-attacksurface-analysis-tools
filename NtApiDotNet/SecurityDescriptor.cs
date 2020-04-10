@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Utilities.SafeBuffers;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -454,9 +455,10 @@ namespace NtApiDotNet
                 var creator_buffer = list.AddResource(creator?.ToSafeBuffer() ?? SafeProcessHeapBuffer.Null);
                 if (object_types?.Length > 0)
                 {
+                    var guids = list.AddResource(new SafeGuidArrayBuffer(object_types));
                     return NtRtl.RtlNewSecurityObjectWithMultipleInheritance(
                         parent_buffer, creator_buffer, out SafeProcessHeapBuffer new_descriptor,
-                        BuildObjectTypeList(list, object_types), object_types.Length, is_directory, flags, token.GetHandle(),
+                        guids, guids.Count, is_directory, flags, token.GetHandle(),
                         ref generic_mapping).CreateResult(throw_on_error, () => new_descriptor);
                 }
                 else
@@ -718,6 +720,16 @@ namespace NtApiDotNet
         /// Indicates the SD has a mandatory label ACE present.
         /// </summary>
         public bool HasMandatoryLabelAce => GetMandatoryLabel() != null;
+
+        /// <summary>
+        /// Indicates the SD has a NULL DACL.
+        /// </summary>
+        public bool NullDacl => Dacl?.NullAcl ?? false;
+
+        /// <summary>
+        /// Indicates the SD has a NULL SACL.
+        /// </summary>
+        public bool NullSacl => Sacl?.NullAcl ?? false;
 
         /// <summary>
         /// Get the access rights enum type for this SD based on the NT Type property.
@@ -1106,13 +1118,66 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Converts the SD to an Auto-Inherit security descriptor.
+        /// </summary>
+        /// <param name="parent_descriptor">The parent security descriptor.</param>
+        /// <param name="object_type">Optional object type GUID.</param>
+        /// <param name="is_directory">True if a directory.</param>
+        /// <param name="generic_mapping">Generic mapping for the object.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus ConvertToAutoInherit(
+                SecurityDescriptor parent_descriptor,
+                Guid? object_type,
+                bool is_directory,
+                GenericMapping generic_mapping,
+                bool throw_on_error)
+        {
+            using (var list = new DisposableList())
+            {
+                var parent = list.AddResource(parent_descriptor?.ToSafeBuffer() ?? SafeHGlobalBuffer.Null);
+                var current = list.AddResource(ToSafeBuffer());
+                var guid = object_type.HasValue ? new OptionalGuid(object_type.Value) : null;
+                NtStatus status = NtRtl.RtlConvertToAutoInheritSecurityObject(parent, current, out SafeProcessHeapBuffer new_sd,
+                    guid, is_directory, ref generic_mapping).ToNtException(throw_on_error);
+                using (new_sd)
+                {
+                    if (!status.IsSuccess())
+                        return status;
+                    var sd = Parse(new_sd, NtType, Container, throw_on_error);
+                    if (!sd.IsSuccess)
+                        return sd.Status;
+                    MoveFrom(sd.Result, false);
+                    return NtStatus.STATUS_SUCCESS;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Converts the SD to an Auto-Inherit security descriptor.
+        /// </summary>
+        /// <param name="parent_descriptor">The parent security descriptor.</param>
+        /// <param name="object_type">Optional object type GUID.</param>
+        /// <param name="is_directory">True if a directory.</param>
+        /// <param name="generic_mapping">Generic mapping for the object.</param>
+        public void ConvertToAutoInherit(
+                SecurityDescriptor parent_descriptor,
+                Guid? object_type,
+                bool is_directory,
+                GenericMapping generic_mapping)
+        {
+            ConvertToAutoInherit(parent_descriptor, 
+                object_type, is_directory, generic_mapping, true);
+        }
+
+        /// <summary>
         /// Canonicalize the DACL if it exists.
         /// </summary>
         public void CanonicalizeDacl()
         {
             if (Dacl == null || Dacl.NullAcl)
                 return;
-            Dacl = Dacl.Canonicalize(true);
+            Dacl.Canonicalize(true);
         }
 
         /// <summary>
@@ -1122,7 +1187,7 @@ namespace NtApiDotNet
         {
             if (Sacl == null || Sacl.NullAcl)
                 return;
-            Sacl = Sacl.Canonicalize(false);
+            Sacl.Canonicalize(false);
         }
 
         /// <summary>
