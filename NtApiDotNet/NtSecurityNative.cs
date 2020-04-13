@@ -519,6 +519,15 @@ namespace NtApiDotNet
         {
         }
 
+        /// <summary>
+        /// Overridden ToString method.
+        /// </summary>
+        /// <returns>The object formatted.</returns>
+        public override string ToString()
+        {
+            return $"{ObjectType} - Level {Level}";
+        }
+
         internal ObjectTypeList ToStruct(DisposableList resources)
         {
             return new ObjectTypeList()
@@ -838,6 +847,20 @@ namespace NtApiDotNet
             ref int BufferLength,
             out AccessMask GrantedAccess,
             out NtStatus AccessStatus);
+
+        [DllImport("ntdll.dll")]
+        public static extern NtStatus NtAccessCheckByTypeResultList(
+            SafeBuffer SecurityDescriptor,
+            SafeHandle PrincipalSelfSid,
+            SafeKernelObjectHandle ClientToken,
+            AccessMask DesiredAccess,
+            [In] ObjectTypeList[] ObjectTypeList,
+            int ObjectTypeListLength,
+            ref GenericMapping GenericMapping,
+            SafePrivilegeSetBuffer RequiredPrivilegesBuffer,
+            ref int BufferLength,
+            [Out] AccessMask[] GrantedAccessList,
+            [Out] NtStatus[] AccessStatusList);
 
         [DllImport("ntdll.dll")]
         public static extern NtStatus NtPrivilegeCheck(

@@ -1503,6 +1503,8 @@ Show token owner.
 Show token primary group.
 .PARAMETER DefaultDacl
 Show token default DACL.
+.PARAMETER FullDefaultDacl
+Show the default DACL in full rather than a summary.
 .PARAMETER Basic
 Show basic token information, User, Group, Privilege and Integrity.
 .OUTPUTS
@@ -1522,6 +1524,9 @@ Print the user and groups of the token.
 .EXAMPLE
 Format-NtToken -Token $token -DefaultDacl
 Print the default DACL of the token.
+.EXAMPLE
+Format-NtToken -Token $token -FullDefaultDacl
+Print the default DACL of the token in full.
 #>
 function Format-NtToken {
     [CmdletBinding(DefaultParameterSetName="UserOnly")]
@@ -1547,6 +1552,8 @@ function Format-NtToken {
         [parameter(ParameterSetName="Complex")]
         [switch]$DeviceClaims,
         [parameter(ParameterSetName="Complex")]
+        [switch]$DeviceGroup,
+        [parameter(ParameterSetName="Complex")]
         [switch]$TrustLevel,
         [parameter(ParameterSetName="Complex")]
         [switch]$Information,
@@ -1555,7 +1562,9 @@ function Format-NtToken {
         [parameter(ParameterSetName="Complex")]
         [switch]$PrimaryGroup,
         [parameter(ParameterSetName="Complex")]
-        [switch]$DefaultDacl
+        [switch]$DefaultDacl,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$FullDefaultDacl
   )
 
   if ($All) {
@@ -1571,6 +1580,7 @@ function Format-NtToken {
     $Owner = $true
     $PrimaryGroup = $true
     $DefaultDacl = $true
+    $DeviceGroup = $true
   } elseif ($Basic) {
     $Group = $true
     $User = $true
@@ -1609,6 +1619,9 @@ function Format-NtToken {
     }
 
     if ($token.AppContainer -and $token.Capabilities.Length -gt 0) {
+      "APPCONTAINER INFORMATION"
+      "------------------------"
+      Format-ObjectTable $token.AppContainerSid | Write-Output
       "CAPABILITY SID INFORMATION"
       "----------------------"
       Format-ObjectTable $token.Capabilities | Write-Output
@@ -1665,9 +1678,19 @@ function Format-NtToken {
     Format-ObjectTable $token.DeviceClaimAttributes | Write-Output
   }
 
-  if ($DefaultDacl -and $Token.DefaultDacl -ne $null) {
+  if ($DeviceGroup -and $Token.DeviceGroups.Length -gt 0) {
+    "DEVICE GROUP SID INFORMATION"
+    "----------------------------"
+    Format-ObjectTable $token.DeviceGroups | Write-Output
+  }
+
+  if (($DefaultDacl -or $FullDefaultDacl) -and $Token.DefaultDacl -ne $null) {
+    $summary = !$FullDefaultDacl
     "DEFAULT DACL"
-    Format-NtAcl -Acl $Token.DefaultDacl -Type "Directory" -Name "------------" | Write-Output
+    Format-NtAcl -Acl $Token.DefaultDacl -Type "Directory" -Name "------------" -Summary:$summary | Write-Output
+    if ($summary) {
+        Write-Output ""
+    }
   }
 
   if ($Information) {
@@ -1717,6 +1740,8 @@ Show token owner.
 Show token primary group.
 .PARAMETER DefaultDacl
 Show token default DACL.
+.PARAMETER FullDefaultDacl
+Show the default DACL in full rather than a summary.
 .PARAMETER Basic
 Show basic token information, User, Group, Privilege and Integrity.
 .OUTPUTS
@@ -1764,7 +1789,9 @@ function Show-NtTokenEffective {
         [parameter(ParameterSetName="Complex")]
         [switch]$PrimaryGroup,
         [parameter(ParameterSetName="Complex")]
-        [switch]$DefaultDacl
+        [switch]$DefaultDacl,
+        [parameter(ParameterSetName="Complex")]
+        [switch]$FullDefaultDacl
     )
 
   Use-NtObject($token = Get-NtToken -Effective) {
@@ -1787,6 +1814,7 @@ function Show-NtTokenEffective {
             PrimaryGroup = $PrimaryGroup
             Token = $token
             DefaultDacl = $DefaultDacl
+            FullDefaultDacl = $FullDefaultDacl
         }
         Format-NtToken @args
     }
@@ -2054,6 +2082,8 @@ Specify what parts of the security descriptor to format.
 Specify to map access masks back to generic access rights for the object type.
 .PARAMETER ToSddl
 Specify to format the security descriptor as SDDL.
+.PARAMETER Container
+Specify to display the access mask from Container Access Rights.
 .PARAMETER Acl
 Specify a ACL to format.
 .PARAMETER AuditOnly
@@ -7700,19 +7730,23 @@ Specify to only print a shortened format removing redundant information.
 Specify to format all security descriptor information including the SACL.
 .PARAMETER HideHeader
 Specify to not print the security descriptor header.
+.PARAMETER ToSddl
+Specify to format the security descriptor as SDDL.
+.PARAMETER Container
+Specify to display the access mask from Container Access Rights.
 .OUTPUTS
 None
 .EXAMPLE
 Format-Win32SecurityDescriptor -Name "c:\windows".
 Format the security descriptor for the c:\windows folder..
 .EXAMPLE
-Format-NtSecurityDescriptor -Name "c:\windows" -ToSddl
+Format-Win32SecurityDescriptor -Name "c:\windows" -ToSddl
 Format the security descriptor of an object as SDDL.
 .EXAMPLE
-Format-NtSecurityDescriptor -Name "c:\windows" -ToSddl -SecurityInformation Dacl, Label
+Format-Win32SecurityDescriptor -Name "c:\windows" -ToSddl -SecurityInformation Dacl, Label
 Format the security descriptor of an object as SDDL with only DACL and Label.
 .EXAMPLE
-Format-NtSecurityDescriptor -Name "Machine\Software" -Type RegistryKey
+Format-Win32SecurityDescriptor -Name "Machine\Software" -Type RegistryKey
 Format the security descriptor of a registry key.
 #>
 function Format-Win32SecurityDescriptor {
@@ -7733,4 +7767,75 @@ function Format-Win32SecurityDescriptor {
         -Type $Type | Format-NtSecurityDescriptor -SecurityInformation $SecurityInformation `
         -Container:$Container -ToSddl:$ToSddl -Summary:$Summary -ShowAll:$ShowAll -HideHeader:$HideHeader `
         -DisplayPath $Name
+}
+
+<#
+.SYNOPSIS
+Creates a new Object Type Tree object.
+.DESCRIPTION
+This cmdlet creates a new Object Type Tree object from a GUID. You can then use Add-NtObjectTypeTree to
+add more branches to the tree.
+.PARAMETER ObjectType
+Specify the Object Type GUID.
+.PARAMETER Nodes
+Specify a list of tree objects to add a children.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Utilities.Security.ObjectTypeTree
+.EXAMPLE
+$tree = New-NtObjectTypeTree "bf967a86-0de6-11d0-a285-00aa003049e2"
+Creates a new Object Type tree with the root type as 'bf967a86-0de6-11d0-a285-00aa003049e2'.
+.EXAMPLE
+$tree = New-NtObjectTypeTree "bf967a86-0de6-11d0-a285-00aa003049e2" -Nodes $children
+Creates a new Object Type tree with the root type as 'bf967a86-0de6-11d0-a285-00aa003049e2' with a list of children.
+#>
+function New-NtObjectTypeTree {
+    [CmdletBinding(DefaultParameterSetName = "FromName")]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [guid]$ObjectType,
+        [NtApiDotNet.Utilities.Security.ObjectTypeTree[]]$Nodes
+    )
+
+    $tree = New-Object NtApiDotNet.Utilities.Security.ObjectTypeTree -ArgumentList $ObjectType
+    if ($Nodes -ne $null -and $Nodes.Count -gt 0) {
+        $tree.Nodes.AddRange($Nodes)
+    }
+    Write-Output $tree
+}
+
+<#
+.SYNOPSIS
+Creates a new Object Type Tree object.
+.DESCRIPTION
+This cmdlet creates a new Object Type Tree object from a GUID. You can then use Add-NtObjectTypeTree to
+add more branches to the tree.
+.PARAMETER ObjectType
+Specify the Object Type GUID to add.
+.PARAMETER Tree
+Specify the root tree to add to.
+.PARAMETER PassThru
+Specify to return the added tree.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Utilities.Security.ObjectTypeTree
+.EXAMPLE
+Add-NtObjectTypeTree $tree "bf967a86-0de6-11d0-a285-00aa003049e2"
+Adds a new Object Type tree with the root type as 'bf967a86-0de6-11d0-a285-00aa003049e2'.
+#>
+function Add-NtObjectTypeTree {
+    [CmdletBinding(DefaultParameterSetName = "FromName")]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [NtApiDotNet.Utilities.Security.ObjectTypeTree]$Tree,
+        [Parameter(Position = 1, Mandatory)]
+        [guid]$ObjectType,
+        [switch]$PassThru
+    )
+    $result = $Tree.AddObjectType($ObjectType)
+    if ($PassThru) {
+        Write-Output $result
+    }
 }
