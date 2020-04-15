@@ -60,7 +60,7 @@ namespace NtObjectManager.Cmdlets.Object
         public NtType Type { get; set; }
 
         /// <summary>
-        /// <para type="description">Specify an access mask to check against. If not specified will request maximum access.</para>
+        /// <para type="description">Specify an access mask to check against. Overrides GenericAccess.</para>
         /// </summary>
         [Parameter]
         public AccessMask? AccessMask { get; set; }
@@ -69,7 +69,7 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">Specify the generic access mask to check against.</para>
         /// </summary>
         [Parameter]
-        public GenericAccessRights? GenericAccess { get; set; }
+        public GenericAccessRights GenericAccess { get; set; }
 
         /// <summary>
         /// <para type="description">Specify a kernel object to get security descriptor from.</para>
@@ -113,17 +113,22 @@ namespace NtObjectManager.Cmdlets.Object
         [Parameter]
         public ObjectTypeTree ObjectType { get; set; }
 
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        public GetNtGrantedAccessCmdlet()
+        {
+            GenericAccess = GenericAccessRights.MaximumAllowed;
+        }
+
         private AccessMask GetDesiredAccess()
         {
-            if (GenericAccess.HasValue)
-            {
-                return GenericAccess;
-            }
+            NtType type = GetNtType();
             if (AccessMask.HasValue)
             {
-                return AccessMask.Value;
+                return type.MapGenericRights(AccessMask.Value);
             }
-            return GenericAccessRights.MaximumAllowed;
+            return type.MapGenericRights(GenericAccess);
         }
 
         private SecurityDescriptor GetSecurityDescriptor()
@@ -144,14 +149,18 @@ namespace NtObjectManager.Cmdlets.Object
 
         private NtType GetNtType()
         {
+            NtType type;
             if (Type != null)
             {
-                return Type;
+                type = Type;
             }
             else
             {
-                return GetSecurityDescriptor().NtType;
+                type = GetSecurityDescriptor()?.NtType;
             }
+            if (type == null)
+                throw new ArgumentException("Must specify a type.");
+            return type;
         }
 
         private NtToken GetToken()
@@ -179,9 +188,6 @@ namespace NtObjectManager.Cmdlets.Object
             using (NtToken token = GetToken())
             {
                 NtType type = GetNtType();
-                if (type == null)
-                    throw new ArgumentException("Must specify a type.");
-
                 var object_types = ObjectType?.ToArray();
                 // If we have multiple object types and pass result is true then
                 // we don't support any another output format.

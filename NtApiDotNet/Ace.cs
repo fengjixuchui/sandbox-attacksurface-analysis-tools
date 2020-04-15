@@ -40,7 +40,7 @@ namespace NtApiDotNet
         {
             get
             {
-                if (!IsCallbackAce && Type != AceType.AccessFilter)
+                if (!IsCallbackAce && !IsAccessFilterAce)
                 {
                     return false;
                 }
@@ -73,6 +73,16 @@ namespace NtApiDotNet
         /// Check if ACE is an audit ACE.
         /// </summary>
         public bool IsAuditAce => NtSecurity.IsAuditAceType(Type);
+
+        /// <summary>
+        /// Check if ACE is an access filter ACE.
+        /// </summary>
+        public bool IsAccessFilterAce => Type == AceType.AccessFilter;
+
+        /// <summary>
+        /// Check if ACE is a process trust label ACE.
+        /// </summary>
+        public bool IsProcessTrustLabelAce => Type == AceType.ProcessTrustLabel;
 
         /// <summary>
         /// Check if ACE is a critical ACE.
@@ -326,11 +336,19 @@ namespace NtApiDotNet
             }
 
             int total_length = 4 + 4 + sid_data.Length;
-
             if (ApplicationData != null)
             {
                 total_length += ApplicationData.Length;
             }
+
+            // Add a round up to 4 byte alignment.
+            int padding = 4 - (total_length % 4);
+            if (padding == 4)
+            {
+                padding = 0;
+            }
+
+            total_length += padding;
 
             ObjectAceFlags flags = ObjectAceFlags.None;
             if (IsObjectAce)
@@ -371,6 +389,10 @@ namespace NtApiDotNet
             }
             writer.Write(sid_data);
             writer.Write(ApplicationData ?? new byte[0]);
+            if (padding != 0)
+            {
+                writer.Write(new byte[padding]);
+            }
         }
 
         #endregion

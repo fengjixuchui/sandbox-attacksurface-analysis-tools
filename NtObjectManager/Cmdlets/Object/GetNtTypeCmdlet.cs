@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet;
+using NtObjectManager.Utils;
 using System;
 using System.Management.Automation;
 
@@ -43,12 +44,12 @@ namespace NtObjectManager.Cmdlets.Object
     /// </example>
     [Cmdlet(VerbsCommon.Get, "NtType")]
     [OutputType(typeof(NtType))]
-    public sealed class GetNtTypesCmdlet : Cmdlet
+    public sealed class GetNtTypeCmdlet : Cmdlet
     {
         /// <summary>
         /// <para type="description">Specify a specific NT type to retrieve.</para>
         /// </summary>
-        [Parameter(Position = 0)]
+        [Parameter(Position = 0), ArgumentCompleter(typeof(NtTypeArgumentCompleter))]
         public string[] TypeName { get; set; }
 
         /// <summary>

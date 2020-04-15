@@ -136,20 +136,20 @@ namespace NtApiDotNet
             }
         }
 
-        private Ace FindSaclAce(AceType type)
+        private Ace FindSaclAce(AceType type, bool include_inherit_only)
         {
             if (Sacl != null && !Sacl.NullAcl)
             {
-                return Sacl.FindAce(type);
+                return Sacl.FindAce(type, include_inherit_only);
             }
             return null;
         }
 
-        private IEnumerable<Ace> FindAllSaclAce(AceType type)
+        private IEnumerable<Ace> FindAllSaclAce(AceType type, bool include_inherit_only)
         {
             if (Sacl != null && !Sacl.NullAcl)
             {
-                return Sacl.FindAllAce(type).ToList().AsReadOnly();
+                return Sacl.FindAllAce(type, include_inherit_only).ToList().AsReadOnly();
             }
             return new Ace[0];
         }
@@ -610,22 +610,22 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the process trust label.
         /// </summary>
-        public Ace ProcessTrustLabel => FindSaclAce(AceType.ProcessTrustLabel);
+        public Ace ProcessTrustLabel => FindSaclAce(AceType.ProcessTrustLabel, false);
 
         /// <summary>
         /// Get list of access filters.
         /// </summary>
-        public IEnumerable<Ace> AccessFilters => FindAllSaclAce(AceType.AccessFilter);
+        public IEnumerable<Ace> AccessFilters => FindAllSaclAce(AceType.AccessFilter, false);
 
         /// <summary>
         /// Get list of resource attributes.
         /// </summary>
-        public IEnumerable<Ace> ResourceAttributes => FindAllSaclAce(AceType.ResourceAttribute);
+        public IEnumerable<Ace> ResourceAttributes => FindAllSaclAce(AceType.ResourceAttribute, false);
 
         /// <summary>
         /// Get list of scoped policy IDs.
         /// </summary>
-        public IEnumerable<Ace> ScopedPolicyIds => FindAllSaclAce(AceType.ScopedPolicyId);
+        public IEnumerable<Ace> ScopedPolicyIds => FindAllSaclAce(AceType.ScopedPolicyId, false);
 
         /// <summary>
         /// Get or set the integrity level
@@ -724,12 +724,12 @@ namespace NtApiDotNet
         /// <summary>
         /// Indicates the SD has a NULL DACL.
         /// </summary>
-        public bool NullDacl => Dacl?.NullAcl ?? false;
+        public bool DaclNull => Dacl?.NullAcl ?? false;
 
         /// <summary>
         /// Indicates the SD has a NULL SACL.
         /// </summary>
-        public bool NullSacl => Sacl?.NullAcl ?? false;
+        public bool SaclNull => Sacl?.NullAcl ?? false;
 
         /// <summary>
         /// Get the access rights enum type for this SD based on the NT Type property.
@@ -753,10 +753,20 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the mandatory label. Returns null if it doesn't exist.
         /// </summary>
-        /// <returns></returns>
+        /// <param name="include_inherit_only">True to include InheritOnly ACEs in the search.</param>
+        /// <returns>The valid mandatory ACE for this security descriptor. Or null if it doesn't exist.</returns>
+        public Ace GetMandatoryLabel(bool include_inherit_only)
+        {
+            return FindSaclAce(AceType.MandatoryLabel, include_inherit_only);
+        }
+
+        /// <summary>
+        /// Get the mandatory label. Returns null if it doesn't exist.
+        /// </summary>
+        /// <returns>The valid mandatory ACE for this security descriptor. Or null if it doesn't exist.</returns>
         public Ace GetMandatoryLabel()
         {
-            return FindSaclAce(AceType.MandatoryLabel);
+            return GetMandatoryLabel(false);
         }
 
         /// <summary>
