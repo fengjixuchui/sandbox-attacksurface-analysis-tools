@@ -81,6 +81,8 @@
     <Compile Include="SafeTokenGroupsBuffer.cs" />
     <Compile Include="SafeTokenPrivilegesBuffer.cs" />
     <Compile Include="SecurityDescriptorSid.cs" />
+    <Compile Include="Security\Policy\CentralAccessPolicy.cs" />
+    <Compile Include="Security\Policy\CentralAccessRule.cs" />
     <Compile Include="SidIdentifierAuthority.cs" />
     <Compile Include="TokenGroupsBuilder.cs" />
     <Compile Include="TokenPrivilegesBuilder.cs" />
@@ -328,8 +330,9 @@
     <Compile Include="Win32\Rpc\Transport\RpcFaultException.cs" />
     <Compile Include="Win32\RpcServer.cs" />
     <Compile Include="Win32\RunningService.cs" />
-    <Compile Include="Win32\SafeCoTaskMemHandle.cs" />
-    <Compile Include="Win32\SafeLocalAllocBuffer.cs" />
+    <Compile Include="Win32\SafeHandles\SafeCoTaskMemHandle.cs" />
+    <Compile Include="Win32\SafeHandles\SafeLocalAllocBuffer.cs" />
+    <Compile Include="Win32\SafeHandles\SafeLsaMemoryBuffer.cs" />
     <Compile Include="Win32\Security\AuthenticationImpersonationContext.cs" />
     <Compile Include="Win32\Security\ClientAuthenticationContext.cs" />
     <Compile Include="Win32\Security\CredentialHandle.cs" />
