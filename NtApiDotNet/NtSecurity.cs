@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Security.Policy;
 using NtApiDotNet.Win32;
 using NtApiDotNet.Win32.SafeHandles;
 using System;
@@ -153,28 +154,22 @@ namespace NtApiDotNet
             }
 
             string ret = null;
-            try
+            using (var key = NtKey.GetCurrentUserKey(false))
             {
-                using (NtKey key = NtKey.GetCurrentUserKey())
+                if (key.IsSuccess)
                 {
-                    ret = ReadMoniker(key, sid);
+                    ret = ReadMoniker(key.Result, sid);
                 }
             }
-            catch (NtException)
-            {
-            }
-
+            
             if (ret == null)
             {
-                try
+                using (var key = NtKey.GetMachineKey(false))
                 {
-                    using (NtKey key = NtKey.GetMachineKey())
+                    if (key.IsSuccess)
                     {
-                        ret = ReadMoniker(key, sid);
+                        ret = ReadMoniker(key.Result, sid);
                     }
-                }
-                catch (NtException)
-                {
                 }
             }
 
@@ -851,16 +846,46 @@ namespace NtApiDotNet
         /// Get a capability sid by name.
         /// </summary>
         /// <param name="capability_name">The name of the capability.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The capability SID.</returns>
+        public static NtResult<Sid> GetCapabilitySid(string capability_name, bool throw_on_error)
+        {
+            using (SafeHGlobalBuffer cap_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize),
+                cap_group_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize))
+            {
+                return NtRtl.RtlDeriveCapabilitySidsFromName(
+                    new UnicodeString(capability_name),
+                    cap_group_sid, cap_sid)
+                    .CreateResult(throw_on_error, () 
+                    => CacheSidName(new Sid(cap_sid), capability_name, SidNameSource.Capability));
+            }
+        }
+
+        /// <summary>
+        /// Get a capability sid by name.
+        /// </summary>
+        /// <param name="capability_name">The name of the capability.</param>
         /// <returns>The capability SID.</returns>
         public static Sid GetCapabilitySid(string capability_name)
         {
-            using (SafeHGlobalBuffer cap_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize), 
+            return GetCapabilitySid(capability_name, true).Result;
+        }
+
+        /// <summary>
+        /// Get a capability group sid by name.
+        /// </summary>
+        /// <param name="capability_name">The name of the capability.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The capability SID.</returns>
+        public static NtResult<Sid> GetCapabilityGroupSid(string capability_name, bool throw_on_error)
+        {
+            using (SafeHGlobalBuffer cap_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize),
                 cap_group_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize))
             {
-                NtRtl.RtlDeriveCapabilitySidsFromName(
+                return NtRtl.RtlDeriveCapabilitySidsFromName(
                     new UnicodeString(capability_name),
-                    cap_group_sid, cap_sid).ToNtException();
-                return new Sid(cap_sid);
+                    cap_group_sid, cap_sid).CreateResult(throw_on_error, 
+                    () => CacheSidName(new Sid(cap_group_sid), capability_name, SidNameSource.Capability));
             }
         }
 
@@ -871,14 +896,7 @@ namespace NtApiDotNet
         /// <returns>The capability SID.</returns>
         public static Sid GetCapabilityGroupSid(string capability_name)
         {
-            using (SafeHGlobalBuffer cap_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize),
-                cap_group_sid = new SafeHGlobalBuffer(Sid.MaximumSidSize))
-            {
-                NtRtl.RtlDeriveCapabilitySidsFromName(
-                    new UnicodeString(capability_name),
-                    cap_group_sid, cap_sid).ToNtException();
-                return new Sid(cap_group_sid);
-            }
+            return GetCapabilityGroupSid(capability_name, true).Result;
         }
 
         /// <summary>
@@ -921,6 +939,16 @@ namespace NtApiDotNet
             }
 
             return new Sid(sid.Authority, sid.SubAuthorities.Take(8).ToArray());
+        }
+
+        /// <summary>
+        /// Checks if a SID is a Scoped Policy ID SID.
+        /// </summary>
+        /// <param name="sid">The SID to check.</param>
+        /// <returns>True if a Scoped Policy ID SID.</returns>
+        public static bool IsScopedPolicySid(Sid sid)
+        {
+            return sid.Authority.IsAuthority(SecurityAuthority.ScopedPolicyId);
         }
 
         /// <summary>
@@ -978,17 +1006,50 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="token">The Token to check against.</param>
         /// <param name="condition_sddl">The conditional expression in SDDL format.</param>
+        /// <param name="resource_attributes">Specify resource attributes to add to the check.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>True if the conditional expression was a success.</returns>
-        public static NtResult<bool> EvaluateConditionAce(NtToken token, string condition_sddl, bool throw_on_error)
+        public static NtResult<bool> EvaluateConditionAce(NtToken token, string condition_sddl, IEnumerable<ClaimSecurityAttribute> resource_attributes, bool throw_on_error)
         {
             var sd = SecurityDescriptor.Parse($"O:S-1-0-0G:S-1-0-0D:(XA;;1;;;{token.User.Sid};({condition_sddl}))S:(ML;;NW;;;S-1-16-0)", throw_on_error);
             if (!sd.IsSuccess)
             {
                 return sd.Cast<bool>();
             }
+
+            if (resource_attributes?.Any() ?? false)
+            {
+                sd.Result.Sacl.AddRange(resource_attributes.Select(r => r.ToAce()));
+            }
+
             return EvaluateConditionAce(token, sd.Result, throw_on_error);
         }
+
+        /// <summary>
+        /// Evaluate a condition ACE expression.
+        /// </summary>
+        /// <param name="token">The Token to check against.</param>
+        /// <param name="condition_sddl">The conditional expression in SDDL format.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>True if the conditional expression was a success.</returns>
+        public static NtResult<bool> EvaluateConditionAce(NtToken token, string condition_sddl, bool throw_on_error)
+        {
+            return EvaluateConditionAce(token, condition_sddl, new ClaimSecurityAttribute[0], throw_on_error);
+        }
+
+        /// <summary>
+        /// Evaluate a condition ACE expression.
+        /// </summary>
+        /// <param name="token">The Token to check against.</param>
+        /// <param name="condition_sddl">The conditional expression in SDDL format.</param>
+        /// <param name="resource_attributes">Specify resource attributes to add to the check.</param>
+        /// <returns>True if the conditional expression was a success.</returns>
+        public static bool EvaluateConditionAce(NtToken token, string condition_sddl, 
+            IEnumerable<ClaimSecurityAttribute> resource_attributes)
+        {
+            return EvaluateConditionAce(token, condition_sddl, resource_attributes, true).Result;
+        }
+
 
         /// <summary>
         /// Evaluate a condition ACE expression.
@@ -1006,9 +1067,11 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="token">The Token to check against.</param>
         /// <param name="condition_data">The conditional expression in binary format.</param>
+        /// <param name="resource_attributes">Specify resource attributes to add to the check.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>True if the conditional expression was a success.</returns>
-        public static NtResult<bool> EvaluateConditionAce(NtToken token, byte[] condition_data, bool throw_on_error)
+        public static NtResult<bool> EvaluateConditionAce(NtToken token, byte[] condition_data, 
+            IEnumerable<ClaimSecurityAttribute> resource_attributes, bool throw_on_error)
         {
             SecurityDescriptor sd = new SecurityDescriptor
             {
@@ -1019,10 +1082,40 @@ namespace NtApiDotNet
                     NullAcl = false
                 }
             };
-            sd.Dacl.Add(new Ace(AceType.AllowedCallback, 
-                AceFlags.None, 1, token.User.Sid) { ApplicationData = condition_data });
+            sd.Dacl.Add(new Ace(AceType.AllowedCallback,
+                AceFlags.None, 1, token.User.Sid)
+            { ApplicationData = condition_data });
             sd.AddMandatoryLabel(TokenIntegrityLevel.Untrusted);
+            if (resource_attributes?.Any() ?? false)
+            {
+                sd.Sacl.AddRange(resource_attributes
+                    .Select(r => r.ToAce()));
+            }
             return EvaluateConditionAce(token, sd, throw_on_error);
+        }
+
+        /// <summary>
+        /// Evaluate a condition ACE expression.
+        /// </summary>
+        /// <param name="token">The Token to check against.</param>
+        /// <param name="condition_data">The conditional expression in binary format.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>True if the conditional expression was a success.</returns>
+        public static NtResult<bool> EvaluateConditionAce(NtToken token, byte[] condition_data, bool throw_on_error)
+        {
+            return EvaluateConditionAce(token, condition_data, new ClaimSecurityAttribute[0], throw_on_error);
+        }
+
+        /// <summary>
+        /// Evaluate a condition ACE expression.
+        /// </summary>
+        /// <param name="token">The Token to check against.</param>
+        /// <param name="condition_data">The conditional expression in binary format.</param>
+        /// <param name="resource_attributes">Specify resource attributes to add to the check.</param>
+        /// <returns>True if the conditional expression was a success.</returns>
+        public static bool EvaluateConditionAce(NtToken token, byte[] condition_data, IEnumerable<ClaimSecurityAttribute> resource_attributes)
+        {
+            return EvaluateConditionAce(token, condition_data, resource_attributes, true).Result;
         }
 
         /// <summary>
@@ -1340,10 +1433,47 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get whether an ACE type is an allowed ACE type.
+        /// </summary>
+        /// <param name="type">The ACE type.</param>
+        /// <returns>True if an allowed ACE type.</returns>
+        public static bool IsAllowedAceType(AceType type)
+        {
+            switch (type)
+            {
+                case AceType.Allowed:
+                case AceType.AllowedCallback:
+                case AceType.AllowedCallbackObject:
+                case AceType.AllowedCompound:
+                case AceType.AllowedObject:
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// Get whether an ACE type is a denied ACE type.
+        /// </summary>
+        /// <param name="type">The ACE type.</param>
+        /// <returns>True if a denied ACE type.</returns>
+        public static bool IsDeniedAceType(AceType type)
+        {
+            switch (type)
+            {
+                case AceType.Denied:
+                case AceType.DeniedCallback:
+                case AceType.DeniedCallbackObject:
+                case AceType.DeniedObject:
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// Get whether an ACE type is an object ACE type.
         /// </summary>
         /// <param name="type">The ACE type.</param>
-        /// <returns>True if a object ACE type.</returns>
+        /// <returns>True if an object ACE type.</returns>
         public static bool IsObjectAceType(AceType type)
         {
             switch (type)
@@ -1543,6 +1673,14 @@ namespace NtApiDotNet
                                                                     };
         #endregion
 
+        #region Internal Members
+        internal static Sid CacheSidName(Sid sid, string name, SidNameSource source)
+        {
+            _cached_names.TryAdd(sid, new SidName(name, source));
+            return sid;
+        }
+        #endregion
+
         #region Private Members
 
         private static Dictionary<Sid, string> _known_capabilities = null;
@@ -1696,8 +1834,22 @@ namespace NtApiDotNet
             {
                 return new SidName($@"Font Driver Host\UMFD-{sid.SubAuthorities.Last()}", SidNameSource.WellKnown);
             }
+            else if (IsScopedPolicySid(sid))
+            {
+                var caps = CentralAccessPolicy.ParseFromRegistry(false);
+                if (caps.IsSuccess)
+                {
+                    foreach (var cap in caps.Result)
+                    {
+                        if (cap.CapId == sid)
+                        {
+                            return new SidName($@"CAP\{cap.Name}", SidNameSource.ScopedPolicyId);
+                        }
+                    }
+                }
+            }
 
-            // If lookup was denied then try and requery next time.
+            // If lookup was denied then try and request next time.
             return new SidName(sid.ToString(), SidNameSource.Sddl, lookup_denied);
         }
 

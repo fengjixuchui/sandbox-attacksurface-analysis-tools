@@ -251,6 +251,8 @@ function Get-NtTokenGroup {
         [switch]$Restricted,
         [Parameter(Mandatory, ParameterSetName = "Capabilities")]
         [switch]$Capabilities,
+        [Parameter(Mandatory, ParameterSetName = "Device")]
+        [switch]$Device,
         [NtApiDotNet.GroupAttributes]$Attributes = 0
     )
     if ($null -eq $Token) {
@@ -266,6 +268,9 @@ function Get-NtTokenGroup {
         }
         elseif ($Capabilities) {
             $Token.Capabilities
+        }
+        elseif ($Device) {
+            $Token.DeviceGroups
         }
         else {
             $Token.Groups
@@ -652,6 +657,43 @@ function Set-NtTokenIntegrityLevel {
 
     Use-NtObject($Token) {
         $Token.SetIntegrityLevelRaw($il_raw) | Out-Null
+    }
+}
+
+<#
+.SYNOPSIS
+Get the integrity level of a token.
+.DESCRIPTION
+This cmdlet will gets the integrity level of a token.
+.PARAMETER Token
+Optional token object to use to get integrity level. Must be accesible for Query right.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.TokenIntegrityLevel
+.EXAMPLE
+Get-NtTokenIntegrityLevel
+Get the current token's integrity level.
+.EXAMPLE
+Get-NtTokenIntegrityLevel -Token $Token
+Get a specific token's integrity level.
+#>
+function Get-NtTokenIntegrityLevel {
+    [CmdletBinding(DefaultParameterSetName = "FromIL")]
+    Param(
+        [Parameter(Position = 0)]
+        [NtApiDotNet.NtToken]$Token
+    )
+
+    if ($null -eq $Token) {
+        $Token = Get-NtToken -Effective
+    }
+    else {
+        $Token = $Token.Duplicate()
+    }
+
+    Use-NtObject($Token) {
+        $Token.IntegrityLevel | Write-Output
     }
 }
 
@@ -2340,12 +2382,10 @@ function Format-NtSecurityDescriptor {
                 }
             }
             if (($si -band "Scope") -ne 0) {
-                $scopes = $sd.ScopedPolicyIDs
-                if ($scopes.Count -gt 0) {
-                    Write-Output "<Scoped Policy IDs>"
-                    foreach ($scope in $scopes) {
-                        Format-NtAce -Ace $scope -Type $t -Summary:$Summary -Container:$Container
-                    }
+                $scope = $sd.ScopedPolicyID
+                if ($null -ne $scope) {
+                    Write-Output "<Scoped Policy ID>"
+                    Format-NtAce -Ace $scope -Type $t -Summary:$Summary -Container:$Container
                 }
             }
         }
@@ -3009,14 +3049,7 @@ function Set-NtSecurityDescriptor {
                 $Object.SetSecurityDescriptor($SecurityDescriptor, $SecurityInformation)
             }
             "ToPath" {
-                $access = [NtApiDotNet.GenericAccessRights]::WriteDac
-                if (($SecurityInformation -band "Owner, Label") -ne 0) {
-                    $access = $access -bor "WriteOwner"
-                }
-                if (($SecurityInformation -band "Sacl") -ne 0) {
-                    $access = $access -bor "AccessSystemSecurity"
-                }
-
+                $access = Get-NtAccessMask -SecurityInformation $SecurityInformation -ToGenericAccess
                 Use-NtObject($obj = Get-NtObject -Path $Path -Root $Root -TypeName $TypeName -Access $access) {
                     $obj.SetSecurityDescriptor($SecurityDescriptor, $SecurityInformation)
                 }
@@ -8118,6 +8151,8 @@ Gets the Central Access Policy from the Registry.
 This cmdlet gets the Central Access Policy from the Registry.
 .PARAMETER FromLsa
 Parse the Central Access Policy from LSA.
+.PARAMETER CapId
+Specify the CAPID SID to select.
 .INPUTS
 None
 .OUTPUTS
@@ -8131,13 +8166,20 @@ Gets the Central Access Policy from the LSA.
 #>
 function Get-CentralAccessPolicy {
     Param(
+        [Parameter(Position=0)]
+        [NtApiDotNet.Sid]$CapId,
         [switch]$FromLsa
     )
-    if ($FromLsa) {
-        [NtApiDotNet.Security.Policy.CentralAccessPolicy]::ParseFromLsa() | Write-Output
+    $policy = if ($FromLsa) {
+        [NtApiDotNet.Security.Policy.CentralAccessPolicy]::ParseFromLsa()
     }
     else {
-        [NtApiDotNet.Security.Policy.CentralAccessPolicy]::ParseFromRegistry() | Write-Output
+        [NtApiDotNet.Security.Policy.CentralAccessPolicy]::ParseFromRegistry()
+    }
+    if ($null -eq $CapId) {
+        $policy | Write-Output
+    } else {
+        $policy | Where-Object CapId -eq $CapId | Select-Object -First 1 | Write-Output
     }
 }
 

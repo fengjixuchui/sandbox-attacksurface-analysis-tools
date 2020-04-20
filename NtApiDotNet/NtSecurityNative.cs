@@ -300,7 +300,8 @@ namespace NtApiDotNet
         Capability,
         Package,
         ProcessTrust,
-        WellKnown
+        WellKnown,
+        ScopedPolicyId
     }
 
     /// <summary>
@@ -312,6 +313,7 @@ namespace NtApiDotNet
         /// The name of the SID.
         /// </summary>
         public string Name { get; }
+
         /// <summary>
         /// The source of name.
         /// </summary>
