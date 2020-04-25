@@ -6491,7 +6491,7 @@ The name of the authentication package.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.AuthenticationPackage
+NtApiDotNet.Win32.Security.Authentication.AuthenticationPackage
 .EXAMPLE
 Get-AuthPackage
 Get all authentication packages.
@@ -6508,10 +6508,10 @@ function Get-AuthPackage {
 
     switch ($PSCmdlet.ParameterSetName) {
         "All" {
-            [NtApiDotNet.Win32.Security.AuthenticationPackage]::Get() | Write-Output
+            [NtApiDotNet.Win32.Security.Authentication.AuthenticationPackage]::Get() | Write-Output
         }
         "FromName" {
-            [NtApiDotNet.Win32.Security.AuthenticationPackage]::FromName($Name) | Write-Output
+            [NtApiDotNet.Win32.Security.Authentication.AuthenticationPackage]::FromName($Name) | Write-Output
         }
     }
 }
@@ -6530,7 +6530,7 @@ The password to use.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.UserCredentials
+NtApiDotNet.Win32.Security.Authentication.UserCredentials
 .EXAMPLE
 $user_creds = Read-UserCredentials
 Read user credentials from the shell.
@@ -6546,7 +6546,7 @@ function Read-AuthCredential {
         [string]$Password
     )
 
-    $creds = [NtApiDotNet.Win32.Security.UserCredentials]::new()
+    $creds = [NtApiDotNet.Win32.Security.Authentication.UserCredentials]::new()
     if ($UserName -eq "") {
         $UserName = Read-Host -Prompt "UserName"
     }
@@ -6584,7 +6584,7 @@ Specify to read the credentials from the console.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.CredentialHandle
+NtApiDotNet.Win32.Security.Authentication.CredentialHandle
 .EXAMPLE
 $h = Get-AuthCredentialHandle "NTLM" Both
 Get a credential handle for the NTLM package for both directions.
@@ -6595,10 +6595,10 @@ function Get-AuthCredentialHandle {
         [Parameter(Position = 0, Mandatory)]
         [string]$Package,
         [Parameter(Position = 1, Mandatory)]
-        [NtApiDotNet.Win32.Security.SecPkgCredFlags]$UseFlag,
+        [NtApiDotNet.Win32.Security.Authentication.SecPkgCredFlags]$UseFlag,
         [Nullable[NtApiDotNet.Luid]]$AuthId,
         [string]$Principal,
-        [NtApiDotNet.Win32.Security.AuthenticationCredentials]$Credentials,
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationCredentials]$Credentials,
         [switch]$ReadCredentials
     )
 
@@ -6606,7 +6606,7 @@ function Get-AuthCredentialHandle {
         $Credentials = Read-AuthCredential
     }
 
-    [NtApiDotNet.Win32.Security.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credentials) | Write-Output
+    [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credentials) | Write-Output
 }
 
 <#
@@ -6625,19 +6625,19 @@ Data representation format.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.ClientAuthenticationContext
+NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext
 #>
-function Get-AuthClient {
+function Get-AuthClientContext {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
-        [NtApiDotNet.Win32.Security.CredentialHandle]$CredHandle,
-        [NtApiDotNet.Win32.Security.InitializeContextReqFlags]$RequestAttributes = 0,
+        [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]$CredHandle,
+        [NtApiDotNet.Win32.Security.Authentication.InitializeContextReqFlags]$RequestAttributes = 0,
         [string]$Target,
-        [NtApiDotNet.Win32.Security.SecDataRep]$DataRepresentation = "Native"
+        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native"
     )
 
-    [NtApiDotNet.Win32.Security.ClientAuthenticationContext]::new($CredHandle, `
+    [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]::new($CredHandle, `
             $RequestAttributes, $Target, $DataRepresentation) | Write-Output
 }
 
@@ -6650,8 +6650,6 @@ This cmdlet creates a new authentication server.
 The credential handle to use.
 .PARAMETER RequestAttributes
 Request attributes.
-.PARAMETER Token
-Initial client token.
 .PARAMETER DataRepresentation
 Data representation format.
 .INPUTS
@@ -6659,19 +6657,17 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.ServerAuthenticationContext
 #>
-function Get-AuthServer {
+function Get-AuthServerContext {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
-        [NtApiDotNet.Win32.Security.CredentialHandle]$CredHandle,
-        [Parameter(Position = 1, Mandatory)]
-        [byte[]]$Token,
-        [NtApiDotNet.Win32.Security.AcceptContextReqFlags]$RequestAttributes = 0,
-        [NtApiDotNet.Win32.Security.SecDataRep]$DataRepresentation = "Native"
+        [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]$CredHandle,
+        [NtApiDotNet.Win32.Security.Authentication.AcceptContextReqFlags]$RequestAttributes = 0,
+        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native"
     )
 
-    [NtApiDotNet.Win32.Security.ServerAuthenticationContext]::new($CredHandle, `
-            $Token, $RequestAttributes, $DataRepresentation) | Write-Output
+    [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]::new($CredHandle, `
+            $RequestAttributes, $DataRepresentation) | Write-Output
 }
 
 <#
@@ -6688,17 +6684,21 @@ None
 .OUTPUTS
 bool
 #>
-function Update-AuthClient {
-    [CmdletBinding()]
+function Update-AuthClientContext {
+    [CmdletBinding(DefaultParameterSetName="FromToken")]
     Param(
         [Parameter(Position = 0, Mandatory)]
-        [NtApiDotNet.Win32.Security.ClientAuthenticationContext]$Client,
-        [Parameter(Position = 1, Mandatory)]
-        [byte[]]$Token
+        [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]$Client,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromToken")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromContext")]
+        [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]$Server
     )
 
+    if ($PSCmdlet.ParameterSetName -eq "FromContext") {
+        $Token = $Server.Token
+    }
     $Client.Continue($Token)
-    $Client.Done | Write-Output
 }
 
 <#
@@ -6708,6 +6708,8 @@ Update an authentication server.
 This cmdlet updates an authentication server. Returns true if the authentication is complete.
 .PARAMETER Server
 The authentication server.
+.PARAMETER Client
+The authentication client to extract token from.
 .PARAMETER Token
 The next authentication token.
 .INPUTS
@@ -6715,17 +6717,22 @@ None
 .OUTPUTS
 bool
 #>
-function Update-AuthServer {
-    [CmdletBinding()]
+function Update-AuthServerContext {
+    [CmdletBinding(DefaultParameterSetName="FromToken")]
     Param(
         [Parameter(Position = 0, Mandatory)]
-        [NtApiDotNet.Win32.Security.ServerAuthenticationContext]$Server,
-        [Parameter(Position = 1, Mandatory)]
-        [byte[]]$Token
+        [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]$Server,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromContext")]
+        [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]$Client,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromToken")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token
     )
 
+    if ($PSCmdlet.ParameterSetName -eq "FromContext") {
+        $Token = $Client.Token
+    }
+
     $Server.Continue($Token)
-    $Server.Done | Write-Output
 }
 
 <#
@@ -6744,10 +6751,107 @@ function Get-AuthAccessToken {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
-        [NtApiDotNet.Win32.Security.ServerAuthenticationContext]$Server
+        [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]$Server
     )
 
     $Server.GetAccessToken() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets an authentication token.
+.DESCRIPTION
+This cmdlet gets an authentication token from a context or from 
+an array of bytes.
+.PARAMETER Context
+The authentication context to extract token from.
+.PARAMETER Token
+The array of bytes for the new token.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
+#>
+function Get-AuthToken {
+    [CmdletBinding(DefaultParameterSetName="FromContext")]
+    Param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromBytes")]
+        [byte[]]$Token,
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromContext")]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context
+    )
+
+    PROCESS {
+        if ($PSCmdlet.ParameterSetName -eq "FromContext") {
+            $Context.Token | Write-Output
+        } else {
+            [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]::Parse($Token)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Tests an authentication context to determine if it's complete.
+.DESCRIPTION
+This cmdlet tests and authentication context to determine if it's complete.
+.PARAMETER Context
+The authentication context to test.
+.INPUTS
+None
+.OUTPUTS
+bool
+#>
+function Test-AuthContext {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context
+    )
+
+    return $Context.Done
+}
+
+<#
+.SYNOPSIS
+Format an authentication token.
+.DESCRIPTION
+This cmdlet formats an authentication token. Defaults to
+a hex dump if format unknown.
+.PARAMETER Context
+The authentication context to extract token from.
+.PARAMETER Token
+The authentication token to format.
+.PARAMETER AsBytes
+Always format as a hex dump.
+.INPUTS
+None
+.OUTPUTS
+string
+#>
+function Format-AuthToken {
+    [CmdletBinding(DefaultParameterSetName="FromContext")]
+    Param(
+        [Parameter(Position = 0, Mandatory, ValueFromPipeline, ParameterSetName="FromToken")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromContext")]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [switch]$AsBytes
+    )
+
+    PROCESS {
+        if ($PSCmdlet.ParameterSetName -eq "FromContext") {
+            $Token = $Context.Token
+        }
+        if ($AsBytes) {
+            $ba = $Token.ToArray()
+            if ($ba.Length -gt 0) {
+                Out-HexDump -Bytes $ba -ShowAll
+            }
+        } else {
+            $Token.Format() | Write-Output
+        }
+    }
 }
 
 <#
@@ -7942,7 +8046,7 @@ function Format-Win32SecurityDescriptor {
     Param(
         [Parameter(Position = 0, ParameterSetName = "FromName", Mandatory)]
         [string]$Name,
-        [NtApiDotNet.Win32.Security.SeObjectType]$Type = "File",
+        [NtApiDotNet.Win32.Security.Authorization.SeObjectType]$Type = "File",
         [NtApiDotNet.SecurityInformation]$SecurityInformation = "AllBasic",
         [switch]$Container,
         [switch]$ToSddl,
@@ -8228,6 +8332,341 @@ function Test-NtObject {
             catch {
                 return $false
             }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the advanced audit policy information.
+.DESCRIPTION
+This cmdlet gets advanced audit policy information.
+.PARAMETER Category
+Specify the category type.
+.PARAMETER CategoryGuid
+Specify the category type GUID.
+.PARAMETER ExpandCategory
+Specify to expand the subcategories from the category.
+.PARAMETER User
+Specify the user for a per-user Audit Policies.
+.PARAMETER AllUser
+Specify to get all users for all per-user Audit Policies.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Audit.AuditCategory
+NtApiDotNet.Win32.Security.Audit.AuditSubCategory
+NtApiDotNet.Win32.Security.Audit.AuditPerUserCategory
+NtApiDotNet.Win32.Security.Audit.AuditPerUserSubCategory
+.EXAMPLE
+Get-NtAuditPolicy
+Get all audit policy categories.
+.EXAMPLE
+Get-NtAuditPolicy -Category ObjectAccess
+Get the ObjectAccess audit policy category
+.EXAMPLE
+Get-NtAuditPolicy -Category ObjectAccess -Expand
+Get the ObjectAccess audit policy category and return the SubCategory policies.
+.EXAMPLE
+Get-NtAuditPolicy -User $sid
+Get all per-user audit policy categories for the user represented by a SID.
+.EXAMPLE
+Get-NtAuditPolicy -AllUser
+Get all per-user audit policy categories for all users.
+#>
+function Get-NtAuditPolicy {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromCategory")]
+        [NtApiDotNet.Win32.Security.Audit.AuditPolicyEventType[]]$Category,
+        [parameter(Mandatory, ParameterSetName = "FromCategoryGuid")]
+        [Guid[]]$CategoryGuid,
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryName")]
+        [string[]]$SubCategoryName,
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryGuid")]
+        [guid[]]$SubCategoryGuid,
+        [parameter(ParameterSetName = "All")]
+        [parameter(ParameterSetName = "FromCategory")]
+        [parameter(ParameterSetName = "FromCategoryGuid")]
+        [switch]$ExpandCategory,
+        [parameter(ParameterSetName = "All")]
+        [switch]$AllUser,
+        [NtApiDotNet.Sid]$User
+    )
+
+    $cats = switch ($PSCmdlet.ParameterSetName) {
+        "All" {
+            if ($null -ne $User) {
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetPerUserCategories($User)
+            }
+            elseif ($AllUser) {
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetPerUserCategories()
+            }
+            else {
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetCategories()
+            }
+        }
+        "FromCategory" {
+            $ret = @()
+            foreach($cat in $Category) {
+                if ($null -ne $User) {
+                    $ret += [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetPerUserCategory($User, $cat)
+                } else {
+                    $ret += [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetCategory($cat)
+                }
+            }
+            $ret
+        }
+        "FromCategoryGuid" {
+            $ret = @()
+            foreach($cat in $CategoryGuid) {
+                if ($null -ne $User) {
+                    $ret += [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetPerUserCategory($User, $cat)
+                } else {
+                    $ret += [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::GetCategory($cat)
+                }
+            }
+            $ret
+        }
+        "FromSubCategoryName" {
+            Get-NtAuditPolicy -ExpandCategory -User $User | Where-Object Name -in $SubCategoryName
+        }
+        "FromSubCategoryGuid" {
+            Get-NtAuditPolicy -ExpandCategory -User $User | Where-Object Id -in $SubCategoryGuid
+        }
+    }
+    if ($ExpandCategory) {
+        $cats | Select-Object -ExpandProperty SubCategories | Write-Output
+    } else {
+        $cats | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Set the advanced audit policy information.
+.DESCRIPTION
+This cmdlet sets advanced audit policy information.
+.PARAMETER Category
+Specify the category type.
+.PARAMETER CategoryGuid
+Specify the category type GUID.
+.PARAMETER Policy
+Specify the policy to set.
+.PARAMETER PassThru
+Specify to pass through the category objects.
+.PARAMETER User
+Specify the SID of the user to set a per-user audit policy.
+.PARAMETER UserPolicy
+Specify the policy to set for a per-user policy.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Audit.AuditSubCategory
+NtApiDotNet.Win32.Security.Audit.AuditPerUserSubCategory
+.EXAMPLE
+Set-NtAuditPolicy -Category 
+Get all audit policy categories.
+.EXAMPLE
+Get-NtAuditPolicy -Category ObjectAccess
+Get the ObjectAccess audit policy category
+.EXAMPLE
+Get-NtAuditPolicy -Category ObjectAccess -Expand
+Get the ObjectAccess audit policy category and return the SubCategory policies.
+#>
+function Set-NtAuditPolicy {
+    [CmdletBinding(DefaultParameterSetName = "FromCategoryType", SupportsShouldProcess)]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromCategoryType")]
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromCategoryTypeUser")]
+        [NtApiDotNet.Win32.Security.Audit.AuditPolicyEventType[]]$Category,
+        [parameter(Mandatory, ParameterSetName = "FromCategoryGuid")]
+        [parameter(Mandatory, ParameterSetName = "FromCategoryGuidUser")]
+        [Guid[]]$CategoryGuid,
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryName")]
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryNameUser")]
+        [string[]]$SubCategoryName,
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryGuid")]
+        [parameter(Mandatory, ParameterSetName = "FromSubCategoryUser")]
+        [guid[]]$SubCategoryGuid,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromCategoryType")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromCategoryGuid")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSubCategoryName")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSubCategoryGuid")]
+        [NtApiDotNet.Win32.Security.Audit.AuditPolicyFlags]$Policy,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromCategoryTypeUser")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromCategoryGuidUser")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSubCategoryNameUser")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSubCategoryGuidUser")]
+        [NtApiDotNet.Win32.Security.Audit.AuditPerUserPolicyFlags]$UserPolicy,
+        [parameter(Mandatory, ParameterSetName="FromCategoryTypeUser")]
+        [parameter(Mandatory, ParameterSetName="FromCategoryGuidUser")]
+        [parameter(Mandatory, ParameterSetName="FromSubCategoryNameUser")]
+        [parameter(Mandatory, ParameterSetName="FromSubCategoryGuidUser")]
+        [NtApiDotNet.Sid]$User,
+        [switch]$PassThru
+    )
+    if (!(Test-NtTokenPrivilege SeSecurityPrivilege)) {
+        Write-Warning "SeSecurityPrivilege not enabled. Might not change Audit settings."
+    }
+
+    $cats = switch -Wildcard ($PSCmdlet.ParameterSetName) {
+        "FromCategoryType*" {
+            Get-NtAuditPolicy -Category $Category -ExpandCategory -User $User
+        }
+        "FromCategoryGuid*" {
+            Get-NtAuditPolicy -CategoryGuid $CategoryGuid -ExpandCategory -User $User
+        }
+        "FromSubCategoryName*" {
+            Get-NtAuditPolicy -SubCategoryName $SubCategoryName -User $User
+        }
+        "FromSubCategoryGuid*" {
+            Get-NtAuditPolicy -SubCategoryGuid $SubCategoryGuid -User $User
+        }
+    }
+
+    foreach($cat in $cats) {
+        $policy_value = if ($null -eq $User) {
+            $Policy
+        }
+        else {
+            $UserPolicy
+        }
+        if ($PSCmdlet.ShouldProcess($cat.Name, "Set $policy_value")) {
+            $cat.SetPolicy($policy_value)
+            if ($PassThru) {
+                Write-Output $cat
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get advanced audit policy security descriptor information.
+.DESCRIPTION
+This cmdlet gets advanced audit policy security descriptor information.
+.PARAMETER GlobalSacl
+Specify the type of object to query the global SACL.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptor
+.EXAMPLE
+Get-NtAuditSecurity
+Get the Audit security descriptor.
+.EXAMPLE
+Get-NtAuditSecurity -GlobalSacl File
+Get the File global SACL.
+#>
+function Get-NtAuditSecurity {
+    [CmdletBinding(DefaultParameterSetName = "FromSecurityDescriptor")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromGlobalSacl")]
+        [NtApiDotNet.Win32.Security.Audit.AuditGlobalSaclType]$GlobalSacl
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromSecurityDescriptor" {
+            [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::QuerySecurity() | Write-Output
+        }
+        "FromGlobalSacl" {
+            [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::QueryGlobalSacl($GlobalSacl) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Set advanced audit policy security descriptor information.
+.DESCRIPTION
+This cmdlet sets advanced audit policy security descriptor information.
+.PARAMETER GlobalSacl
+Specify the type of object to set the global SACL.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtAuditSecurity -SecurityDescriptor $sd
+Set the Audit security descriptor.
+.EXAMPLE
+Set-NtAuditSecurity -SecurityDescriptor $sd -GlobalSacl File
+Set the File global SACL.
+#>
+function Set-NtAuditSecurity {
+    [CmdletBinding(DefaultParameterSetName = "FromSecurityDescriptor", SupportsShouldProcess)]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [parameter(Mandatory, Position = 1, ParameterSetName = "FromGlobalSacl")]
+        [NtApiDotNet.Win32.Security.Audit.AuditGlobalSaclType]$GlobalSacl
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromSecurityDescriptor" {
+            if ($PSCmdlet.ShouldProcess("$SecurityDescriptor", "Set Audit SD")) {
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::SetSecurity($SecurityDescriptor)
+            }
+        }
+        "FromGlobalSacl" {
+            if ($PSCmdlet.ShouldProcess("$SecurityDescriptor", "Set $GlobalSacl SACL")) {
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::SetGlobalSacl($GlobalSacl, $SecurityDescriptor)
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get logon sessions for current system.
+.DESCRIPTION
+This cmdlet gets the active logon sessions for the current system.
+.PARAMETER LogonId
+Specify the Logon ID for the session.
+.PARAMETER Token
+Specify a Token to get the session for.
+.PARAMETER IdOnly
+Specify to only get the Logon ID rather than full details.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.LogonSession
+NtApiDotNet.Luid
+.EXAMPLE
+Get-NtLogonSession
+Get all accessible logon sessions.
+.EXAMPLE
+Get-NtLogonSession -LogonId 123456
+Get logon session with ID 123456
+.EXAMPLE
+Get-NtLogonSession -Token $token
+Get logon session from Token Authentication ID.
+.EXAMPLE
+Get-NtLogonSession -IdOnly
+Get all logon sesion IDs only.
+#>
+function Get-NtLogonSession {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    param (
+        [parameter(Mandatory, ParameterSetName = "FromLogonId")]
+        [NtApiDotNet.Luid]$LogonId,
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromToken")]
+        [NtApiDotNet.NtToken]$Token,
+        [parameter(ParameterSetName = "All")]
+        [switch]$IdOnly
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            if ($IdOnly) {
+                [NtApiDotNet.Win32.LogonUtils]::GetLogonSessionIds() | Write-Output
+            } else {
+                [NtApiDotNet.Win32.LogonUtils]::GetLogonSessions() | Write-Output
+            }
+        }
+        "FromLogonId" {
+            [NtApiDotNet.Win32.LogonUtils]::GetLogonSession($LogonId) | Write-Output
+        }
+        "FromToken" {
+            [NtApiDotNet.Win32.LogonUtils]::GetLogonSession($Token.AuthenticationId) | Write-Output
         }
     }
 }

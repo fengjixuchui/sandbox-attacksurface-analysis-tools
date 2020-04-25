@@ -2059,7 +2059,7 @@
     <View>
       <Name>AuthenticationPackageTable</Name>
       <ViewSelectedBy>
-        <TypeName>NtApiDotNet.Win32.Security.AuthenticationPackage</TypeName>
+        <TypeName>NtApiDotNet.Win32.Security.Authentication.AuthenticationPackage</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
@@ -2357,7 +2357,7 @@
     <View>
       <Name>SecurityDescriptorInheritanceSourceTable</Name>
       <ViewSelectedBy>
-        <TypeName>NtApiDotNet.Win32.Security.SecurityDescriptorInheritanceSource</TypeName>
+        <TypeName>NtApiDotNet.Win32.Security.Authorization.SecurityDescriptorInheritanceSource</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
@@ -2459,6 +2459,43 @@
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>$_.Nodes.Count</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>AuthZAccessCheckResultGenericTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Authorization.AuthZAccessCheckResult</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Error</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Granted Access</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Privileges</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Error</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>SpecificGenericGrantedAccess</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>if ($_.PrivilegesRequired.Count -gt 0) { $_.PrivilegesRequired } else { "NONE" }</ScriptBlock>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
@@ -2570,6 +2607,184 @@
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>AppliesTo</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>AuditCategoryTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Audit.AuditCategory</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>SubCategory Count</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$_.SubCategories.Count</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>AuditSubCategoryTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Audit.AuditSubCategory</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Policy</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Policy</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>AuditPerUserCategoryTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Audit.AuditPerUserCategory</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>User</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>SubCategory Count</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$_.User.Name</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$_.SubCategories.Count</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>AuditPerUserSubCategoryTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Audit.AuditPerUserSubCategory</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>User</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>Policy</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <ScriptBlock>$_.User.Name</ScriptBlock>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Policy</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>LogonSessionTable</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.Security.Authentication.LogonSession</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>LogonId</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>UserName</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>LogonType</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>SessionId</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>LogonId</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>FullQualifiedUserName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>LogonType</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>SessionId</PropertyName>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

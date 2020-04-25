@@ -17,6 +17,8 @@ using NtApiDotNet.Utilities.SafeBuffers;
 using NtApiDotNet.Win32.Debugger;
 using NtApiDotNet.Win32.SafeHandles;
 using NtApiDotNet.Win32.Security;
+using NtApiDotNet.Win32.Security.Audit;
+using NtApiDotNet.Win32.Security.Authorization;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -512,44 +514,6 @@ namespace NtApiDotNet.Win32
           IntPtr CallbackContext
         );
 
-    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
-    internal delegate void TreeSetNamedSecurityProgress(string pObjectName, Win32Error Status, 
-        ref ProgressInvokeSetting pInvokeSetting, IntPtr Args, [MarshalAs(UnmanagedType.Bool)] bool SecuritySet);
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct INHERITED_FROM
-    {
-        public int GenerationGap;
-        public IntPtr AncestorName;
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct CENTRAL_ACCESS_POLICY
-    {
-        public IntPtr CAPID;
-        public UnicodeStringOut Name;
-        public UnicodeStringOut Description;
-        public UnicodeStringOut ChangeId;
-        public uint Flags;
-        public int CAPECount;
-        public IntPtr CAPEs; // PCENTRAL_ACCESS_POLICY_ENTRY
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct CENTRAL_ACCESS_POLICY_ENTRY
-    {
-        public UnicodeStringOut Name;
-        public UnicodeStringOut Description;
-        public UnicodeStringOut ChangeId;
-        public int LengthAppliesTo;
-        public IntPtr AppliesTo;
-        public int LengthSD;
-        public IntPtr SD;
-        public int LengthStagedSD;
-        public IntPtr StagedSD;
-        public uint Flags;
-    }
-
     internal static class Win32NativeMethods
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -829,16 +793,24 @@ namespace NtApiDotNet.Win32
         [DllImport("Secur32.dll")]
         internal static extern NtStatus LsaConnectUntrusted(out SafeLsaHandle handle);
 
+        [DllImport("Secur32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaRegisterLogonProcess(
+          LsaString LogonProcessName,
+          out SafeLsaHandle LsaHandle,
+          out uint SecurityMode // PLSA_OPERATIONAL_MODE
+        );
+
         [DllImport("Secur32.dll")]
         internal static extern NtStatus LsaLookupAuthenticationPackage(SafeLsaHandle LsaHandle, LsaString PackageName, out uint AuthenticationPackage);
 
         [DllImport("Secur32.dll")]
-        internal static extern NtStatus LsaLogonUser(SafeLsaHandle LsaHandle, LsaString OriginName, SecurityLogonType LogonType, uint AuthenticationPackage,
+        internal static extern NtStatus LsaLogonUser(
+            SafeLsaHandle LsaHandle, LsaString OriginName, SecurityLogonType LogonType, uint AuthenticationPackage,
             SafeBuffer AuthenticationInformation,
             int AuthenticationInformationLength,
             IntPtr LocalGroups,
             TOKEN_SOURCE SourceContext,
-            out IntPtr ProfileBuffer,
+            out SafeLsaReturnBufferHandle ProfileBuffer,
             out int ProfileBufferLength,
             out Luid LogonId,
             out SafeKernelObjectHandle Token,
@@ -1189,124 +1161,6 @@ namespace NtApiDotNet.Win32
           IntPtr hModule,
           out MODULEINFO lpmodinfo,
           int cb
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error SetSecurityInfo(
-            SafeHandle handle,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            byte[] psidOwner,
-            byte[] psidGroup,
-            byte[] pDacl,
-            byte[] pSacl
-        );
-
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error SetNamedSecurityInfo(
-            string pObjectName,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            byte[] psidOwner,
-            byte[] psidGroup,
-            byte[] pDacl,
-            byte[] pSacl
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error TreeSetNamedSecurityInfo(
-            string pObjectName,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            byte[] psidOwner,
-            byte[] psidGroup,
-            byte[] pDacl,
-            byte[] pSacl,
-            TreeSecInfo dwAction,
-            TreeSetNamedSecurityProgress fnProgress,
-            ProgressInvokeSetting ProgressInvokeSetting,
-            IntPtr Args
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error TreeResetNamedSecurityInfo(
-            string pObjectName,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            byte[] psidOwner,
-            byte[] psidGroup,
-            byte[] pDacl,
-            byte[] pSacl,
-            [MarshalAs(UnmanagedType.Bool)] bool KeepExplicit,
-            TreeSetNamedSecurityProgress fnProgress,
-            ProgressInvokeSetting ProgressInvokeSetting,
-            IntPtr Args
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error GetInheritanceSource(
-            string pObjectName,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            bool Container,
-            SafeGuidArrayBuffer pObjectClassGuids,
-            int GuidCount,
-            byte[] pAcl,
-            IntPtr pfnArray, // PFN_OBJECT_MGR_FUNCTS
-            ref GenericMapping pGenericMapping,
-            [Out] INHERITED_FROM[] pInheritArray
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error FreeInheritedFromArray(
-          INHERITED_FROM[] pInheritArray,
-          ushort AceCnt,
-          IntPtr pfnArray // PFN_OBJECT_MGR_FUNCTS
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error GetNamedSecurityInfo(
-            string pObjectName,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            OptionalPointer ppsidOwner,
-            OptionalPointer ppsidGroup,
-            OptionalPointer ppDacl,
-            OptionalPointer ppSacl,
-            out SafeLocalAllocBuffer ppSecurityDescriptor
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern Win32Error GetSecurityInfo(
-            SafeHandle handle,
-            SeObjectType ObjectType,
-            SecurityInformation SecurityInfo,
-            OptionalPointer ppsidOwner,
-            OptionalPointer ppsidGroup,
-            OptionalPointer ppDacl,
-            OptionalPointer ppSacl,
-            out SafeLocalAllocBuffer ppSecurityDescriptor
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern NtStatus LsaFreeMemory(
-            IntPtr Buffer
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern NtStatus LsaGetAppliedCAPIDs(
-          UnicodeString SystemName,
-          out SafeLsaMemoryBuffer CAPIDs,
-          out int CAPIDCount
-        );
-
-        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
-        internal static extern NtStatus LsaQueryCAPs(
-          IntPtr CAPIDs,
-          int CAPIDCount,
-          out SafeLsaMemoryBuffer CAPs,
-          out uint CAPCount
         );
     }
 #pragma warning restore 1591

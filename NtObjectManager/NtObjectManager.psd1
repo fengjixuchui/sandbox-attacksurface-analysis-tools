@@ -70,8 +70,8 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Get-NtTokenSid', 'Set-NtTokenSid', 'Set-NtTokenGroup', 'Get-NtDesktopName', 'Get-NtWindowStationName',
           'Get-NtWindow', 'Out-HexDump', 'Get-NtTypeAccess', 'Get-NtAtom', 'Add-NtAtom', 'Remove-NtAtom',
           'Import-Win32Module', 'Get-Win32Module', 'Get-Win32ModuleExport', 'Get-Win32ModuleImport', 'Get-NtDirectoryEntry',
-          'Remove-NtKeyValue', 'Read-AuthCredential', 'Get-AuthPackage', 'Get-AuthCredentialHandle', 'Get-AuthServer',
-          'Get-AuthClient', 'Update-AuthServer', 'Update-AuthClient', 'Get-AuthAccessToken', 'Get-NtKernelModule',
+          'Remove-NtKeyValue', 'Read-AuthCredential', 'Get-AuthPackage', 'Get-AuthCredentialHandle', 'Get-AuthServerContext',
+          'Get-AuthClientContext', 'Update-AuthServerContext', 'Update-AuthClientContext', 'Get-AuthAccessToken', 'Get-NtKernelModule',
           'Get-NtObjectInformationClass', 'Add-NtSection', 'Remove-NtSection', 'Compare-NtObject', 'Edit-NtSecurityDescriptor',
           'Set-NtSecurityDescriptorOwner', 'Set-NtSecurityDescriptorGroup', 'Set-NtSecurityDescriptorIntegrityLevel',
           'ConvertFrom-NtAceCondition', 'ConvertFrom-NtSecurityDescriptor', 'Remove-NtSecurityDescriptorOwner',
@@ -84,7 +84,8 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'New-ObjectTypeTree', 'Add-ObjectTypeTree', 'ConvertTo-NtAceCondition', 'Get-NtTokenMandatoryPolicy',
           'Clear-NtSecurityDescriptorDacl', 'Clear-NtSecurityDescriptorSacl', 'Get-CentralAccessPolicy',
           'Remove-ObjectTypeTree', 'Set-ObjectTypeTreeAccess', 'Revoke-ObjectTypeTreeAccess', 'Select-ObjectTypeTree',
-          'Test-NtObject', 'Get-NtTokenIntegrityLevel'
+          'Test-NtObject', 'Get-NtTokenIntegrityLevel', 'Get-NtAuditPolicy', 'Set-NtAuditPolicy', 'Get-NtAuditSecurity',
+          'Set-NtAuditSecurity', 'Format-AuthToken', 'Get-AuthToken', 'Test-AuthContext', 'Get-NtLogonSession'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -126,7 +127,9 @@ CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile
                'Reset-Win32SecurityDescriptor', 'Search-Win32SecurityDescriptor',
                'Get-Win32SecurityDescriptor', 'Compare-NtSid', 'Test-NtAceCondition',
                'Test-NtTokenGroup', 'Test-NtAccessMask', 'Grant-NtAccessMask',
-               'Revoke-NtAccessMask', 'Select-NtSecurityDescriptorAce'
+               'Revoke-NtAccessMask', 'Select-NtSecurityDescriptorAce', 'Write-NtAudit',
+               'New-AuthZResourceManager', 'New-AuthZContext', 'Get-AuthZGrantedAccess',
+               'Add-AuthZSid', 'Remove-AuthZSid'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = @()

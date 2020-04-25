@@ -12,6 +12,11 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Utilities.SafeBuffers;
+using NtApiDotNet.Win32.SafeHandles;
+using NtApiDotNet.Win32.Security.Audit;
+using NtApiDotNet.Win32.Security.Authentication;
+using NtApiDotNet.Win32.Security.Authorization;
 using System;
 using System.Runtime.InteropServices;
 using System.Security;
@@ -245,190 +250,12 @@ namespace NtApiDotNet.Win32.Security
         public IntPtr dwUpper;
     }
 
-    /// <summary>
-    /// Security data representation.
-    /// </summary>
-    public enum SecDataRep
-    {
-        /// <summary>
-        /// Native representation.
-        /// </summary>
-        Native = 0x00000010,
-        /// <summary>
-        /// Network representation.
-        /// </summary>
-        Network = 0x00000000
-    }
-
-    public enum SecPkgCredFlags
-    {
-        Inbound = 0x00000001,
-        Outbound = 0x00000002,
-        Both = Inbound | Outbound,
-        Default = 0x00000004,
-    }
-
-    [Flags]
-    public enum InitializeContextReqFlags
-    {
-        None = 0,
-        Delegate = 0x00000001,
-        MutalAuth = 0x00000002,
-        ReplayDetect = 0x00000004,
-        SequenceDetect = 0x00000008,
-        Confidentiality = 0x00000010,
-        UseSessionKey = 0x00000020,
-        PromptForCreds = 0x00000040,
-        UseSuppliedCreds = 0x00000080,
-        AllocateMemory = 0x00000100,
-        UseDCEStyle = 0x00000200,
-        Datagram = 0x00000400,
-        Connection = 0x00000800,
-        CallLevel = 0x00001000,
-        FragmentSupplied = 0x00002000,
-        ExtendedError = 0x00004000,
-        Stream = 0x00008000,
-        Integrity = 0x00010000,
-        Identity = 0x00020000,
-        NullSession = 0x00040000,
-        ManualCredValidation = 0x00080000,
-        Reserved1 = 0x00100000,
-        FragmentToFit = 0x00200000,
-        ForwardCredentials = 0x00400000,
-        NoIntegrity = 0x00800000,
-        UseHttpStyle = 0x01000000,
-        UnverifiedTargetName = 0x20000000,
-        ConfidentialityOnly = 0x40000000,
-    }
-
-    [Flags]
-    public enum InitializeContextRetFlags
-    {
-        None = 0,
-        Delegate = 0x00000001,
-        MutualAuth = 0x00000002,
-        ReplayDetect = 0x00000004,
-        SequenceDetect = 0x00000008,
-        Confidentiality = 0x00000010,
-        UseSessionKey = 0x00000020,
-        UsedCollectedCreds = 0x00000040,
-        UsedSuppliedCreds = 0x00000080,
-        AllocatedMemory = 0x00000100,
-        UsedDceStyle = 0x00000200,
-        Datagram = 0x00000400,
-        Connection = 0x00000800,
-        IntermediateReturn = 0x00001000,
-        CallLevel = 0x00002000,
-        ExtendedError = 0x00004000,
-        Stream = 0x00008000,
-        Integrity = 0x00010000,
-        Identify = 0x00020000,
-        NullSession = 0x00040000,
-        ManualCredValidation = 0x00080000,
-        Reserved1 = 0x00100000,
-        FragmentOnly = 0x00200000,
-        ForwardCredentials = 0x00400000,
-        UsedHttpStyle = 0x01000000,
-        NoAdditionalToken = 0x02000000,
-        Reauthentication = 0x08000000,
-        ConfidentialityOnly = 0x40000000,
-    }
-
-    [Flags]
-    public enum AcceptContextReqFlags
-    {
-        None = 0,
-        Delegate = 0x00000001,
-        MutualAuth = 0x00000002,
-        ReplayDetect = 0x00000004,
-        SequenceDetect = 0x00000008,
-        Confidentiality = 0x00000010,
-        UseSessionKey = 0x00000020,
-        SessionTicket = 0x00000040,
-        AllocateMemory = 0x00000100,
-        UseDceStyle = 0x00000200,
-        Datagram = 0x00000400,
-        Connection = 0x00000800,
-        CallLevel = 0x00001000,
-        FragmentSupplied = 0x00002000,
-        ExtendedError = 0x00008000,
-        Stream = 0x00010000,
-        Integrity = 0x00020000,
-        Licensing = 0x00040000,
-        Identify = 0x00080000,
-        AllowNullSessions = 0x00100000,
-        AllowNonUserLogons = 0x00200000,
-        AllowContextReplay = 0x00400000,
-        FragmentToFit = 0x00800000,
-    }
-
-    [Flags]
-    public enum AcceptContextRetFlags
-    {
-        None = 0,
-        Delegate = 0x00000001,
-        MutualAuth = 0x00000002,
-        ReplayDetect = 0x00000004,
-        SequenceDetect = 0x00000008,
-        Confidentiality = 0x00000010,
-        UseSessionKey = 0x00000020,
-        SessionTicket = 0x00000040,
-        AllocatedMemory = 0x00000100,
-        UsedDceStyle = 0x00000200,
-        Datagram = 0x00000400,
-        Connection = 0x00000800,
-        CallLevel = 0x00002000,
-        ThirdLegFailed = 0x00004000,
-        ExtendedError = 0x00008000,
-        Stream = 0x00010000,
-        Integrity = 0x00020000,
-        Licensing = 0x00040000,
-        Identify = 0x00080000,
-        NullSession = 0x00100000,
-        AllowNonUserLogons = 0x00200000,
-        AllowContextReplay = 0x00400000,
-        FragmentOnly = 0x00800000,
-        NoToken = 0x01000000,
-        NoAdditionalToken = 0x02000000,
-    }
-
     internal enum SecStatusCode : uint
     {
         Success = 0,
         ContinueNeeded = 0x00090312,
         CompleteNeeded = 0x00090313,
         CompleteAndContinue = 0x00090314,
-    }
-
-    [Flags]
-    public enum SecPkgCapabilityFlag
-    {
-        Integrity = 0x00000001,
-        Private = 0x00000002,
-        TokenOnly = 0x00000004,
-        Datagram = 0x00000008,
-        Connection = 0x00000010,
-        MultiRequired = 0x00000020,
-        ClientOnly = 0x00000040,
-        ExtendedError = 0x00000080,
-        Impersonation = 0x00000100,
-        AcceptWin32Name = 0x00000200,
-        Stream = 0x00000400,
-        Negotiable = 0x00000800,
-        GssCompatible = 0x00001000,
-        Logon = 0x00002000,
-        AsciiBuffers = 0x00004000,
-        Fragment = 0x00008000,
-        MutualAuth = 0x00010000,
-        Delegation = 0x00020000,
-        ReadOnlyWithChecksum = 0x00040000,
-        RestrictedTokens = 0x00080000,
-        NegoExtended = 0x00100000,
-        Negotiable2 = 0x00200000,
-        AppContainerPassthrough = 0x00400000,
-        AppContainerChecks = 0x00800000,
-        CredentialIsolationEnabled = 0x01000000,
-        ApplyLoopback = 0x02000000,
     }
 
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
@@ -448,6 +275,176 @@ namespace NtApiDotNet.Win32.Security
     internal class OptionalLuid
     {
         public Luid luid;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode)]
+    internal delegate void TreeSetNamedSecurityProgress(string pObjectName, Win32Error Status,
+        ref ProgressInvokeSetting pInvokeSetting, IntPtr Args, [MarshalAs(UnmanagedType.Bool)] bool SecuritySet);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct INHERITED_FROM
+    {
+        public int GenerationGap;
+        public IntPtr AncestorName;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CENTRAL_ACCESS_POLICY
+    {
+        public IntPtr CAPID;
+        public UnicodeStringOut Name;
+        public UnicodeStringOut Description;
+        public UnicodeStringOut ChangeId;
+        public uint Flags;
+        public int CAPECount;
+        public IntPtr CAPEs; // PCENTRAL_ACCESS_POLICY_ENTRY
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct CENTRAL_ACCESS_POLICY_ENTRY
+    {
+        public UnicodeStringOut Name;
+        public UnicodeStringOut Description;
+        public UnicodeStringOut ChangeId;
+        public int LengthAppliesTo;
+        public IntPtr AppliesTo;
+        public int LengthSD;
+        public IntPtr SD;
+        public int LengthStagedSD;
+        public IntPtr StagedSD;
+        public uint Flags;
+    }
+
+    [UnmanagedFunctionPointer(CallingConvention.StdCall)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    internal delegate bool AuthzAccessCheckCallback(
+        IntPtr hAuthzClientContext,
+        IntPtr pAce,
+        IntPtr pArgs,
+        [MarshalAs(UnmanagedType.Bool)] out bool pbAceApplicable);
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AUTHZ_ACCESS_REPLY
+    {
+        public int ResultListLength;
+        public IntPtr GrantedAccessMask; // PACCESS_MASK.
+        public IntPtr SaclEvaluationResults; // PDWORD
+        public IntPtr Error; // PDWORD
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AUTHZ_ACCESS_REQUEST
+    {
+        public AccessMask DesiredAccess;
+        public IntPtr PrincipalSelfSid;
+        public IntPtr ObjectTypeList;
+        public int ObjectTypeListLength;
+        public IntPtr OptionalArguments;
+    }
+
+    internal enum AUTHZ_CONTEXT_INFORMATION_CLASS
+    {
+        AuthzContextInfoUserSid = 1,
+        AuthzContextInfoGroupsSids,
+        AuthzContextInfoRestrictedSids,
+        AuthzContextInfoPrivileges,
+        AuthzContextInfoExpirationTime,
+        AuthzContextInfoServerContext,
+        AuthzContextInfoIdentifier,
+        AuthzContextInfoSource,
+        AuthzContextInfoAll,
+        AuthzContextInfoAuthenticationId,
+        AuthzContextInfoSecurityAttributes,
+        AuthzContextInfoDeviceSids,
+        AuthzContextInfoUserClaims,
+        AuthzContextInfoDeviceClaims,
+        AuthzContextInfoAppContainerSid,
+        AuthzContextInfoCapabilitySids
+    }
+
+    [Flags]
+    internal enum AuthZAccessCheckFlags
+    {
+        None = 0,
+        NoDeepCopySD = 1,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct AUDIT_POLICY_INFORMATION
+    {
+        public Guid AuditSubCategoryGuid;
+        public int AuditingInformation;
+        public Guid AuditCategoryGuid;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct POLICY_AUDIT_SID_ARRAY
+    {
+        public int UsersCount;
+        public IntPtr UserSidArray;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct LSA_LAST_INTER_LOGON_INFO
+    {
+        public LargeIntegerStruct LastSuccessfulLogon;
+        public LargeIntegerStruct LastFailedLogon;
+        public int FailedAttemptCountSinceLastSuccessfulLogon;
+    }
+
+    /// <summary>
+    /// Logon UserFlags.
+    /// </summary>
+    [Flags]
+    public enum LsaLogonUserFlags
+    {
+        Guest = 0x01,
+        NoEncryption = 0x02,
+        CachedAccount = 0x04,
+        UsedLmPassword = 0x08,
+        ExtraSids = 0x20,
+        SubAuthSessionKey = 0x40,
+        ServerTrustAccount = 0x80,
+        NtlmV2Enabled = 0x100,
+        ResourceGroups = 0x200,
+        ProfilePathReturned = 0x400,
+        NtV2 = 0x800,
+        LmV2 = 0x1000,
+        NtlmV2 = 0x2000,
+        Optimized = 0x4000,
+        WinLogon = 0x8000,
+        PKInit = 0x10000,
+        NoOptimized = 0x20000,
+        NoElevation = 0x40000,
+        ManagedService = 0x80000,
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SECURITY_LOGON_SESSION_DATA
+    {
+        public int Size;
+        public Luid LogonId;
+        public UnicodeStringOut UserName;
+        public UnicodeStringOut LogonDomain;
+        public UnicodeStringOut AuthenticationPackage;
+        public SecurityLogonType LogonType;
+        public int Session;
+        public IntPtr Sid;
+        public LargeIntegerStruct LogonTime;
+        public UnicodeStringOut LogonServer;
+        public UnicodeStringOut DnsDomainName;
+        public UnicodeStringOut Upn;
+        public LsaLogonUserFlags UserFlags;
+        public LSA_LAST_INTER_LOGON_INFO LastLogonInfo;
+        public UnicodeStringOut LogonScript;
+        public UnicodeStringOut ProfilePath;
+        public UnicodeStringOut HomeDirectory;
+        public UnicodeStringOut HomeDirectoryDrive;
+        public LargeIntegerStruct LogoffTime;
+        public LargeIntegerStruct KickOffTime;
+        public LargeIntegerStruct PasswordLastSet;
+        public LargeIntegerStruct PasswordCanChange;
+        public LargeIntegerStruct PasswordMustChange;
     }
 
     internal static class SecurityNativeMethods
@@ -558,6 +555,333 @@ namespace NtApiDotNet.Win32.Security
             [In, Out] OptionalInt32 pcInstanceName,
             [In, Out] StringBuilder InstanceName,
             [In, Out] OptionalUInt16 pInstancePort
+        );
+
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error SetSecurityInfo(
+            SafeHandle handle,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            byte[] psidOwner,
+            byte[] psidGroup,
+            byte[] pDacl,
+            byte[] pSacl
+        );
+
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error SetNamedSecurityInfo(
+            string pObjectName,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            byte[] psidOwner,
+            byte[] psidGroup,
+            byte[] pDacl,
+            byte[] pSacl
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error TreeSetNamedSecurityInfo(
+            string pObjectName,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            byte[] psidOwner,
+            byte[] psidGroup,
+            byte[] pDacl,
+            byte[] pSacl,
+            TreeSecInfo dwAction,
+            TreeSetNamedSecurityProgress fnProgress,
+            ProgressInvokeSetting ProgressInvokeSetting,
+            IntPtr Args
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error TreeResetNamedSecurityInfo(
+            string pObjectName,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            byte[] psidOwner,
+            byte[] psidGroup,
+            byte[] pDacl,
+            byte[] pSacl,
+            [MarshalAs(UnmanagedType.Bool)] bool KeepExplicit,
+            TreeSetNamedSecurityProgress fnProgress,
+            ProgressInvokeSetting ProgressInvokeSetting,
+            IntPtr Args
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetInheritanceSource(
+            string pObjectName,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            bool Container,
+            SafeGuidArrayBuffer pObjectClassGuids,
+            int GuidCount,
+            byte[] pAcl,
+            IntPtr pfnArray, // PFN_OBJECT_MGR_FUNCTS
+            ref GenericMapping pGenericMapping,
+            [Out] INHERITED_FROM[] pInheritArray
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error FreeInheritedFromArray(
+          INHERITED_FROM[] pInheritArray,
+          ushort AceCnt,
+          IntPtr pfnArray // PFN_OBJECT_MGR_FUNCTS
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetNamedSecurityInfo(
+            string pObjectName,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            OptionalPointer ppsidOwner,
+            OptionalPointer ppsidGroup,
+            OptionalPointer ppDacl,
+            OptionalPointer ppSacl,
+            out SafeLocalAllocBuffer ppSecurityDescriptor
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetSecurityInfo(
+            SafeHandle handle,
+            SeObjectType ObjectType,
+            SecurityInformation SecurityInfo,
+            OptionalPointer ppsidOwner,
+            OptionalPointer ppsidGroup,
+            OptionalPointer ppDacl,
+            OptionalPointer ppSacl,
+            out SafeLocalAllocBuffer ppSecurityDescriptor
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaFreeMemory(
+            IntPtr Buffer
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaGetAppliedCAPIDs(
+          UnicodeString SystemName,
+          out SafeLsaMemoryBuffer CAPIDs,
+          out int CAPIDCount
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaQueryCAPs(
+          IntPtr CAPIDs,
+          int CAPIDCount,
+          out SafeLsaMemoryBuffer CAPs,
+          out uint CAPCount
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzInitializeResourceManager(
+          AuthZResourceManagerInitializeFlags Flags,
+          AuthzAccessCheckCallback pfnDynamicAccessCheck,
+          IntPtr pfnComputeDynamicGroups,
+          IntPtr pfnFreeDynamicGroups,
+          string szResourceManagerName,
+          out SafeAuthZResourceManagerHandle phAuthzResourceManager
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzFreeResourceManager(
+            IntPtr hAuthzResourceManager
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzInitializeContextFromSid(
+          AuthZContextInitializeSidFlags Flags,
+          SafeSidBufferHandle UserSid,
+          SafeAuthZResourceManagerHandle hAuthzResourceManager,
+          LargeInteger pExpirationTime,
+          Luid Identifier,
+          IntPtr DynamicGroupArgs,
+          out SafeAuthZClientContextHandle phAuthzClientContext
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzInitializeContextFromToken(
+            int Flags,
+            SafeKernelObjectHandle TokenHandle,
+            SafeAuthZResourceManagerHandle hAuthzResourceManager,
+            LargeInteger pExpirationTime,
+            Luid Identifier,
+            IntPtr DynamicGroupArgs,
+            out SafeAuthZClientContextHandle phAuthzClientContext
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzInitializeContextFromAuthzContext(
+            int Flags,
+            SafeAuthZClientContextHandle hAuthzClientContext,
+            LargeInteger pExpirationTime,
+            Luid Identifier,
+            IntPtr DynamicGroupArgs,
+            out SafeAuthZClientContextHandle phNewAuthzClientContext
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzFreeContext(
+            IntPtr hAuthzClientContext
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzAccessCheck(
+            AuthZAccessCheckFlags Flags,
+            SafeAuthZClientContextHandle hAuthzClientContext,
+            ref AUTHZ_ACCESS_REQUEST pRequest,
+            IntPtr hAuditEvent,
+            SafeBuffer pSecurityDescriptor,
+            IntPtr[] OptionalSecurityDescriptorArray,
+            int OptionalSecurityDescriptorCount,
+            ref AUTHZ_ACCESS_REPLY pReply,
+            IntPtr phAccessCheckResults
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzSetAppContainerInformation(
+          SafeAuthZClientContextHandle hAuthzClientContext,
+          SafeSidBufferHandle pAppContainerSid,
+          int CapabilityCount,
+          SafeBuffer pCapabilitySids
+        );
+
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzModifySids(
+                SafeAuthZClientContextHandle hAuthzClientContext,
+                AUTHZ_CONTEXT_INFORMATION_CLASS SidClass,
+                AuthZSidOperation[] pSidOperations,
+                SafeTokenGroupsBuffer pSids
+            );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern void AuditFree(IntPtr Buffer);
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditEnumerateCategories(
+              out SafeAuditBuffer ppAuditCategoriesArray,
+              out uint pdwCountReturned
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditEnumerateSubCategories(
+          OptionalGuid pAuditCategoryGuid,
+          bool bRetrieveAllSubCategories,
+          out SafeAuditBuffer ppAuditSubCategoriesArray,
+          out uint pdwCountReturned
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditLookupCategoryName(
+            ref Guid pAuditCategoryGuid,
+            out SafeAuditBuffer ppszCategoryName
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditLookupSubCategoryName(
+            ref Guid pAuditCategoryGuid,
+            out SafeAuditBuffer ppszCategoryName
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditQuerySystemPolicy(
+          Guid[] pSubCategoryGuids,
+          int dwPolicyCount,
+          out SafeAuditBuffer ppAuditPolicy
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditSetSystemPolicy(
+            AUDIT_POLICY_INFORMATION[] pAuditPolicy,
+            int dwPolicyCount
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditQuerySecurity(
+            SecurityInformation SecurityInformation,
+            out SafeAuditBuffer ppSecurityDescriptor
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditSetSecurity(
+            SecurityInformation SecurityInformation,
+            SafeBuffer pSecurityDescriptor
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditQueryGlobalSacl(
+          string ObjectTypeName,
+          out SafeAuditBuffer Acl
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditSetGlobalSacl(
+          string ObjectTypeName,
+          SafeBuffer Acl
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditLookupCategoryGuidFromCategoryId(
+          AuditPolicyEventType AuditCategoryId,
+          out Guid pAuditCategoryGuid
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditEnumeratePerUserPolicy(
+            out SafeAuditBuffer ppAuditSidArray
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditQueryPerUserPolicy(
+            SafeSidBufferHandle pSid,
+            Guid[] pSubCategoryGuids,
+            int dwPolicyCount,
+            out SafeAuditBuffer ppAuditPolicy
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.I1)]
+        internal static extern bool AuditSetPerUserPolicy(
+            SafeSidBufferHandle pSid,
+            AUDIT_POLICY_INFORMATION[] pAuditPolicy,
+            int dwPolicyCount
+        );
+
+        [DllImport("Secur32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaEnumerateLogonSessions(
+          out int LogonSessionCount,
+          out SafeLsaReturnBufferHandle LogonSessionList
+        );
+
+        [DllImport("Secur32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaGetLogonSessionData(
+          ref Luid LogonId,
+          out SafeLsaReturnBufferHandle ppLogonSessionData
         );
 
         public static SecStatusCode CheckResult(this SecStatusCode result)

@@ -14,12 +14,12 @@
 
 using System;
 
-namespace NtApiDotNet.Win32.Security
+namespace NtApiDotNet.Win32.Security.Authentication
 {
     /// <summary>
     /// Class to represent a client authentication context.
     /// </summary>
-    public sealed class ClientAuthenticationContext : IDisposable
+    public sealed class ClientAuthenticationContext : IDisposable, IAuthenticationContext
     {
         private readonly CredentialHandle _creds;
         private readonly InitializeContextReqFlags _req_attributes;
@@ -30,7 +30,7 @@ namespace NtApiDotNet.Win32.Security
         /// <summary>
         /// The current authentication token.
         /// </summary>
-        public byte[] Token { get; private set; }
+        public AuthenticationToken Token { get; private set; }
 
         /// <summary>
         /// Whether the authentication is done.
@@ -54,7 +54,7 @@ namespace NtApiDotNet.Win32.Security
         /// <param name="req_attributes">Request attribute flags.</param>
         /// <param name="target">Target SPN (optional).</param>
         /// <param name="data_rep">Data representation.</param>
-        public ClientAuthenticationContext(CredentialHandle creds, InitializeContextReqFlags req_attributes, 
+        public ClientAuthenticationContext(CredentialHandle creds, InitializeContextReqFlags req_attributes,
             string target, SecDataRep data_rep)
         {
             _creds = creds;
@@ -71,7 +71,7 @@ namespace NtApiDotNet.Win32.Security
         /// <param name="creds">Credential handle.</param>
         /// <param name="req_attributes">Request attribute flags.</param>
         /// <param name="data_rep">Data representation.</param>
-        public ClientAuthenticationContext(CredentialHandle creds, InitializeContextReqFlags req_attributes, SecDataRep data_rep) 
+        public ClientAuthenticationContext(CredentialHandle creds, InitializeContextReqFlags req_attributes, SecDataRep data_rep)
             : this(creds, req_attributes, null, data_rep)
         {
         }
@@ -80,7 +80,7 @@ namespace NtApiDotNet.Win32.Security
         /// Constructor.
         /// </summary>
         /// <param name="creds">Credential handle.</param>
-        public ClientAuthenticationContext(CredentialHandle creds) 
+        public ClientAuthenticationContext(CredentialHandle creds)
             : this(creds, InitializeContextReqFlags.None, null, SecDataRep.Native)
         {
         }
@@ -89,12 +89,12 @@ namespace NtApiDotNet.Win32.Security
         /// Continue the authentication with the server token.
         /// </summary>
         /// <param name="token">The server token to continue authentication.</param>
-        public void Continue(byte[] token)
+        public void Continue(AuthenticationToken token)
         {
             Done = GenClientContext(token);
         }
 
-        private bool GenClientContext(byte[] token)
+        private bool GenClientContext(AuthenticationToken token)
         {
             using (DisposableList list = new DisposableList())
             {
@@ -107,7 +107,7 @@ namespace NtApiDotNet.Win32.Security
                 LargeInteger expiry = new LargeInteger();
                 if (token != null)
                 {
-                    SecBuffer in_sec_buffer = list.AddResource(new SecBuffer(SecBufferType.Token, token));
+                    SecBuffer in_sec_buffer = list.AddResource(new SecBuffer(SecBufferType.Token, token.ToArray()));
                     SecBufferDesc in_buffer_desc = list.AddResource(new SecBufferDesc(in_sec_buffer));
                     result = SecurityNativeMethods.InitializeSecurityContext(_creds.CredHandle, _context, _target, _req_attributes, 0,
                         _data_rep, in_buffer_desc, 0, _context, out_buffer_desc, out flags, expiry).CheckResult();
@@ -127,7 +127,7 @@ namespace NtApiDotNet.Win32.Security
                     SecurityNativeMethods.CompleteAuthToken(_context, out_buffer_desc).CheckResult();
                 }
 
-                Token = out_buffer_desc.ToArray()[0].ToArray();
+                Token = AuthenticationToken.Parse(out_buffer_desc.ToArray()[0].ToArray());
                 return !(result == SecStatusCode.ContinueNeeded || result == SecStatusCode.CompleteAndContinue);
             }
         }

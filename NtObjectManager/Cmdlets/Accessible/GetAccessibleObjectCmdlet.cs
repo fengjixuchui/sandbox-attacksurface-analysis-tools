@@ -82,11 +82,46 @@ namespace NtObjectManager.Cmdlets.Accessible
         [Parameter(ParameterSetName = "handles")]
         public SwitchParameter CheckUnnamed { get; set; }
 
+        /// <summary>
+        /// <para type="description">Specify to query all file device paths. Doing this might cause the cmdlet to hang.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "handles")]
+        public SwitchParameter QueryAllDevicePaths { get; set; }
+
+
+        private string GetObjectName(NtObject obj)
+        {
+            try
+            {
+                if (FromHandles && !QueryAllDevicePaths)
+                {
+                    if (obj is NtGeneric generic && obj.NtTypeName == "File")
+                    {
+                        using (var typed = generic.ToTypedObject())
+                        {
+                            return GetObjectName(typed);
+                        }
+                    }
+
+                    if (obj is NtFile file_obj && file_obj.DeviceType != FileDeviceType.DISK)
+                    {
+                        return string.Empty;
+                    }
+                }
+
+                return obj.FullPath;
+            }
+            catch (NtException)
+            {
+                return string.Empty;
+            }
+        }
+
         private string ConvertPath(NtObject obj)
         {
             try
             {
-                string path = obj.FullPath;
+                string path = GetObjectName(obj);
                 if (FormatWin32Path)
                 {
                     if (path.Equals(_base_named_objects, StringComparison.OrdinalIgnoreCase))
@@ -156,8 +191,13 @@ namespace NtObjectManager.Cmdlets.Accessible
                 return;
             }
 
+            if (!IncludePath(obj.Name))
+            {
+                return;
+            }
+
             AccessMask desired_access = type.MapGenericRights(access_rights);
-            var result = obj.GetSecurityDescriptor(SecurityInformation.AllBasic, false);
+            var result = GetSecurityDescriptor(obj);
             if (!result.IsSuccess && !obj.IsAccessMaskGranted(GenericAccessRights.ReadControl))
             {
                 // Try and duplicate handle to see if we can just ask for ReadControl.
@@ -165,7 +205,7 @@ namespace NtObjectManager.Cmdlets.Accessible
                 {
                     if (dup_obj.IsSuccess)
                     {
-                        result = dup_obj.Result.GetSecurityDescriptor(SecurityInformation.AllBasic, false);
+                        result = GetSecurityDescriptor(dup_obj.Result);
                     }
                 }
             }
@@ -203,6 +243,11 @@ namespace NtObjectManager.Cmdlets.Accessible
             {
                 foreach (var entry in dir.Query())
                 {
+                    if (FilterPath(entry.Name))
+                    {
+                        continue;
+                    }
+
                     if (entry.IsDirectory)
                     {
                         using (var new_dir = OpenDirectory(entry.Name, dir))
@@ -225,7 +270,7 @@ namespace NtObjectManager.Cmdlets.Accessible
                         {
                             if (type.CanOpen)
                             {
-                                using (var result = OpenObject(entry, dir, GenericAccessRights.MaximumAllowed))
+                                using (var result = OpenObject(entry, dir, GetMaximumAccess(GenericAccessRights.MaximumAllowed)))
                                 {
                                     if (result.IsSuccess)
                                     {
@@ -239,7 +284,7 @@ namespace NtObjectManager.Cmdlets.Accessible
                             }
                             else
                             {
-                                WriteWarning($@"Can't open {dir.FullPath}\{entry.Name} with type {entry.NtTypeName}");
+                                WriteVerbose($@"Can't open {dir.FullPath}\{entry.Name} with type {entry.NtTypeName}");
                             }
                         }
                     }
@@ -256,19 +301,19 @@ namespace NtObjectManager.Cmdlets.Accessible
             }
         }
 
-        private static NtResult<NtDirectory> OpenDirectory(string path, NtObject root)
+        private NtResult<NtDirectory> OpenDirectory(string path, NtObject root)
         {
             using (ObjectAttributes obja = new ObjectAttributes(path,
                 AttributeFlags.CaseInsensitive, root))
             {
-                var result = NtDirectory.Open(obja, DirectoryAccessRights.Query | DirectoryAccessRights.ReadControl, false);
+                var result = NtDirectory.Open(obja, GetMaximumAccessGeneric(DirectoryAccessRights.Query | DirectoryAccessRights.ReadControl), false);
                 if (result.IsSuccess || result.Status != NtStatus.STATUS_ACCESS_DENIED)
                 {
                     return result;
                 }
 
                 // Try again with just Query, if we can't even do this we give up.
-                return NtDirectory.Open(obja, DirectoryAccessRights.Query, false);
+                return NtDirectory.Open(obja, GetMaximumAccessGeneric(DirectoryAccessRights.Query), false);
             }
         }
 
@@ -299,6 +344,16 @@ namespace NtObjectManager.Cmdlets.Accessible
                 {
                     DumpDirectory(tokens, GetTypeFilter(), Access, result.Result, GetMaxDepth());
                 }
+                else
+                {
+                    using (var obj = NtObject.OpenWithType(null, path, null, AttributeFlags.CaseInsensitive, GetMaximumAccess(GenericAccessRights.MaximumAllowed), null, false))
+                    {
+                        if (obj.IsSuccess)
+                        {
+                            DumpObject(tokens, GetTypeFilter(), Access, obj.Result, false);
+                        }
+                    }
+                }
             }
         }
 
@@ -322,7 +377,7 @@ namespace NtObjectManager.Cmdlets.Accessible
 
                     if (checked_objects.Add(handle.Object))
                     {
-                        if (CheckUnnamed || !string.IsNullOrEmpty(obj.Result.FullPath))
+                        if (CheckUnnamed || !string.IsNullOrEmpty(GetObjectName(obj.Result)))
                         {
                             DumpObject(tokens, type_filter, Access, obj.Result, 
                                 obj.Result.NtTypeName.Equals("Directory", StringComparison.OrdinalIgnoreCase));
@@ -350,7 +405,7 @@ namespace NtObjectManager.Cmdlets.Accessible
 
             if (type_filter.Count == 0)
             {
-                WriteWarning("Checking handle access without any type filtering can hang. Perhaps specify the types using -TypeFilter.");
+                WriteWarning("Checking handle access without any type filtering can hang. Specify the types using -TypeFilter.");
             }
 
             HashSet<ulong> checked_objects = new HashSet<ulong>();

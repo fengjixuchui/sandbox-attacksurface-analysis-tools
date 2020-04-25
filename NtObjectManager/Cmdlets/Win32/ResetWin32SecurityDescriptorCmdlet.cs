@@ -15,6 +15,7 @@
 using NtApiDotNet;
 using NtApiDotNet.Win32;
 using NtApiDotNet.Win32.Security;
+using NtApiDotNet.Win32.Security.Authorization;
 using System.Management.Automation;
 
 namespace NtObjectManager.Cmdlets.Win32
@@ -42,7 +43,7 @@ namespace NtObjectManager.Cmdlets.Win32
     /// </example>
     [Cmdlet(VerbsCommon.Reset, "Win32SecurityDescriptor")]
     [OutputType(typeof(Win32SetSecurityDescriptorResult))]
-    public sealed class ResetWin32SecurityDescriptor : PSCmdlet
+    public sealed class ResetWin32SecurityDescriptorCmdlet : PSCmdlet
     {
         /// <summary>
         /// <para type="description">The name of the object.</para>
@@ -146,7 +147,7 @@ namespace NtObjectManager.Cmdlets.Win32
         /// <summary>
         /// Constructor.
         /// </summary>
-        public ResetWin32SecurityDescriptor()
+        public ResetWin32SecurityDescriptorCmdlet()
         {
             Type = SeObjectType.File;
         }

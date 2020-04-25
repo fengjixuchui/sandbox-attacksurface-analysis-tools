@@ -351,64 +351,8 @@ namespace NtApiDotNet
             AccessMask desired_access, Sid principal, GenericMapping generic_mapping, IEnumerable<ObjectTypeEntry> object_types,
             bool throw_on_error)
         {
-            if (sd == null)
-            {
-                throw new ArgumentNullException(nameof(sd));
-            }
-
-            if (token == null)
-            {
-                throw new ArgumentNullException(nameof(token));
-            }
-
-            if (object_types == null)
-            {
-                throw new ArgumentNullException(nameof(object_types));
-            }
-
-            if (!object_types.Any())
-            {
-                throw new ArgumentException("Must specify at least one object type.");
-            }
-
-            if (desired_access.IsEmpty)
-            {
-                return object_types.Select((o, i) => new AccessCheckResult(NtStatus.STATUS_ACCESS_DENIED,
-                            0, null, generic_mapping, o)).ToArray().CreateResult();
-            }
-
-            using (var list = new DisposableList())
-            {
-                var sd_buffer = list.AddResource(sd.ToSafeBuffer());
-                var imp_token = list.AddResource(DuplicateForAccessCheck(token, throw_on_error));
-                if (!imp_token.IsSuccess)
-                {
-                    return imp_token.Cast<AccessCheckResult[]>();
-                }
-                var self_sid = list.AddResource(principal?.ToSafeBuffer() ?? SafeSidBufferHandle.Null);
-                var privs = list.AddResource(new SafePrivilegeSetBuffer());
-                var object_type_list = ConvertObjectTypes(object_types, list);
-                int repeat_count = 1;
-
-                while (true)
-                {
-                    int buffer_length = privs.Length;
-                    AccessMask[] granted_access_list = new AccessMask[object_type_list.Length];
-                    NtStatus[] status_list = new NtStatus[object_type_list.Length];
-                    NtStatus status = NtSystemCalls.NtAccessCheckByTypeResultList(sd_buffer, self_sid, imp_token.Result.Handle, desired_access,
-                        object_type_list, object_type_list?.Length ?? 0, ref generic_mapping, privs,
-                        ref buffer_length, granted_access_list, status_list);
-                    if (repeat_count == 0 || status != NtStatus.STATUS_BUFFER_TOO_SMALL)
-                    {
-                        return status.CreateResult(throw_on_error, ()
-                            => object_types.Select((o, i) => new AccessCheckResult(status_list[i],
-                            granted_access_list[i], privs, generic_mapping, o)).ToArray());
-                    }
-
-                    repeat_count--;
-                    privs = list.AddResource(new SafePrivilegeSetBuffer(buffer_length));
-                }
-            }
+            return AccessCheckWithResultList(sd, token, desired_access, principal, generic_mapping, object_types,
+                NtSystemCalls.NtAccessCheckByTypeResultList, throw_on_error);
         }
 
         /// <summary>
@@ -446,52 +390,8 @@ namespace NtApiDotNet
             AccessMask desired_access, Sid principal, GenericMapping generic_mapping, IEnumerable<ObjectTypeEntry> object_types,
             bool throw_on_error)
         {
-            if (sd == null)
-            {
-                throw new ArgumentNullException("sd");
-            }
-
-            if (token == null)
-            {
-                throw new ArgumentNullException("token");
-            }
-
-            if (desired_access.IsEmpty)
-            {
-                return new AccessCheckResult(NtStatus.STATUS_ACCESS_DENIED, 0, null, 
-                    generic_mapping, object_types.GetDefaultObjectType()).CreateResult();
-            }
-
-            using (var list = new DisposableList())
-            {
-                var sd_buffer = list.AddResource(sd.ToSafeBuffer());
-                var imp_token = list.AddResource(DuplicateForAccessCheck(token, throw_on_error));
-                if (!imp_token.IsSuccess)
-                {
-                    return imp_token.Cast<AccessCheckResult>();
-                }
-                var self_sid = list.AddResource(principal?.ToSafeBuffer() ?? SafeSidBufferHandle.Null);
-                var privs = list.AddResource(new SafePrivilegeSetBuffer());
-                var object_type_list = ConvertObjectTypes(object_types, list);
-                int repeat_count = 1;
-
-                while (true)
-                {
-                    int buffer_length = privs.Length;
-                    NtStatus status = NtSystemCalls.NtAccessCheckByType(sd_buffer, self_sid, imp_token.Result.Handle, desired_access,
-                        object_type_list, object_type_list?.Length ?? 0, ref generic_mapping, privs,
-                        ref buffer_length, out AccessMask granted_access, out NtStatus result_status);
-                    if (repeat_count == 0 || status != NtStatus.STATUS_BUFFER_TOO_SMALL)
-                    {
-                        return status.CreateResult(throw_on_error, () 
-                            => new AccessCheckResult(result_status, granted_access, 
-                            privs, generic_mapping, object_types.GetDefaultObjectType()));
-                    }
-
-                    repeat_count--;
-                    privs = list.AddResource(new SafePrivilegeSetBuffer(buffer_length));
-                }
-            }
+            return AccessCheckByType(sd, token, desired_access, principal, 
+                generic_mapping, object_types, NtSystemCalls.NtAccessCheckByType, throw_on_error);
         }
 
         /// <summary>
@@ -726,6 +626,180 @@ namespace NtApiDotNet
                     return null;
                 return sd.Result;
             }
+        }
+
+        /// <summary>
+        /// Do an access check between a security descriptor and a token to determine the allowed access and
+        /// audit the result.
+        /// </summary>
+        /// <param name="subsystem_name">The name of the subsystem to audit.</param>
+        /// <param name="handle_id">The handle ID to audit. Used when issuing a close audit.</param>
+        /// <param name="object_type_name">The object type name.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="object_creation">Indicates if this is an object creation operation.</param>
+        /// <param name="audit_type">Type of audit.</param>
+        /// <param name="flags">Flags for the audit operation.</param>
+        /// <param name="sd">The security descriptor</param>
+        /// <param name="token">The access token.</param>
+        /// <param name="desired_access">The set of access rights to check against</param>
+        /// <param name="principal">An optional principal SID used to replace the SELF SID in a security descriptor.</param>
+        /// <param name="generic_mapping">The type specific generic mapping (get from corresponding NtType entry).</param>
+        /// <param name="object_types">List of object types to check against.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The result of the access check.</returns>
+        /// <exception cref="NtException">Thrown if an error occurred in the access check.</exception>
+        public static NtResult<AccessCheckResult> AccessCheckAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            bool object_creation,
+            AuditEventType audit_type,
+            AuditAccessCheckFlags flags,
+            SecurityDescriptor sd, 
+            NtToken token,
+            AccessMask desired_access, 
+            Sid principal, 
+            GenericMapping generic_mapping, 
+            IEnumerable<ObjectTypeEntry> object_types,
+            bool throw_on_error)
+        {
+            var context = new AuditAccessCheckContext(
+                subsystem_name, handle_id, 
+                object_type_name, object_name, object_creation,
+                audit_type, flags);
+            return AccessCheckByType(sd, token, desired_access, principal,
+                generic_mapping, object_types, 
+                context.AccessCheckByType, throw_on_error).Map(context.Map);
+        }
+
+        /// <summary>
+        /// Do an access check between a security descriptor and a token to determine the allowed access and
+        /// audit the result.
+        /// </summary>
+        /// <param name="subsystem_name">The name of the subsystem to audit.</param>
+        /// <param name="handle_id">The handle ID to audit. Used when issuing a close audit.</param>
+        /// <param name="object_type_name">The object type name.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="object_creation">Indicates if this is an object creation operation.</param>
+        /// <param name="audit_type">Type of audit.</param>
+        /// <param name="flags">Flags for the audit operation.</param>
+        /// <param name="sd">The security descriptor</param>
+        /// <param name="token">The access token.</param>
+        /// <param name="desired_access">The set of access rights to check against</param>
+        /// <param name="principal">An optional principal SID used to replace the SELF SID in a security descriptor.</param>
+        /// <param name="generic_mapping">The type specific generic mapping (get from corresponding NtType entry).</param>
+        /// <param name="object_types">List of object types to check against.</param>
+        /// <returns>The result of the access check.</returns>
+        /// <exception cref="NtException">Thrown if an error occurred in the access check.</exception>
+        public static AccessCheckResult AccessCheckAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            bool object_creation,
+            AuditEventType audit_type,
+            AuditAccessCheckFlags flags,
+            SecurityDescriptor sd,
+            NtToken token,
+            AccessMask desired_access,
+            Sid principal,
+            GenericMapping generic_mapping,
+            IEnumerable<ObjectTypeEntry> object_types)
+        {
+            return AccessCheckAudit(subsystem_name,
+                handle_id, object_type_name, object_name,
+                object_creation, audit_type, flags, sd, token,
+                desired_access, principal, generic_mapping,
+                object_types, true).Result;
+        }
+
+        /// <summary>
+        /// Do an access check between a security descriptor and a token to determine the allowed access
+        /// and audit. This function returns a list of results rather than a single entry. It should only
+        /// be used with object types.
+        /// </summary>
+        /// <param name="subsystem_name">The name of the subsystem to audit.</param>
+        /// <param name="handle_id">The handle ID to audit. Used when issuing a close audit.</param>
+        /// <param name="object_type_name">The object type name.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="object_creation">Indicates if this is an object creation operation.</param>
+        /// <param name="audit_type">Type of audit.</param>
+        /// <param name="flags">Flags for the audit operation.</param>
+        /// <param name="sd">The security descriptor</param>
+        /// <param name="token">The access token.</param>
+        /// <param name="desired_access">The set of access rights to check against</param>
+        /// <param name="principal">An optional principal SID used to replace the SELF SID in a security descriptor.</param>
+        /// <param name="generic_mapping">The type specific generic mapping (get from corresponding NtType entry).</param>
+        /// <param name="object_types">List of object types to check against.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The result of the access check.</returns>
+        /// <exception cref="NtException">Thrown if an error occurred in the access check.</exception>
+        public static NtResult<AccessCheckResult[]> AccessCheckWithResultListAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            bool object_creation,
+            AuditEventType audit_type,
+            AuditAccessCheckFlags flags,
+            SecurityDescriptor sd,
+            NtToken token,
+            AccessMask desired_access,
+            Sid principal,
+            GenericMapping generic_mapping,
+            IEnumerable<ObjectTypeEntry> object_types,
+            bool throw_on_error)
+        {
+            var context = new AuditAccessCheckContext(
+                subsystem_name, handle_id,
+                object_type_name, object_name, object_creation,
+                audit_type, flags);
+            return AccessCheckWithResultList(sd, token, desired_access, principal,
+                generic_mapping, object_types,
+                context.AccessCheckWithResultList, throw_on_error).Map(r => r.Select(context.Map).ToArray());
+        }
+
+        /// <summary>
+        /// Do an access check between a security descriptor and a token to determine the allowed access
+        /// and audit. This function returns a list of results rather than a single entry. It should only
+        /// be used with object types.
+        /// </summary>
+        /// <param name="subsystem_name">The name of the subsystem to audit.</param>
+        /// <param name="handle_id">The handle ID to audit. Used when issuing a close audit.</param>
+        /// <param name="object_type_name">The object type name.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="object_creation">Indicates if this is an object creation operation.</param>
+        /// <param name="audit_type">Type of audit.</param>
+        /// <param name="flags">Flags for the audit operation.</param>
+        /// <param name="sd">The security descriptor</param>
+        /// <param name="token">The access token.</param>
+        /// <param name="desired_access">The set of access rights to check against</param>
+        /// <param name="principal">An optional principal SID used to replace the SELF SID in a security descriptor.</param>
+        /// <param name="generic_mapping">The type specific generic mapping (get from corresponding NtType entry).</param>
+        /// <param name="object_types">List of object types to check against.</param>
+        /// <returns>The result of the access check.</returns>
+        /// <exception cref="NtException">Thrown if an error occurred in the access check.</exception>
+        public static AccessCheckResult[] AccessCheckWithResultListAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            bool object_creation,
+            AuditEventType audit_type,
+            AuditAccessCheckFlags flags,
+            SecurityDescriptor sd,
+            NtToken token,
+            AccessMask desired_access,
+            Sid principal,
+            GenericMapping generic_mapping,
+            IEnumerable<ObjectTypeEntry> object_types)
+        {
+            return AccessCheckWithResultListAudit(subsystem_name,
+                handle_id, object_type_name, object_name,
+                object_creation, audit_type, flags, sd, token,
+                desired_access, principal, generic_mapping,
+                object_types, true).Result;
         }
 
         /// <summary>
@@ -1658,6 +1732,326 @@ namespace NtApiDotNet
             return new Sid(SecurityAuthority.ProcessTrust, (uint)type, (uint)level);
         }
 
+        /// <summary>
+        /// Generate audit event for an object open.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="object_type_name">The typename of the object.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="security_descriptor">The security descriptor set for the object.</param>
+        /// <param name="client_token">The client token used to open the object.</param>
+        /// <param name="desired_access">Desired access for the open.</param>
+        /// <param name="granted_access">Granted access from the open.</param>
+        /// <param name="privileges">Privileges used to open the object.</param>
+        /// <param name="object_creation">True if the object was created.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>A value indicating whether an event need to be generated on close.</returns>
+        public static NtResult<bool> OpenObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            SecurityDescriptor security_descriptor,
+            NtToken client_token,
+            AccessMask desired_access,
+            AccessMask granted_access,
+            IEnumerable<TokenPrivilege> privileges,
+            bool object_creation,
+            bool access_granted,
+            bool throw_on_error)
+        {
+            if (subsystem_name is null)
+            {
+                throw new ArgumentNullException(nameof(subsystem_name));
+            }
+
+            if (object_type_name is null)
+            {
+                throw new ArgumentNullException(nameof(object_type_name));
+            }
+
+            if (object_name is null)
+            {
+                throw new ArgumentNullException(nameof(object_name));
+            }
+
+            if (security_descriptor is null)
+            {
+                throw new ArgumentNullException(nameof(security_descriptor));
+            }
+
+            if (client_token is null)
+            {
+                throw new ArgumentNullException(nameof(client_token));
+            }
+
+            if (privileges is null)
+            {
+                throw new ArgumentNullException(nameof(privileges));
+            }
+
+            using (var list = new DisposableList())
+            {
+                var buffer = list.AddResource(new SafePrivilegeSetBuffer(privileges, PrivilegeSetControlFlags.None));
+                var sd_buffer = list.AddResource(security_descriptor.ToSafeBuffer());
+
+                return NtSystemCalls.NtOpenObjectAuditAlarm(
+                    subsystem_name.ToUnicodeString(),
+                    handle_id, object_type_name.ToUnicodeString(),
+                    object_name.ToUnicodeString(), sd_buffer,
+                    client_token.Handle, desired_access,
+                    granted_access, buffer, object_creation,
+                    access_granted, out bool generate_on_close)
+                    .CreateResult(throw_on_error, () => generate_on_close);
+            }
+        }
+
+        /// <summary>
+        /// Generate audit event for an object open.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="object_type_name">The typename of the object.</param>
+        /// <param name="object_name">The name of the object.</param>
+        /// <param name="security_descriptor">The security descriptor set for the object.</param>
+        /// <param name="client_token">The client token used to open the object.</param>
+        /// <param name="desired_access">Desired access for the open.</param>
+        /// <param name="granted_access">Granted access from the open.</param>
+        /// <param name="privileges">Privileges used to open the object.</param>
+        /// <param name="object_creation">True if the object was created.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        /// <returns>A value indicating whether an event need to be generated on close.</returns>
+        public static bool OpenObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            string object_type_name,
+            string object_name,
+            SecurityDescriptor security_descriptor,
+            NtToken client_token,
+            AccessMask desired_access,
+            AccessMask granted_access,
+            IEnumerable<TokenPrivilege> privileges,
+            bool object_creation,
+            bool access_granted)
+        {
+            return OpenObjectAudit(subsystem_name, handle_id,
+                object_type_name, object_name, security_descriptor,
+                client_token, desired_access, granted_access,
+                privileges, object_creation, access_granted, true).Result;
+        }
+
+        /// <summary>
+        /// Generate audit event for an object close.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="generate_on_close">True indicates to generate on close.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus CloseObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            bool generate_on_close,
+            bool throw_on_error)
+        {
+            return NtSystemCalls.NtCloseObjectAuditAlarm(
+                new UnicodeString(subsystem_name),
+                handle_id,
+                generate_on_close).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Generate audit event for an object close.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="generate_on_close">True indicates to generate on close.</param>
+        /// <returns>The NT status code.</returns>
+        public static void CloseObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            bool generate_on_close)
+        {
+            CloseObjectAudit(subsystem_name, handle_id, 
+                generate_on_close, true);
+        }
+
+        /// <summary>
+        /// Generate audit event for an object deleted.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="generate_on_close">True indicates to generate on close.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus DeleteObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            bool generate_on_close,
+            bool throw_on_error)
+        {
+            return NtSystemCalls.NtDeleteObjectAuditAlarm(
+                new UnicodeString(subsystem_name),
+                handle_id,
+                generate_on_close).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Generate audit event for an object deleted.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="generate_on_close">True indicates to generate on close.</param>
+        public static void DeleteObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            bool generate_on_close)
+        {
+            DeleteObjectAudit(subsystem_name, handle_id, 
+                generate_on_close, true);
+        }
+
+        /// <summary>
+        /// Generate audit event for a privileges used with an object.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="client_token">The client token used.</param>
+        /// <param name="desired_access">Desired access for the object.</param>
+        /// <param name="privileges">Privileges used to open the object.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus PrivilegeObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            NtToken client_token,
+            AccessMask desired_access,
+            IEnumerable<TokenPrivilege> privileges,
+            bool access_granted,
+            bool throw_on_error
+        )
+        {
+            if (subsystem_name is null)
+            {
+                throw new ArgumentNullException(nameof(subsystem_name));
+            }
+
+            if (client_token is null)
+            {
+                throw new ArgumentNullException(nameof(client_token));
+            }
+
+            if (privileges is null)
+            {
+                throw new ArgumentNullException(nameof(privileges));
+            }
+
+            using (var buffer = new SafePrivilegeSetBuffer(privileges, PrivilegeSetControlFlags.None))
+            {
+                return NtSystemCalls.NtPrivilegeObjectAuditAlarm(
+                    new UnicodeString(subsystem_name),
+                    handle_id, client_token.Handle,
+                    desired_access, buffer,
+                    access_granted).ToNtException(throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Generate audit event for a privileges used with an object.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="handle_id">Handle ID.</param>
+        /// <param name="client_token">The client token used.</param>
+        /// <param name="desired_access">Desired access for the object.</param>
+        /// <param name="privileges">Privileges used to open the object.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        public static void PrivilegeObjectAudit(
+            string subsystem_name,
+            IntPtr handle_id,
+            NtToken client_token,
+            AccessMask desired_access,
+            IEnumerable<TokenPrivilege> privileges,
+            bool access_granted
+        )
+        {
+            PrivilegeObjectAudit(subsystem_name, handle_id,
+                client_token, desired_access, privileges,
+                access_granted, true);
+        }
+
+        /// <summary>
+        /// Generate audit event for a privileges used by a client.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="client_token">The client token used.</param>
+        /// <param name="service_name">The name of the service.</param>
+        /// <param name="privileges">Privileges used in the operation.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus PrivilegedServiceAudit(
+            string subsystem_name,
+            string service_name,
+            NtToken client_token,
+            IEnumerable<TokenPrivilege> privileges,
+            bool access_granted,
+            bool throw_on_error
+        )
+        {
+            if (subsystem_name is null)
+            {
+                throw new ArgumentNullException(nameof(subsystem_name));
+            }
+
+            if (client_token is null)
+            {
+                throw new ArgumentNullException(nameof(client_token));
+            }
+
+            if (privileges is null)
+            {
+                throw new ArgumentNullException(nameof(privileges));
+            }
+
+            if (service_name is null)
+            {
+                throw new ArgumentNullException(nameof(service_name));
+            }
+
+            using (var buffer = new SafePrivilegeSetBuffer(privileges, PrivilegeSetControlFlags.None))
+            {
+                return NtSystemCalls.NtPrivilegedServiceAuditAlarm(
+                    new UnicodeString(subsystem_name),
+                    new UnicodeString(service_name),
+                    client_token.Handle, buffer,
+                    access_granted).ToNtException(throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Generate audit event for a privileges used by a client.
+        /// </summary>
+        /// <param name="subsystem_name">The subsystem name.</param>
+        /// <param name="client_token">The client token used.</param>
+        /// <param name="service_name">The name of the service.</param>
+        /// <param name="privileges">Privileges used in the operation.</param>
+        /// <param name="access_granted">Specify whether access was granted.</param>
+        public static void PrivilegedServiceAudit(
+            string subsystem_name,
+            string service_name,
+            NtToken client_token,
+            IEnumerable<TokenPrivilege> privileges,
+            bool access_granted
+        )
+        {
+            PrivilegedServiceAudit(subsystem_name, service_name,
+                client_token, privileges,
+                access_granted, true);
+        }
+
         #endregion
 
         #region Static Properties
@@ -1679,6 +2073,15 @@ namespace NtApiDotNet
             _cached_names.TryAdd(sid, new SidName(name, source));
             return sid;
         }
+
+        internal static ObjectTypeList[] ConvertObjectTypes(IEnumerable<ObjectTypeEntry> object_types, DisposableList list)
+        {
+            if (object_types == null || !object_types.Any())
+                return null;
+
+            return object_types.Select(o => o.ToStruct(list)).ToArray();
+        }
+
         #endregion
 
         #region Private Members
@@ -2005,14 +2408,6 @@ namespace NtApiDotNet
             }
         }
 
-        private static ObjectTypeList[] ConvertObjectTypes(IEnumerable<ObjectTypeEntry> object_types, DisposableList list)
-        {
-            if (object_types == null || !object_types.Any())
-                return null;
-
-            return object_types.Select(o => o.ToStruct(list)).ToArray();
-        }
-
         private static CachedSigningLevelEaBuffer ReadCachedSigningLevelVersion1(BinaryReader reader)
         {
             int version2 = reader.ReadInt16();
@@ -2140,6 +2535,229 @@ namespace NtApiDotNet
                 GenericAll = 1
             };
             return AccessCheck(sd, token, 1, null, mapping, throw_on_error).Map(r => r.IsSuccess && r.GrantedAccess == 1);
+        }
+
+        private sealed class AuditAccessCheckContext
+        {
+            private readonly string _subsystem_name;
+            private readonly IntPtr _handle_id;
+            private readonly string _object_type_name;
+            private readonly string _object_name;
+            private readonly bool _object_creation;
+            private readonly AuditEventType _audit_type;
+            private readonly AuditAccessCheckFlags _flags;
+            private bool _generate_on_close;
+
+            public AuditAccessCheckContext(
+                string subsystem_name,
+                IntPtr handle_id,
+                string object_type_name,
+                string object_name,
+                bool object_creation, 
+                AuditEventType audit_type,
+                AuditAccessCheckFlags flags)
+            {
+                _subsystem_name = subsystem_name ?? throw new ArgumentNullException(nameof(subsystem_name));
+                _handle_id = handle_id;
+                _object_type_name = object_type_name ?? throw new ArgumentNullException(nameof(object_type_name));
+                _object_name = object_name ?? throw new ArgumentNullException(nameof(object_name));
+                _object_creation = object_creation;
+                _audit_type = audit_type;
+                _flags = flags;
+            }
+
+            public NtStatus AccessCheckWithResultList(
+                SafeBuffer security_descriptor,
+                SafeHandle self_sid,
+                SafeKernelObjectHandle client_token,
+                AccessMask desired_access,
+                ObjectTypeList[] object_type_list,
+                int object_type_list_length,
+                ref GenericMapping generic_mapping,
+                SafePrivilegeSetBuffer required_privileges,
+                ref int buffer_length,
+                AccessMask[] granted_access_list,
+                NtStatus[] access_status_list)
+            {
+                return NtSystemCalls.NtAccessCheckByTypeResultListAndAuditAlarmByHandle(
+                    new UnicodeString(_subsystem_name), _handle_id, client_token, 
+                    new UnicodeString(_object_type_name), new UnicodeString(_object_name),
+                    security_descriptor, self_sid, desired_access, _audit_type, _flags, 
+                    object_type_list, object_type_list_length, ref generic_mapping, _object_creation,
+                    granted_access_list, access_status_list, out _generate_on_close);
+            }
+
+            public NtStatus AccessCheckByType(
+                SafeBuffer security_descriptor,
+                SafeHandle self_sid,
+                SafeKernelObjectHandle client_token,
+                AccessMask desired_access,
+                [In] ObjectTypeList[] object_type_list,
+                int object_type_list_length,
+                ref GenericMapping generic_mapping,
+                SafePrivilegeSetBuffer required_privileges,
+                ref int buffer_length,
+                out AccessMask granted_access,
+                out NtStatus access_status)
+            {
+                NtToken token = NtToken.FromHandle(client_token.DangerousGetHandle(), false);
+                using (token.Impersonate())
+                {
+                    return NtSystemCalls.NtAccessCheckByTypeAndAuditAlarm(
+                        new UnicodeString(_subsystem_name), _handle_id,
+                        new UnicodeString(_object_type_name), new UnicodeString(_object_name),
+                        security_descriptor, self_sid, desired_access, _audit_type, _flags, object_type_list, object_type_list_length,
+                        ref generic_mapping, _object_creation, out granted_access, out access_status, out _generate_on_close);
+                }
+            }
+
+            public AccessCheckResult Map(AccessCheckResult result)
+            {
+                result.GenerateOnClose = _generate_on_close;
+                return result;
+            }
+        }
+
+        private delegate NtStatus AccessCheckByTypeCallback(
+            SafeBuffer security_descriptor,
+            SafeHandle self_sid,
+            SafeKernelObjectHandle client_token,
+            AccessMask desired_access,
+            [In] ObjectTypeList[] object_type_list,
+            int object_type_list_length,
+            ref GenericMapping generic_mapping,
+            SafePrivilegeSetBuffer required_privileges,
+            ref int buffer_length,
+            out AccessMask granted_access,
+            out NtStatus access_status);
+
+        private delegate NtStatus AccessCheckWithResultListCallback(
+            SafeBuffer security_descriptor,
+            SafeHandle self_sid,
+            SafeKernelObjectHandle client_token,
+            AccessMask desired_access,
+            ObjectTypeList[] object_type_list,
+            int object_type_list_length,
+            ref GenericMapping generic_mapping,
+            SafePrivilegeSetBuffer required_privileges,
+            ref int buffer_length,
+            AccessMask[] granted_access_list,
+            NtStatus[] access_status_list);
+
+        private static NtResult<AccessCheckResult> AccessCheckByType(SecurityDescriptor sd, NtToken token,
+            AccessMask desired_access, Sid principal, GenericMapping generic_mapping, IEnumerable<ObjectTypeEntry> object_types,
+            AccessCheckByTypeCallback callback, bool throw_on_error)
+        {
+            if (sd == null)
+            {
+                throw new ArgumentNullException("sd");
+            }
+
+            if (token == null)
+            {
+                throw new ArgumentNullException("token");
+            }
+
+            if (desired_access.IsEmpty)
+            {
+                return new AccessCheckResult(NtStatus.STATUS_ACCESS_DENIED, 0, null,
+                    generic_mapping, object_types.GetDefaultObjectType(), false).CreateResult();
+            }
+
+            using (var list = new DisposableList())
+            {
+                var sd_buffer = list.AddResource(sd.ToSafeBuffer());
+                var imp_token = list.AddResource(DuplicateForAccessCheck(token, throw_on_error));
+                if (!imp_token.IsSuccess)
+                {
+                    return imp_token.Cast<AccessCheckResult>();
+                }
+                var self_sid = list.AddResource(principal?.ToSafeBuffer() ?? SafeSidBufferHandle.Null);
+                var privs = list.AddResource(new SafePrivilegeSetBuffer());
+                var object_type_list = ConvertObjectTypes(object_types, list);
+                int repeat_count = 1;
+
+                while (true)
+                {
+                    int buffer_length = privs.Length;
+                    NtStatus status = callback(sd_buffer, self_sid, imp_token.Result.Handle, desired_access,
+                        object_type_list, object_type_list?.Length ?? 0, ref generic_mapping, privs,
+                        ref buffer_length, out AccessMask granted_access, out NtStatus result_status);
+                    if (repeat_count == 0 || status != NtStatus.STATUS_BUFFER_TOO_SMALL)
+                    {
+                        return status.CreateResult(throw_on_error, ()
+                            => new AccessCheckResult(result_status, granted_access,
+                            privs, generic_mapping, object_types.GetDefaultObjectType(), false));
+                    }
+
+                    repeat_count--;
+                    privs = list.AddResource(new SafePrivilegeSetBuffer(buffer_length));
+                }
+            }
+        }
+
+        private static NtResult<AccessCheckResult[]> AccessCheckWithResultList(SecurityDescriptor sd, NtToken token,
+            AccessMask desired_access, Sid principal, GenericMapping generic_mapping, IEnumerable<ObjectTypeEntry> object_types,
+            AccessCheckWithResultListCallback callback, bool throw_on_error)
+        {
+            if (sd == null)
+            {
+                throw new ArgumentNullException(nameof(sd));
+            }
+
+            if (token == null)
+            {
+                throw new ArgumentNullException(nameof(token));
+            }
+
+            if (object_types == null)
+            {
+                throw new ArgumentNullException(nameof(object_types));
+            }
+
+            if (!object_types.Any())
+            {
+                throw new ArgumentException("Must specify at least one object type.");
+            }
+
+            if (desired_access.IsEmpty)
+            {
+                return object_types.Select((o, i) => new AccessCheckResult(NtStatus.STATUS_ACCESS_DENIED,
+                            0, null, generic_mapping, o, false)).ToArray().CreateResult();
+            }
+
+            using (var list = new DisposableList())
+            {
+                var sd_buffer = list.AddResource(sd.ToSafeBuffer());
+                var imp_token = list.AddResource(DuplicateForAccessCheck(token, throw_on_error));
+                if (!imp_token.IsSuccess)
+                {
+                    return imp_token.Cast<AccessCheckResult[]>();
+                }
+                var self_sid = list.AddResource(principal?.ToSafeBuffer() ?? SafeSidBufferHandle.Null);
+                var privs = list.AddResource(new SafePrivilegeSetBuffer());
+                var object_type_list = ConvertObjectTypes(object_types, list);
+                int repeat_count = 1;
+
+                while (true)
+                {
+                    int buffer_length = privs.Length;
+                    AccessMask[] granted_access_list = new AccessMask[object_type_list.Length];
+                    NtStatus[] status_list = new NtStatus[object_type_list.Length];
+                    NtStatus status = callback(sd_buffer, self_sid, imp_token.Result.Handle, desired_access,
+                        object_type_list, object_type_list?.Length ?? 0, ref generic_mapping, privs, ref buffer_length,
+                        granted_access_list, status_list);
+                    if (repeat_count == 0 || status != NtStatus.STATUS_BUFFER_TOO_SMALL)
+                    {
+                        return status.CreateResult(throw_on_error, ()
+                            => object_types.Select((o, i) => new AccessCheckResult(status_list[i],
+                            granted_access_list[i], privs, generic_mapping, o, false)).ToArray());
+                    }
+
+                    repeat_count--;
+                    privs = list.AddResource(new SafePrivilegeSetBuffer(buffer_length));
+                }
+            }
         }
 
         #endregion

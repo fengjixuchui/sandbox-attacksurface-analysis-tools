@@ -266,6 +266,33 @@ namespace NtApiDotNet.Win32
             return (Win32Error)Marshal.GetLastWin32Error();
         }
 
+        internal static NtResult<T> CreateWin32Result<T>(this bool result, bool throw_on_error, Func<T> create_func)
+        {
+            if (result)
+            {
+                return create_func().CreateResult();
+            }
+            return NtObjectUtils.MapDosErrorToStatus().CreateResultFromError<T>(throw_on_error);
+        }
+
+
+        internal static NtResult<T> CreateWin32Result<T>(this Win32Error result, bool throw_on_error, Func<T> create_func)
+        {
+            if (result == Win32Error.SUCCESS)
+            {
+                return create_func().CreateResult();
+            }
+            return result.CreateResultFromDosError<T>(throw_on_error);
+        }
+
+        internal static Win32Error GetLastWin32Error(this bool result)
+        {
+            if (result)
+                return Win32Error.SUCCESS;
+            return GetLastWin32Error();
+        }
+
+
         /// <summary>
         /// Open a file with the Win32 CreateFile API.
         /// </summary>
