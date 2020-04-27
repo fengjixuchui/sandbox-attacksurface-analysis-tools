@@ -12,84 +12,18 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using Microsoft.Win32.SafeHandles;
 using NtApiDotNet.Win32.SafeHandles;
 using NtApiDotNet.Win32.Security.Authentication;
+using NtApiDotNet.Win32.Security.Native;
+using NtApiDotNet.Win32.Security.Policy;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 
 namespace NtApiDotNet.Win32
 {
-    enum KERB_LOGON_SUBMIT_TYPE
-    {
-        KerbInteractiveLogon = 2,
-        KerbSmartCardLogon = 6,
-        KerbWorkstationUnlockLogon = 7,
-        KerbSmartCardUnlockLogon = 8,
-        KerbProxyLogon = 9,
-        KerbTicketLogon = 10,
-        KerbTicketUnlockLogon = 11,
-        KerbS4ULogon = 12,        
-        KerbCertificateLogon = 13, 
-        KerbCertificateS4ULogon = 14,
-        KerbCertificateUnlockLogon = 15,
-        KerbNoElevationLogon = 83,
-        KerbLuidLogon = 84,
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    struct KERB_S4U_LOGON
-    {
-        public KERB_LOGON_SUBMIT_TYPE MessageType;
-        public int Flags;
-        public UnicodeStringOut ClientUpn;
-        public UnicodeStringOut ClientRealm;
-    }
-
-    [StructLayout(LayoutKind.Sequential, CharSet=CharSet.Ansi)]
-    class LsaString
-    {
-        public ushort Length;
-        public ushort MaximumLength;
-        [MarshalAs(UnmanagedType.LPStr)]
-        string Buffer;
-
-        public LsaString(string str)
-        {
-            Length = (ushort)str.Length;
-            MaximumLength = (ushort)(str.Length + 1);
-            Buffer = str;
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    class TOKEN_SOURCE
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst=8)]
-        public byte[] SourceName;
-        public Luid SourceIdentifier;
-
-        public TOKEN_SOURCE(string source_name)
-        {
-            SourceName = Encoding.ASCII.GetBytes(source_name);
-            Array.Resize(ref SourceName, 8);
-            SourceIdentifier = new Luid();
-        }
-    }
-
-    [StructLayout(LayoutKind.Sequential)]
-    class QUOTA_LIMITS
-    {
-        public IntPtr PagedPoolLimit;
-        public IntPtr NonPagedPoolLimit;
-        public IntPtr MinimumWorkingSetSize;
-        public IntPtr MaximumWorkingSetSize;
-        public IntPtr PagefileLimit;
-        public LargeIntegerStruct TimeLimit;
-    }
-
     /// <summary>
     /// Logon type
     /// </summary>
@@ -149,21 +83,23 @@ namespace NtApiDotNet.Win32
         CachedUnlock
     }
 
-    internal class SafeLsaHandle : SafeHandleZeroOrMinusOneIsInvalid
+    /// <summary>
+    /// Specify what account rights to get.
+    /// </summary>
+    public enum AccountRightType
     {
-        public SafeLsaHandle(IntPtr handle, bool ownsHandle) : base(ownsHandle)
-        {
-            SetHandle(handle);
-        }
-
-        public SafeLsaHandle() : base(true)
-        {
-        }
-
-        protected override bool ReleaseHandle()
-        {
-            return Win32NativeMethods.LsaClose(handle).IsSuccess();
-        }
+        /// <summary>
+        /// Get all account rights.
+        /// </summary>
+        All,
+        /// <summary>
+        /// Get all privilege account rights.
+        /// </summary>
+        Privilege,
+        /// <summary>
+        /// Get logon account rights.
+        /// </summary>
+        Logon
     }
 
     /// <summary>
@@ -181,7 +117,7 @@ namespace NtApiDotNet.Win32
         /// <returns>The logged on token.</returns>
         public static NtToken Logon(string user, string domain, string password, SecurityLogonType type)
         {
-            if (!Win32NativeMethods.LogonUser(user, domain, password, type, 0, out SafeKernelObjectHandle handle))
+            if (!SecurityNativeMethods.LogonUser(user, domain, password, type, 0, out SafeKernelObjectHandle handle))
             {
                 throw new SafeWin32Exception();
             }
@@ -207,7 +143,7 @@ namespace NtApiDotNet.Win32
 
             using (var group_buffer = builder.ToBuffer())
             {
-                if (!Win32NativeMethods.LogonUserExExW(user, domain, password, type, 0, group_buffer, 
+                if (!SecurityNativeMethods.LogonUserExExW(user, domain, password, type, 0, group_buffer, 
                     out SafeKernelObjectHandle token, null, null, null, null))
                 {
                     throw new SafeWin32Exception();
@@ -227,18 +163,11 @@ namespace NtApiDotNet.Win32
         /// <returns>The logged on token.</returns>
         public static NtResult<NtToken> LogonS4U(string user, string realm, SecurityLogonType type, string auth_package, bool throw_on_error)
         {
-            NtStatus status;
-            SafeLsaHandle hlsa;
-            if (!Win32NativeMethods.LsaRegisterLogonProcess(new LsaString("NtApiDotNet"), out hlsa, out uint _).IsSuccess())
+            using (var hlsa = SafeLsaLogonHandle.Connect(throw_on_error))
             {
-                status = Win32NativeMethods.LsaConnectUntrusted(out hlsa);
-                if (!status.IsSuccess())
-                    return status.CreateResultFromError<NtToken>(throw_on_error);
-            }
-
-            using (hlsa)
-            {
-                status = Win32NativeMethods.LsaLookupAuthenticationPackage(hlsa, new LsaString(auth_package), out uint authnPkg);
+                if (!hlsa.IsSuccess)
+                    return hlsa.Cast<NtToken>();
+                NtStatus status = SecurityNativeMethods.LsaLookupAuthenticationPackage(hlsa.Result, new LsaString(auth_package), out uint authnPkg);
                 if (!status.IsSuccess())
                     return status.CreateResultFromError<NtToken>(throw_on_error);
                 byte[] user_bytes = Encoding.Unicode.GetBytes(user);
@@ -265,12 +194,12 @@ namespace NtApiDotNet.Win32
                     Marshal.StructureToPtr(logon_struct, buffer.DangerousGetHandle(), false);
 
                     TOKEN_SOURCE tokenSource = new TOKEN_SOURCE("NT.NET");
-                    Win32NativeMethods.AllocateLocallyUniqueId(out tokenSource.SourceIdentifier);
+                    SecurityNativeMethods.AllocateLocallyUniqueId(out tokenSource.SourceIdentifier);
 
                     LsaString originName = new LsaString("S4U");
                     QUOTA_LIMITS quota_limits = new QUOTA_LIMITS();
 
-                    return Win32NativeMethods.LsaLogonUser(hlsa, originName, type, authnPkg,
+                    return SecurityNativeMethods.LsaLogonUser(hlsa.Result, originName, type, authnPkg,
                         buffer, buffer.Length, IntPtr.Zero,
                         tokenSource, out SafeLsaReturnBufferHandle profile, 
                         out int cbProfile, out Luid logon_id, out SafeKernelObjectHandle token_handle,
@@ -353,6 +282,119 @@ namespace NtApiDotNet.Win32
         public static IEnumerable<LogonSession> GetLogonSessions()
         {
             return GetLogonSessions(true).Result;
+        }
+
+        /// <summary>
+        /// Get account rights assigned to a SID.
+        /// </summary>
+        /// <param name="sid">The SID to query.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The list of account rights.</returns>
+        public static NtResult<IEnumerable<AccountRight>> GetAccountRights(Sid sid, bool throw_on_error)
+        {
+            return AccountRight.GetAccountRights(null, sid, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get account rights assigned to a SID.
+        /// </summary>
+        /// <param name="sid">The SID to query.</param>
+        /// <returns>The list of account rights.</returns>
+        public static IEnumerable<AccountRight> GetAccountRights(Sid sid)
+        {
+            return GetAccountRights(sid, true).Result;
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="account_right">The name of the account right, such as SeImpersonatePrivilege.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static NtResult<IEnumerable<Sid>> GetAccountRightSids(string account_right, bool throw_on_error)
+        {
+            return AccountRight.GetSids(null, account_right, throw_on_error).Map<IEnumerable<Sid>>(s => s.AsReadOnly());
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="account_right">The name of the account right, such as SeImpersonatePrivilege.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static IEnumerable<Sid> GetAccountRightSids(string account_right)
+        {
+            return GetAccountRightSids(account_right, true).Result;
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="privilege">The account right privilege to query.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static NtResult<IEnumerable<Sid>> GetAccountRightSids(TokenPrivilegeValue privilege, bool throw_on_error)
+        {
+            return GetAccountRightSids(privilege.ToString(), throw_on_error);
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="privilege">The account right privilege to query.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static IEnumerable<Sid> GetAccountRightSids(TokenPrivilegeValue privilege)
+        {
+            return GetAccountRightSids(privilege, true).Result;
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="logon_type">The logon account right to query.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static NtResult<IEnumerable<Sid>> GetAccountRightSids(AccountRightLogonType logon_type, bool throw_on_error)
+        {
+            return GetAccountRightSids(logon_type.ToString(), throw_on_error);
+        }
+
+        /// <summary>
+        /// Get SIDs associated with an account right.
+        /// </summary>
+        /// <param name="logon_type">The logon account right to query.</param>
+        /// <returns>The list of SIDs assigned to the account right.</returns>
+        public static IEnumerable<Sid> GetAccountRightSids(AccountRightLogonType logon_type)
+        {
+            return GetAccountRightSids(logon_type, true).Result;
+        }
+
+        /// <summary>
+        /// Get account rights.
+        /// </summary>
+        /// <param name="type">Specify the type of account rights to get.</param>
+        /// <returns>Account rights.</returns>
+        public static IEnumerable<AccountRight> GetAccountRights(AccountRightType type)
+        {
+            IEnumerable<string> rights = new string[0];
+            if (type == AccountRightType.All || type == AccountRightType.Privilege)
+            {
+                rights = Enum.GetNames(typeof(TokenPrivilegeValue));
+            }
+            if (type == AccountRightType.All || type == AccountRightType.Logon)
+            {
+                rights = rights.Concat(Enum.GetNames(typeof(AccountRightLogonType)));
+            }
+
+            return rights.Select(n => new AccountRight(null, n, null)).ToList().AsReadOnly();
+        }
+
+        /// <summary>
+        /// Get all account rights.
+        /// </summary>
+        /// <returns>All account rights.</returns>
+        public static IEnumerable<AccountRight> GetAccountRights()
+        {
+            return GetAccountRights(AccountRightType.All);
         }
     }
 }
