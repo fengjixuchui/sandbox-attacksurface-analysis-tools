@@ -355,6 +355,16 @@ namespace NtApiDotNet.Win32.Security.Native
                 SafeTokenGroupsBuffer pSids
             );
 
+        [DllImport("authz.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        internal static extern bool AuthzGetInformationFromContext(
+          SafeAuthZClientContextHandle hAuthzClientContext,
+          AUTHZ_CONTEXT_INFORMATION_CLASS InfoClass,
+          int BufferSize,
+          out int pSizeRequired,
+          SafeBuffer Buffer
+        );
+
         [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         internal static extern void AuditFree(IntPtr Buffer);
 
@@ -494,7 +504,7 @@ namespace NtApiDotNet.Win32.Security.Native
             uint AuthenticationPackage,
             SafeBuffer AuthenticationInformation,
             int AuthenticationInformationLength,
-            IntPtr LocalGroups,
+            SafeTokenGroupsBuffer LocalGroups,
             TOKEN_SOURCE SourceContext,
             out SafeLsaReturnBufferHandle ProfileBuffer,
             out int ProfileBufferLength,
@@ -559,6 +569,14 @@ namespace NtApiDotNet.Win32.Security.Native
           UnicodeString UserRight,
           out SafeLsaMemoryBuffer Buffer,
           out int CountReturned
+        );
+
+        [DllImport("sspicli.dll", CharSet = CharSet.Unicode)]
+        internal static extern SecStatusCode QueryContextAttributesEx(
+          SecHandle phContext,
+          SECPKG_ATTR ulAttribute,
+          SafeBuffer pBuffer,
+          int cbBuffer
         );
 
         public static SecStatusCode CheckResult(this SecStatusCode result)

@@ -14,6 +14,8 @@
 
 using NtApiDotNet.Win32.Security.Native;
 using System;
+using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace NtApiDotNet.Win32.Security.Authentication
 {
@@ -26,7 +28,9 @@ namespace NtApiDotNet.Win32.Security.Authentication
         private readonly SecHandle _context;
         private readonly AcceptContextReqFlags _req_flags;
         private readonly SecDataRep _data_rep;
+        private readonly byte[] _channel_binding;
         private bool _new_context;
+        private int _token_count;
 
         /// <summary>
         /// The current authentication token.
@@ -47,6 +51,16 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Expiry of the authentication.
         /// </summary>
         public long Expiry { get; private set; }
+
+        /// <summary>
+        /// Get the client name supplied by the Client.
+        /// </summary>
+        public string ClientTargetName => GetTargetName();
+
+        /// <summary>
+        /// Get the Session Key for this context.
+        /// </summary>
+        public byte[] SessionKey => GetSessionKey(_context);
 
         /// <summary>
         /// Get an access token for the authenticated user.
@@ -73,14 +87,30 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// </summary>
         /// <param name="creds">Credential handle.</param>
         /// <param name="req_attributes">Request attribute flags.</param>
+        /// <param name="channel_binding">Optional channel binding token.</param>
         /// <param name="data_rep">Data representation.</param>
-        public ServerAuthenticationContext(CredentialHandle creds, AcceptContextReqFlags req_attributes, SecDataRep data_rep)
+        public ServerAuthenticationContext(CredentialHandle creds, AcceptContextReqFlags req_attributes,
+            byte[] channel_binding, SecDataRep data_rep)
         {
             _creds = creds;
             _context = new SecHandle();
             _req_flags = req_attributes & ~AcceptContextReqFlags.AllocateMemory;
             _data_rep = data_rep;
             _new_context = true;
+            _token_count = 0;
+            _channel_binding = channel_binding;
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="creds">Credential handle.</param>
+        /// <param name="req_attributes">Request attribute flags.</param>
+        /// <param name="data_rep">Data representation.</param>
+        public ServerAuthenticationContext(CredentialHandle creds, 
+            AcceptContextReqFlags req_attributes, SecDataRep data_rep)
+            : this(creds, req_attributes, null, data_rep)
+        {
         }
 
         /// <summary>
@@ -109,8 +139,14 @@ namespace NtApiDotNet.Win32.Security.Authentication
             {
                 SecBuffer out_sec_buffer = list.AddResource(new SecBuffer(SecBufferType.Token, 64*1024));
                 SecBufferDesc out_buffer_desc = list.AddResource(new SecBufferDesc(out_sec_buffer));
-                SecBuffer in_sec_buffer = list.AddResource(new SecBuffer(SecBufferType.Token, token.ToArray()));
-                SecBufferDesc in_buffer_desc = list.AddResource(new SecBufferDesc(in_sec_buffer));
+
+                List<SecBuffer> buffers = new List<SecBuffer>();
+                buffers.Add(list.AddResource(new SecBuffer(SecBufferType.Token, token.ToArray())));
+                if (_channel_binding != null)
+                {
+                    buffers.Add(list.AddResource(SecBuffer.CreateForChannelBinding(_channel_binding)));
+                }
+                SecBufferDesc in_buffer_desc = list.AddResource(new SecBufferDesc(buffers.ToArray()));
 
                 LargeInteger expiry = new LargeInteger();
                 SecStatusCode result = SecurityNativeMethods.AcceptSecurityContext(_creds.CredHandle, new_context ? null : _context,
@@ -122,7 +158,7 @@ namespace NtApiDotNet.Win32.Security.Authentication
                     SecurityNativeMethods.CompleteAuthToken(_context, out_buffer_desc).CheckResult();
                 }
 
-                Token = AuthenticationToken.Parse(out_buffer_desc.ToArray()[0].ToArray());
+                Token = AuthenticationToken.Parse(_creds.PackageName, _token_count++, false, out_buffer_desc.ToArray()[0].ToArray());
                 return !(result == SecStatusCode.ContinueNeeded || result == SecStatusCode.CompleteAndContinue);
             }
         }
@@ -131,6 +167,32 @@ namespace NtApiDotNet.Win32.Security.Authentication
         {
             if (!_new_context)
                 SecurityNativeMethods.DeleteSecurityContext(_context);
+        }
+
+        private string GetTargetName()
+        {
+            using (var buffer = new SafeStructureInOutBuffer<SecPkgContext_ClientSpecifiedTarget>())
+            {
+                var result = SecurityNativeMethods.QueryContextAttributesEx(_context, SECPKG_ATTR.CLIENT_SPECIFIED_TARGET, buffer, buffer.Length);
+                if (result == SecStatusCode.Success)
+                    return Marshal.PtrToStringUni(buffer.Result.sTargetName);
+            }
+            return string.Empty;
+        }
+
+        internal static byte[] GetSessionKey(SecHandle context)
+        {
+            using (var buffer = new SafeStructureInOutBuffer<SecPkgContext_SessionKey>())
+            {
+                var result = SecurityNativeMethods.QueryContextAttributesEx(context, SECPKG_ATTR.SESSION_KEY, buffer, buffer.Length);
+                if (result == SecStatusCode.Success)
+                {
+                    byte[] ret = new byte[buffer.Result.SessionKeyLength];
+                    Marshal.Copy(buffer.Result.SessionKey, ret, 0, ret.Length);
+                    return ret;
+                }
+            }
+            return new byte[0];
         }
     }
 }

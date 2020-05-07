@@ -577,7 +577,7 @@ Remove SeBackupPrivilege and SeRestorePrivilege from an explicit token object.
 function Remove-NtTokenPrivilege {
     Param(
         [Parameter(Mandatory = $true, Position = 0)]
-        [alias("Privilege")]
+        [alias("Privileges")]
         [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
         [NtApiDotNet.NtToken]$Token
     )
@@ -5417,6 +5417,8 @@ Specify a Code DOM provider. Defaults to C#.
 Specify optional options for the code generation if Provider is also specified.
 .PARAMETER OutputPath
 Specify optional output directory to write formatted client.
+.PARAMETER GroupByName
+Specify when outputting to a directory to group by the name of the server executable.
 .INPUTS
 None
 .OUTPUTS
@@ -5441,7 +5443,8 @@ function Format-RpcClient {
         [NtApiDotNet.Win32.Rpc.RpcClientBuilderFlags]$Flags = 0,
         [System.CodeDom.Compiler.CodeDomProvider]$Provider,
         [System.CodeDom.Compiler.CodeGeneratorOptions]$Options,
-        [string]$OutputPath
+        [string]$OutputPath,
+        [switch]$GroupByName
     )
 
     BEGIN {
@@ -5473,7 +5476,13 @@ function Format-RpcClient {
                 $src | Write-Output
             }
             else {
-                $path = Join-Path -Path $OutputPath -ChildPath "$($s.InterfaceId)_$($s.InterfaceVersion).$file_ext"
+                if ($GroupByName) {
+                    $path = Join-Path -Path $OutputPath -ChildPath $s.Name.ToLower()
+                    mkdir $path -ErrorAction Ignore | Out-Null
+                } else {
+                    $path = $OutputPath
+                }
+                $path = Join-Path -Path $path -ChildPath "$($s.InterfaceId)_$($s.InterfaceVersion).$file_ext"
                 $src | Set-Content -Path $path
             }
         }
@@ -6566,6 +6575,58 @@ function Read-AuthCredential {
 
 <#
 .SYNOPSIS
+Get user credentials.
+.DESCRIPTION
+This cmdlet gets user credentials and encodes the password.
+.PARAMETER UserName
+The username to use.
+.PARAMETER Domain
+The domain to use.
+.PARAMETER Password
+The password to use.
+.PARAMETER SecurePassword
+The secure password to use.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.UserCredentials
+.EXAMPLE
+$user_creds = Get-UserCredentials -UserName "ABC" -Domain "DOMAIN" -Password "pwd"
+Get user credentials from components.
+#>
+function Get-AuthCredential {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position = 0)]
+        [string]$UserName,
+        [Parameter(Position = 1)]
+        [string]$Domain,
+        [Parameter(Position = 2)]
+        [string]$Password,
+        [Parameter]
+        [System.Security.SecureString]$SecurePassword
+    )
+
+    $creds = [NtApiDotNet.Win32.Security.Authentication.UserCredentials]::new()
+    if ($UserName -NE "") {
+        $creds.UserName = $UserName
+    }
+    
+    if ($Domain -NE "") {
+        $creds.Domain = $Domain
+    }
+
+    if ($Password -NE "") {
+        $creds.SetPassword($Password)
+    }
+    else {
+        $creds.Password = $SecurePassword
+    }
+    $creds | Write-Output
+}
+
+<#
+.SYNOPSIS
 Create a new credentials handle.
 .DESCRIPTION
 This cmdlet creates a new authentication credentials handle.
@@ -6577,20 +6638,34 @@ The use flags for the credentials.
 Optional authentication ID to authenticate.
 .PARAMETER Principal
 Optional principal to authentication.
-.PARAMETER Credentials
+.PARAMETER Credential
 Optional Credentials for the authentication.
-.PARAMETER ReadCredentials
-Specify to read the credentials from the console.
+.PARAMETER ReadCredential
+Specify to read the credentials from the console if not specified explicitly.
+.PARAMETER UserName
+The username to use.
+.PARAMETER Domain
+The domain to use.
+.PARAMETER Password
+The password to use.
+.PARAMETER SecurePassword
+The secure password to use.
 .INPUTS
 None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.CredentialHandle
 .EXAMPLE
-$h = Get-AuthCredentialHandle "NTLM" Both
+$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Both
 Get a credential handle for the NTLM package for both directions.
+.EXAMPLE
+$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Both -UserName "user" -Password "pwd"
+Get a credential handle for the NTLM package for both directions with a username password.
+.EXAMPLE
+$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Inbound -ReadCredential
+Get a credential handle for the NTLM package for outbound directions and read credentials from the shell.
 #>
 function Get-AuthCredentialHandle {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="FromCreds")]
     Param(
         [Parameter(Position = 0, Mandatory)]
         [string]$Package,
@@ -6598,15 +6673,31 @@ function Get-AuthCredentialHandle {
         [NtApiDotNet.Win32.Security.Authentication.SecPkgCredFlags]$UseFlag,
         [Nullable[NtApiDotNet.Luid]]$AuthId,
         [string]$Principal,
-        [NtApiDotNet.Win32.Security.Authentication.AuthenticationCredentials]$Credentials,
-        [switch]$ReadCredentials
+        [Parameter(ParameterSetName="FromCreds")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationCredentials]$Credential,
+        [Parameter(ParameterSetName="FromParts")]
+        [switch]$ReadCredential,
+        [Parameter(ParameterSetName="FromParts")]
+        [string]$UserName,
+        [Parameter(ParameterSetName="FromParts")]
+        [string]$Domain,
+        [Parameter(ParameterSetName="FromParts")]
+        [string]$Password,
+        [Parameter(ParameterSetName="FromParts")]
+        [System.Security.SecureString]$SecurePassword
     )
 
-    if ($ReadCredentials) {
-        $Credentials = Read-AuthCredential
+    if ($PSCmdlet.ParameterSetName -EQ "FromParts") {
+        if ($ReadCredential) {
+            $Credential = Read-AuthCredential -UserName $UserName -Domain $Domain `
+                    -Password $Password
+        } else {
+            $Credential = Get-AuthCredential -UserName $UserName -Domain $Domain `
+                    -Password $Password -SecurePassword $SecurePassword
+        }
     }
 
-    [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credentials) | Write-Output
+    [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credential) | Write-Output
 }
 
 <#
@@ -6622,6 +6713,8 @@ Request attributes.
 Optional SPN target.
 .PARAMETER DataRepresentation
 Data representation format.
+.PARAMETER ChannelBinding
+Optional channel binding token.
 .INPUTS
 None
 .OUTPUTS
@@ -6634,11 +6727,12 @@ function Get-AuthClientContext {
         [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]$CredHandle,
         [NtApiDotNet.Win32.Security.Authentication.InitializeContextReqFlags]$RequestAttributes = 0,
         [string]$Target,
+        [byte[]]$ChannelBinding,
         [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native"
     )
 
     [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]::new($CredHandle, `
-            $RequestAttributes, $Target, $DataRepresentation) | Write-Output
+            $RequestAttributes, $Target, $ChannelBinding, $DataRepresentation) | Write-Output
 }
 
 <#
@@ -6652,6 +6746,8 @@ The credential handle to use.
 Request attributes.
 .PARAMETER DataRepresentation
 Data representation format.
+.PARAMETER ChannelBinding
+Optional channel binding token.
 .INPUTS
 None
 .OUTPUTS
@@ -6663,11 +6759,12 @@ function Get-AuthServerContext {
         [Parameter(Position = 0, Mandatory)]
         [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]$CredHandle,
         [NtApiDotNet.Win32.Security.Authentication.AcceptContextReqFlags]$RequestAttributes = 0,
-        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native"
+        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native",
+        [byte[]]$ChannelBinding
     )
 
     [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]::new($CredHandle, `
-            $RequestAttributes, $DataRepresentation) | Write-Output
+            $RequestAttributes, $ChannelBinding, $DataRepresentation) | Write-Output
 }
 
 <#
@@ -6824,6 +6921,8 @@ The authentication context to extract token from.
 The authentication token to format.
 .PARAMETER AsBytes
 Always format as a hex dump.
+.PARAMETER AsDER
+Always format as a ASN.1 DER structure.
 .INPUTS
 None
 .OUTPUTS
@@ -6836,7 +6935,8 @@ function Format-AuthToken {
         [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
         [Parameter(Position = 0, Mandatory, ParameterSetName="FromContext")]
         [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
-        [switch]$AsBytes
+        [switch]$AsBytes,
+        [switch]$AsDER
     )
 
     PROCESS {
@@ -6848,10 +6948,72 @@ function Format-AuthToken {
             if ($ba.Length -gt 0) {
                 Out-HexDump -Bytes $ba -ShowAll
             }
+        } elseif ($AsDER) {
+            $ba = $Token.ToArray()
+            if ($ba.Length -gt 0) {
+                Format-ASN1DER -Bytes $ba
+            }
         } else {
             $Token.Format() | Write-Output
         }
     }
+}
+
+<#
+.SYNOPSIS
+Exports an authentication token to a file.
+.DESCRIPTION
+This cmdlet exports an authentication token to a file.
+.PARAMETER Context
+The authentication context to extract token from.
+.PARAMETER Token
+The authentication token to export.
+.PARAMETER Path
+The path to the file to export.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Export-AuthToken {
+    [CmdletBinding(DefaultParameterSetName="FromContext")]
+    Param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromToken")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromContext")]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [Parameter(Position = 1, Mandatory)]
+        [string]$Path
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromContext") {
+        $Token = $Context.Token
+    }
+
+    $Token.ToArray() | Set-Content -Path $Path -Encoding Byte
+}
+
+<#
+.SYNOPSIS
+Imports an authentication token to a file.
+.DESCRIPTION
+This cmdlet imports an authentication token from a file.
+.PARAMETER Path
+The path to the file to import.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
+#>
+function Import-AuthToken {
+    [CmdletBinding(DefaultParameterSetName="FromContext")]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [string]$Path
+    )
+
+    $token = [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken][byte[]](Get-Content -Path $Path -Encoding Byte)
+    Write-Output $token
 }
 
 <#
@@ -8785,4 +8947,292 @@ Get all Console Sesssions.
 #>
 function Get-NtConsoleSession {
     [NtApiDotNet.Win32.Win32Utils]::GetConsoleSessions() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get a service principal name.
+.DESCRIPTION
+This cmdlet gets SPN for a string.
+.PARAMETER Name
+Specify the SPN.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.ServicePrincipalName
+.EXAMPLE
+Get-ServicePrincipalName -Name "HTTP/www.domain.com"
+Get the SPN from a string.
+#>
+function Get-ServicePrincipalName {
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [string]$Name
+    )
+    [NtApiDotNet.Win32.Security.Authentication.ServicePrincipalName]::Parse($Name) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get a token's ID values.
+.DESCRIPTION
+This cmdlet will get Token's ID values such as Authentication ID and Origin ID.
+.PARAMETER Authentication
+Specify to get authentication Id.
+.PARAMETER Origin
+Specify to get origin Id.
+.PARAMETER Modified
+Specify to get modified Id.
+.PARAMETER Token
+Optional token object to use to get ID. Must be accesible for Query right.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Luid
+.EXAMPLE
+Get-NtTokenId
+Get the Token ID field.
+.EXAMPLE
+Get-NtTokenOwner -Token $token
+Get Token ID on an explicit token object.
+.EXAMPLE
+Get-NtTokenOwner -Authentication
+Get the token's Authentication ID.
+.EXAMPLE
+Get-NtTokenOwner -Origin
+Get the token's Origin ID.
+#>
+function Get-NtTokenId {
+    [CmdletBinding(DefaultParameterSetName="FromId")]
+    Param(
+        [NtApiDotNet.NtToken]$Token,
+        [Parameter(Mandatory, ParameterSetName="FromOrigin")]
+        [switch]$Origin,
+        [Parameter(Mandatory, ParameterSetName="FromAuth")]
+        [switch]$Authentication,
+        [Parameter(Mandatory, ParameterSetName="FromModified")]
+        [switch]$Modified
+    )
+    if ($null -eq $Token) {
+        $Token = Get-NtToken -Effective -Access Query
+    }
+    elseif (!$Token.IsPseudoToken) {
+        $Token = $Token.Duplicate()
+    }
+
+    Use-NtObject($Token) {
+        if ($Origin) {
+            $Token.Origin | Write-Output
+        } elseif ($Authentication) {
+            $Token.AuthenticationId
+        } elseif ($Modified) {
+            $Token.ModifiedId
+        } else {
+            $Token.Id
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get a MD4 hash of a byte array or string.
+.DESCRIPTION
+This cmdlet calculates the MD4 hash of a byte array or string.
+.PARAMETER Bytes
+Specify a byte array.
+.PARAMETER String
+Specify string.
+.PARAMETER Encoding
+Specify string encoding. Default to Unicode.
+.INPUTS
+None
+.OUTPUTS
+byte[]
+.EXAMPLE
+Get-MD4Hash -String "ABC"
+Get the MD4 hash of the string ABC in unicode.
+.EXAMPLE
+Get-MD4Hash -String "ABC" -Encoding "ASCII"
+Get the MD4 hash of the string ABC in ASCII.
+.EXAMPLE
+Get-MD4Hash -Bytes @(0, 1, 2, 3)
+Get the MD4 hash of a byte array.
+#>
+function Get-MD4Hash {
+    [CmdletBinding(DefaultParameterSetName="FromString")]
+    Param(
+        [AllowEmptyString()]
+        [Parameter(Mandatory, Position = 0, ParameterSetName="FromString")]
+        [string]$String,
+        [Parameter(Position = 1, ParameterSetName="FromString")]
+        [string]$Encoding = "Unicode",
+        [Parameter(Mandatory, Position = 0, ParameterSetName="FromBytes")]
+        [byte[]]$Bytes
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromString" {
+            $enc = [System.Text.Encoding]::GetEncoding($Encoding)
+            [NtApiDotNet.Utilities.Security.MD4]::CalculateHash($String, $enc)
+        }
+        "FromBytes" {
+            [NtApiDotNet.Utilities.Security.MD4]::CalculateHash($Bytes)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Formats ASN.1 DER data to a string.
+.DESCRIPTION
+This cmdlet formats ASN.1 DER data to a string either from a byte array or a file.
+.PARAMETER Bytes
+Specify a byte array containing the DER data.
+.PARAMETER Path
+Specify file containing the DER data.
+.PARAMETER Depth
+Specify initialize indentation depth.
+.INPUTS
+None
+.OUTPUTS
+string
+.EXAMPLE
+Format-ASN1DER -Bytes $ba
+Format the byte array with ASN.1 DER data.
+.EXAMPLE
+Format-ASN1DER -Bytes $ba -Depth 2
+Format the byte array with ASN.1 DER data with indentation depth of 2.
+.EXAMPLE
+Format-ASN1DER -Path file.bin
+Format the file containing ASN.1 DER data.
+#>
+function Format-ASN1DER {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    Param(
+        [Parameter(Mandatory, Position = 0, ParameterSetName="FromPath")]
+        [string]$Path,
+        [Parameter(Mandatory, Position = 0, ParameterSetName="FromBytes")]
+        [byte[]]$Bytes,
+        [int]$Depth = 0
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromPath" {
+            [NtApiDotNet.Utilities.ASN1.ASN1Utils]::FormatDER($Path, $Depth)
+        }
+        "FromBytes" {
+            [NtApiDotNet.Utilities.ASN1.ASN1Utils]::FormatDER($Bytes, $Depth)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Exports keys to a Kerberos KeyTab file file.
+.DESCRIPTION
+This cmdlet exports keys to a Kerberos KeyTab file file.
+.PARAMETER Key
+List of keys to write to the file.
+.PARAMETER Path
+The path to the file to export.
+.INPUTS
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+.OUTPUTS
+None
+#>
+function Export-KerberosKeyTab {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [string]$Path,
+        [Parameter(Position = 1, Mandatory, ValueFromPipeline)]
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$Key
+    )
+
+    BEGIN {
+        $keys = @()
+    }
+
+    PROCESS {
+        foreach($k in $Key) {
+            $keys += $k
+        }
+    }
+
+    END {
+        $key_arr = [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$keys
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosUtils]::GenerateKeyTabFile($key_arr) `
+                | Set-Content -Path $Path -Encoding Byte
+    }
+}
+
+<#
+.SYNOPSIS
+Imports a Kerberos KeyTab file into a list of keys.
+.DESCRIPTION
+This cmdlet imports a Kerberos KeyTab file into a list of keys.
+.PARAMETER Path
+The path to the file to import.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+#>
+function Import-KerberosKeyTab {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Position = 0, Mandatory)]
+        [string]$Path
+    )
+
+    $Path = Resolve-Path -Path $Path -ErrorAction Stop
+    [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosUtils]::ReadKeyTabFile($Path) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets a Kerberos Key from a raw key or password.
+.DESCRIPTION
+This cmdlet gets a Kerberos Key from a raw key or password.
+.PARAMETER Password
+The password to convert to a key.
+.PARAMETER KeyType
+The key encryption type.
+.PARAMETER Iterations
+The number of iterations for the key derivation.
+.PARAMETER Principal
+The principal associated with the key.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+#>
+function Get-KerberosKey {
+    [CmdletBinding(DefaultParameterSetName="FromPassword")]
+    Param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromPassword")]
+        [string]$Password,
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromKey")]
+        [byte[]]$Key,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromPassword")]
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromKey")]
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosEncryptionType]$KeyType,
+        [Parameter(ParameterSetName="FromPassword")]
+        [int]$Interations = 4096,
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosNameType]$NameType = "PRINCIPAL",
+        [Parameter(Position = 2, Mandatory, ParameterSetName="FromPassword")]
+        [Parameter(Position = 2, Mandatory, ParameterSetName="FromKey")]
+        [string]$Principal,
+        [uint32]$Version = 1,
+        [Parameter(ParameterSetName="FromKey")]
+        [DateTime]$Timestamp = [DateTime]::Now
+    )
+
+    $k = switch($PSCmdlet.ParameterSetName) {
+        "FromPassword" {
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::DeriveKey($KeyType, $Password, $Interations, $NameType, $Principal, $Version)
+        }
+        "FromKey" {
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
+        }
+    }
+    $k | Write-Output
 }

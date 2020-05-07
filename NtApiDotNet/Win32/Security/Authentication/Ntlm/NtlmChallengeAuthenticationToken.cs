@@ -27,10 +27,6 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
     {
         #region Public Properties
         /// <summary>
-        /// NTLM negotitation flags.
-        /// </summary>
-        public NtlmNegotiateFlags Flags { get; }
-        /// <summary>
         /// Target name.
         /// </summary>
         public string TargetName { get; }
@@ -87,9 +83,8 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
         private NtlmChallengeAuthenticationToken(byte[] data, NtlmNegotiateFlags flags, 
             string target_name, byte[] server_challenge, byte[] reserved, Version version,
             IEnumerable<NtlmAvPair> target_info)
-            : base(data, NtlmMessageType.Challenge)
+            : base(data, NtlmMessageType.Challenge, flags)
         {
-            Flags = flags;
             TargetName = target_name;
             ServerChallenge = server_challenge;
             Reserved = reserved;
@@ -99,19 +94,7 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
 
         private static bool TryParseAvPairs(byte[] data, out List<NtlmAvPair> av_pairs)
         {
-            BinaryReader reader = new BinaryReader(new MemoryStream(data));
-            av_pairs = new List<NtlmAvPair>();
-            while (reader.RemainingLength() > 0)
-            {
-                if (!NtlmAvPair.TryParse(reader, out NtlmAvPair pair))
-                {
-                    return false;
-                }
-                if (pair.Type == MsAvPairType.EOL)
-                    break;
-                av_pairs.Add(pair);
-            }
-            return true;
+            return NtlmUtils.TryParseAvPairs(new BinaryReader(new MemoryStream(data)), out av_pairs);
         }
 
         #endregion

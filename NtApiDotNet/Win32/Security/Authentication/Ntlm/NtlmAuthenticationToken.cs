@@ -80,10 +80,12 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
         #region Private Members
         private const string NTLM_MAGIC = "NTLMSSP\0";
 
-        private protected NtlmAuthenticationToken(byte[] data, 
-            NtlmMessageType message_type) : base(data)
+        private protected NtlmAuthenticationToken(
+            byte[] data, NtlmMessageType message_type, 
+            NtlmNegotiateFlags flags) : base(data)
         {
             MessageType = message_type;
+            Flags = flags;
         }
 
         #endregion
@@ -93,16 +95,23 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
         /// Type of NTLM message.
         /// </summary>
         public NtlmMessageType MessageType { get; }
+
+        /// <summary>
+        /// NTLM negotitation flags.
+        /// </summary>
+        public NtlmNegotiateFlags Flags { get; }
         #endregion
 
-        #region Public Static Methods
+        #region Internal Static Methods
         /// <summary>
         /// Try and parse data into an NTLM authentication token.
         /// </summary>
         /// <param name="data">The data to parse.</param>
         /// <param name="token">The NTLM authentication token.</param>
+        /// <param name="client">True if this is a token from a client.</param>
+        /// <param name="token_count">The token count number.</param>
         /// <returns>True if parsed successfully.</returns>
-        public static bool TryParse(byte[] data, out NtlmAuthenticationToken token)
+        internal static bool TryParse(byte[] data, int token_count, bool client, out NtlmAuthenticationToken token)
         {
             token = null;
             if (data.Length < 12)
@@ -124,6 +133,20 @@ namespace NtApiDotNet.Win32.Security.Authentication.Ntlm
                 default:
                     return false;
             }
+        }
+        #endregion
+
+        #region Public Static Methods
+        /// <summary>
+        /// Try and parse data into an NTLM authentication token.
+        /// </summary>
+        /// <param name="data">The data to parse.</param>
+        /// <returns>The NTLM authentication token.</returns>
+        public static NtlmAuthenticationToken Parse(byte[] data)
+        {
+            if (!TryParse(data, 0, false, out NtlmAuthenticationToken token))
+                throw new ArgumentException(nameof(data));
+            return token;
         }
         #endregion
     }
