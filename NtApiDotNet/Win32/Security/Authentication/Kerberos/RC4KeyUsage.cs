@@ -14,24 +14,22 @@
 
 namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
 {
-#pragma warning disable 1591
-    /// <summary>
-    /// Kerberos Message Type.
-    /// </summary>
-    public enum KerberosMessageType
+    internal enum RC4KeyUsage
     {
-        UNKNOWN = 0,
-        KRB_AS_REQ  = 10,
-        KRB_AS_REP  = 11,
-        KRB_TGS_REQ = 12,
-        KRB_TGS_REP = 13,
-        KRB_AP_REQ = 14,
-        KRB_AP_REP = 15,
-        KRB_TGT_REQ = 16,
-        KRB_TGT_REP = 17,
-        KRB_SAFE = 20,
-        KRB_PRIV = 21,
-        KRB_CRED = 22,
-        KRB_ERROR = 30,
+        AsReqPaEncTimestamp = 1,
+        AsRepTgsRepTicket = 2,
+        AsRepEncryptedPart = 3,
+        TgsReqKdcReqBodySessionKey = 4,
+        TgsReqKdcReqBodyAuthSubkey = 5,
+        TgsReqPaTgsReqApReqChksum = 6,
+        TgsReqPaTgaReqApReq = 7,
+        TgsRepEncryptedPart = 8,
+        TgsRepEncryptionPartAuthSubkey = 9,
+        ApReqAuthChksum = 10,
+        ApReqAuthSubKey = 11,
+        ApReqEncryptedPart = 12,
+        KrbPriv = 13,
+        KrbCred = 14,
+        KrbSafe = 15
     }
 }

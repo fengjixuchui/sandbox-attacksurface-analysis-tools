@@ -13,7 +13,6 @@
 //  limitations under the License.
 
 using NtApiDotNet.Utilities.ASN1;
-using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
@@ -25,23 +24,13 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
     public class KerberosAPReplyAuthenticationToken : KerberosAuthenticationToken
     {
         /// <summary>
-        /// Protocol version.
-        /// </summary>
-        public int ProtocolVersion { get; }
-        /// <summary>
-        /// Message type.
-        /// </summary>
-        public KerberosMessageType MessageType { get; }
-        /// <summary>
         /// Encrypted mutual authentication data.
         /// </summary>
         public KerberosEncryptedData EncryptedPart { get; private set; }
 
         private protected KerberosAPReplyAuthenticationToken(byte[] data, DERValue[] values)
-            : base(data, values)
+            : base(data, values, KerberosMessageType.KRB_AP_REP)
         {
-            ProtocolVersion = 5;
-            MessageType = KerberosMessageType.KRB_AP_REP;
             EncryptedPart = new KerberosEncryptedData();
         }
 
@@ -79,10 +68,8 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
                 if (values.Length != 1 || !values[0].CheckSequence() || !values[0].HasChildren())
                     return false;
 
-                Queue<DERValue> queue = new Queue<DERValue>(values[0].Children);
-                while (queue.Count > 0)
+                foreach(var next in values[0].Children)
                 {
-                    var next = queue.Dequeue();
                     if (next.Type != DERTagType.ContextSpecific)
                         return false;
                     switch (next.Tag)
