@@ -39,22 +39,56 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
         /// Encrypted data for the ticket.
         /// </summary>
         public KerberosEncryptedData EncryptedData { get; private set; }
+        /// <summary>
+        /// Get the principal for the ticket.
+        /// </summary>
+        public string Principal => ServerName.GetPrincipal(Realm);
+
+        internal bool Decrypt(KerberosKeySet keyset, RC4KeyUsage key_usage, out KerberosTicket ticket)
+        {
+            if (this is KerberosTicketDecrypted)
+            {
+                ticket = this;
+                return true;
+            }
+
+            ticket = null;
+            if (!EncryptedData.Decrypt(keyset, Realm, ServerName, key_usage, out byte[] decrypted))
+                return false;
+
+            return KerberosTicketDecrypted.Parse(this, decrypted, keyset, out ticket);
+        }
+
+        private protected virtual void FormatTicketData(StringBuilder builder)
+        {
+            builder.Append(EncryptedData.Format());
+        }
 
         internal string Format()
         {
             StringBuilder builder = new StringBuilder();
             builder.AppendLine($"Ticket Version  : {TicketVersion}");
-            builder.AppendLine($"ServerName      : {ServerName}");
+            builder.AppendLine($"Server Name     : {ServerName}");
             builder.AppendLine($"Realm           : {Realm}");
-            builder.Append(EncryptedData.Format());
+            FormatTicketData(builder);
             return builder.ToString();
         }
 
-        internal KerberosTicket()
+        private protected KerberosTicket(
+            int ticket_version,
+            string realm, 
+            KerberosPrincipalName server_name, 
+            KerberosEncryptedData encrypted_data)
         {
-            TicketVersion = 5;
-            Realm = string.Empty;
-            ServerName = new KerberosPrincipalName();
+            TicketVersion = ticket_version;
+            Realm = realm ?? string.Empty;
+            ServerName = server_name ?? new KerberosPrincipalName();
+            EncryptedData = encrypted_data;
+        }
+
+        internal KerberosTicket() 
+            : this(5, null, null, null)
+        {
         }
 
         internal static KerberosTicket Parse(DERValue value)

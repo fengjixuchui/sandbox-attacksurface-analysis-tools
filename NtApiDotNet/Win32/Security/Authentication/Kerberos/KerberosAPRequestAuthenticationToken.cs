@@ -14,7 +14,6 @@
 
 using NtApiDotNet.Utilities.ASN1;
 using System;
-using System.Collections.Generic;
 using System.IO;
 using System.Text;
 
@@ -45,6 +44,7 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
     /// </summary>
     public class KerberosAPRequestAuthenticationToken : KerberosAuthenticationToken
     {
+        #region Public Properties
         /// <summary>
         /// AP Request Options.
         /// </summary>
@@ -57,14 +57,18 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
         /// Authenticator data.
         /// </summary>
         public KerberosEncryptedData Authenticator { get; private set; }
+        #endregion
 
+        #region Constructors
         private protected KerberosAPRequestAuthenticationToken(byte[] data, DERValue[] values)
             : base(data, values, KerberosMessageType.KRB_AP_REQ)
         {
             Ticket = new KerberosTicket();
             Authenticator = new KerberosEncryptedData();
         }
+        #endregion
 
+        #region Public Methods
         /// <summary>
         /// Format the Authentication Token.
         /// </summary>
@@ -80,6 +84,41 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
             builder.Append(Authenticator.Format());
             return builder.ToString();
         }
+
+        /// <summary>
+        /// Decrypt the Authentication Token using a keyset.
+        /// </summary>
+        /// <param name="keyset">The set of keys to decrypt the </param>
+        /// <returns>The decrypted token, or the same token if nothing could be decrypted.</returns>
+        public override KerberosAuthenticationToken Decrypt(KerberosKeySet keyset)
+        {
+            KerberosEncryptedData authenticator = null;
+
+            KerberosKeySet tmp_keys = new KerberosKeySet(keyset.Keys);
+            if (!Ticket.Decrypt(tmp_keys, RC4KeyUsage.AsRepTgsRepTicket, out KerberosTicket ticket))
+            {
+                ticket = null;
+            }
+
+            if (Authenticator.Decrypt(tmp_keys, Ticket.Realm, Ticket.ServerName, RC4KeyUsage.ApReqAuthSubKey, out byte[] auth_decrypt))
+            {
+                if (!KerberosAuthenticator.Parse(Ticket, Authenticator, auth_decrypt, out authenticator))
+                {
+                    authenticator = null;
+                }
+            }
+
+            if (ticket != null || authenticator != null)
+            {
+                KerberosAPRequestAuthenticationToken ret = (KerberosAPRequestAuthenticationToken)MemberwiseClone();
+                ret.Ticket = ticket ?? ret.Ticket;
+                ret.Authenticator = authenticator ?? ret.Authenticator;
+                return ret;
+            }
+            return base.Decrypt(keyset);
+        }
+
+        #endregion
 
         #region Internal Static Methods
         /// <summary>
