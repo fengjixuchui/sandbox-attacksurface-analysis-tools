@@ -103,6 +103,7 @@
     <Compile Include="Utilities\Memory\SafeBufferWrapper.cs" />
     <Compile Include="Utilities\SafeBuffers\SafeGuidArrayBuffer.cs" />
     <Compile Include="Utilities\Security\MD4.cs" />
+    <Compile Include="Utilities\Security\NFold.cs" />
     <Compile Include="Utilities\Security\ObjectTypeTree.cs" />
     <Compile Include="Utilities\Security\ARC4.cs" />
     <Compile Include="Utilities\Text\HexDumpBuilder.cs" />
@@ -322,6 +323,8 @@
     <Compile Include="Utilities\ASN1\DERParser.cs" />
     <Compile Include="Win32\Security\Authentication\ASN1AuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\GSSAPIUtils.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAPReplyEncryptedPart.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACDevice.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACLogon.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACSignature.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACClientInfo.cs" />
@@ -334,6 +337,8 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataRestrictionEntry.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthenticator.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosChecksum.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosChecksumGSSApi.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosCredential.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosHostAddress.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosPreAuthenticationType.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTicketDecrypted.cs" />
@@ -342,7 +347,7 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\Ndr\ClaimSetMetadataParser.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\Ndr\ClaimSetParser.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\Ndr\KerbValidationInfoParser.cs" />
-    <Compile Include="Win32\Security\Authentication\Kerberos\RC4KeyUsage.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KeyUsage.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAPRequestAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAPReplyAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosEncryptedData.cs" />
@@ -358,6 +363,7 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosErrorType.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosMessageType.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosNameType.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\Ndr\PacDeviceInfoParser.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\PrincipalName.cs" />
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Ntlm\NtlmAuthenticateAuthenticationTokenV2.cs" />

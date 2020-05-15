@@ -9216,19 +9216,24 @@ function Get-KerberosKey {
         [string]$Password,
         [Parameter(Position = 0, Mandatory, ParameterSetName="FromKey")]
         [byte[]]$Key,
+        [Parameter(Mandatory, ParameterSetName="FromBase64Key")]
+        [string]$Base64Key,
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromPassword")]
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromKey")]
+        [Parameter(Mandatory, ParameterSetName="FromBase64Key")]
         [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosEncryptionType]$KeyType,
         [Parameter(ParameterSetName="FromPassword")]
         [int]$Interations = 4096,
         [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosNameType]$NameType = "PRINCIPAL",
         [Parameter(Position = 2, Mandatory, ParameterSetName="FromPassword")]
         [Parameter(Position = 2, Mandatory, ParameterSetName="FromKey")]
+        [Parameter(Mandatory, ParameterSetName="FromBase64Key")]
         [string]$Principal,
         [Parameter(ParameterSetName="FromPassword")]
         [string]$Salt,
         [uint32]$Version = 1,
         [Parameter(ParameterSetName="FromKey")]
+        [Parameter(ParameterSetName="FromBase64Key")]
         [DateTime]$Timestamp = [DateTime]::Now
     )
 
@@ -9237,6 +9242,10 @@ function Get-KerberosKey {
             [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::DeriveKey($KeyType, $Password, $Interations, $NameType, $Principal, $Salt, $Version)
         }
         "FromKey" {
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
+        }
+        "FromBase64Key" {
+            $Key = [System.Convert]::FromBase64String($Base64Key)
             [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
         }
     }
@@ -9249,8 +9258,8 @@ Decrypt an Authentication Token.
 .DESCRIPTION
 This cmdlet attempts to decrypt an authentication token. The call will return the decrypted token.
 This is primarily for Kerberos.
-.PARAMETER KeySet
-Specify a key set of keys for decryption.
+.PARAMETER Key
+Specify a keys for decryption.
 .PARAMETER KerberosToken
 The authentication token to decrypt.
 .INPUTS
@@ -9264,7 +9273,7 @@ function Unprotect-AuthToken {
         [Parameter(Position = 0, Mandatory, ParameterSetName="Kerberos")]
         [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationToken]$KerberosToken,
         [Parameter(Position = 1, Mandatory, ParameterSetName="Kerberos")]
-        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKeySet]$KeySet
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$Key
     )
-    $KerberosToken.Decrypt($KeySet) | Write-Output
+    $KerberosToken.Decrypt($Key) | Write-Output
 }
