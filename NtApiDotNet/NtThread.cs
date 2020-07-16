@@ -735,6 +735,64 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Queue a special user APC to the thread.
+        /// </summary>
+        /// <param name="apc_routine">The APC callback pointer.</param>
+        /// <param name="normal_context">Context parameter.</param>
+        /// <param name="system_argument1">System argument 1.</param>
+        /// <param name="system_argument2">System argument 2.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS5)]
+        public NtStatus QueueSpecialUserApc(IntPtr apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2, bool throw_on_error)
+        {
+            return NtSystemCalls.NtQueueApcThreadEx(Handle, new IntPtr(1), apc_routine, normal_context, system_argument1, system_argument2).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Queue a special user APC to the thread.
+        /// </summary>
+        /// <param name="apc_routine">The APC callback pointer.</param>
+        /// <param name="normal_context">Context parameter.</param>
+        /// <param name="system_argument1">System argument 1.</param>
+        /// <param name="system_argument2">System argument 2.</param>
+        /// <returns>The NT status code.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS5)]
+        public void QueueSpecialUserApc(IntPtr apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2)
+        {
+            QueueSpecialUserApc(apc_routine, normal_context, system_argument1, system_argument2, true);
+        }
+
+        /// <summary>
+        /// Queue a special user APC to the thread.
+        /// </summary>
+        /// <param name="apc_routine">The APC callback pointer.</param>
+        /// <param name="normal_context">Context parameter.</param>
+        /// <param name="system_argument1">System argument 1.</param>
+        /// <param name="system_argument2">System argument 2.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS5)]
+        public NtStatus QueueSpecialUserApc(ApcCallback apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2, bool throw_on_error)
+        {
+            return QueueSpecialUserApc(Marshal.GetFunctionPointerForDelegate(apc_routine), normal_context, system_argument1, system_argument2, throw_on_error);
+        }
+
+        /// <summary>
+        /// Queue a special user APC to the thread.
+        /// </summary>
+        /// <param name="apc_routine">The APC callback pointer.</param>
+        /// <param name="normal_context">Context parameter.</param>
+        /// <param name="system_argument1">System argument 1.</param>
+        /// <param name="system_argument2">System argument 2.</param>
+        /// <returns>The NT status code.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS5)]
+        public void QueueSpecialUserApc(ApcCallback apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2)
+        {
+            QueueSpecialUserApc(apc_routine, normal_context, system_argument1, system_argument2, true);
+        }
+
+        /// <summary>
         /// Queue a user APC to the thread.
         /// </summary>
         /// <param name="apc_routine">The APC callback pointer.</param>
@@ -1095,10 +1153,12 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the Win32 start address for the thread.
         /// </summary>
-        public long Win32StartAddress
-        {
-            get { return Query<IntPtr>(ThreadInformationClass.ThreadQuerySetWin32StartAddress).ToInt64(); }
-        }
+        public long Win32StartAddress => Query<IntPtr>(ThreadInformationClass.ThreadQuerySetWin32StartAddress).ToInt64();
+
+        /// <summary>
+        /// Get the current Instruction Pointer for the thread.
+        /// </summary>
+        public long InstructionPointer => (long)GetContext(ContextFlags.Control).InstructionPointer;
 
         /// <summary>
         /// Get last system call on the thread.
@@ -1136,14 +1196,17 @@ namespace NtApiDotNet
         /// Get the creation time of the thread.
         /// </summary>
         public DateTime CreateTime => DateTime.FromFileTime(Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes).CreateTime.QuadPart);
+
         /// <summary>
         /// Get the exit time of the thread (0 if not exited)
         /// </summary>
         public DateTime ExitTime => DateTime.FromFileTime(Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes).ExitTime.QuadPart);
+
         /// <summary>
         /// Get the time spent in the kernel.
         /// </summary>
         public long KernelTime => Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes).KernelTime.QuadPart;
+
         /// <summary>
         /// Get the time spent in user mode.
         /// </summary>
@@ -1152,13 +1215,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Get thread information.
         /// </summary>
-        public NtThreadInformation ThreadInformation
-        {
-            get
-            {
-                return new NtThreadInformation(ProcessName, Query<SystemThreadInformation>(ThreadInformationClass.ThreadSystemThreadInformation));
-            }
-        }
+        public NtThreadInformation ThreadInformation => new NtThreadInformation(ProcessName, Query<SystemThreadInformation>(ThreadInformationClass.ThreadSystemThreadInformation));
 
         /// <summary>
         /// Get thread exit status.

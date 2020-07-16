@@ -43,15 +43,15 @@ Get a list of ALPC Ports that can be opened by a specified token.
 .DESCRIPTION
 This cmdlet checks for all ALPC ports on the system and tries to determine if one or more specified tokens can connect to them.
 If no tokens are specified then the current process token is used. This function searches handles for existing ALPC Port servers as you can't directly open the server object and just connecting might show inconsistent results.
-.PARAMETER ProcessIds
+.PARAMETER ProcessId
 Specify a list of process IDs to open for their tokens.
-.PARAMETER ProcessNames
+.PARAMETER ProcessName
 Specify a list of process names to open for their tokens.
-.PARAMETER ProcessCommandLines
+.PARAMETER ProcessCommandLine
 Specify a list of command lines to filter on find for the process tokens.
-.PARAMETER Tokens
+.PARAMETER Token
 Specify a list token objects.
-.PARAMETER Processes
+.PARAMETER Process
 Specify a list process objects to use for their tokens.
 .INPUTS
 None
@@ -68,15 +68,20 @@ Get all ALPC Ports connectable by the process tokens of PIDs 1234 and 5678
 #>
 function Get-AccessibleAlpcPort {
     Param(
-        [Int32[]]$ProcessIds,
-        [string[]]$ProcessNames,
-        [string[]]$ProcessCommandLines,
-        [NtApiDotNet.NtToken[]]$Tokens,
-        [NtApiDotNet.NtProcess[]]$Processes
+        [alias("ProcessIds")]
+        [Int32[]]$ProcessId,
+        [alias("ProcessNames")]
+        [string[]]$ProcessName,
+        [alias("ProcessCommandLines")]
+        [string[]]$ProcessCommandLine,
+        [alias("Tokens")]
+        [NtApiDotNet.NtToken[]]$Token,
+        [alias("Processes")]
+        [NtApiDotNet.NtProcess[]]$Process
     )
     $access = Get-NtAccessMask -AlpcPortAccess Connect -ToGenericAccess
-    Get-AccessibleObject -FromHandles -ProcessIds $ProcessIds -ProcessNames $ProcessNames `
-        -ProcessCommandLines $ProcessCommandLines -Tokens $Tokens -Processes $Processes -TypeFilter "ALPC Port" -AccessRights $access
+    Get-AccessibleObject -FromHandle -ProcessId $ProcessId -ProcessName $ProcessName `
+        -ProcessCommandLine $ProcessCommandLine -Token $Token -Process $Process -TypeFilter "ALPC Port" -AccessRights $access
 }
 
 <#
@@ -1283,7 +1288,8 @@ function New-NtProcessConfig {
         [switch]$TerminateOnDispose,
         [switch]$Win32Path,
         [switch]$CaptureAdditionalInformation,
-        [switch]$Secure
+        [switch]$Secure,
+        [NtApiDotNet.NtObject[]]$InheritHandle
     )
 
     if ($Win32Path) {
@@ -1310,6 +1316,9 @@ function New-NtProcessConfig {
     }
     $config.CaptureAdditionalInformation = $CaptureAdditionalInformation
     $config.Secure = $Secure
+    if ($null -ne $InheritHandle) {
+        $config.InheritHandleList.AddRange($InheritHandle)
+    }
 
     return $config
 }
@@ -1574,6 +1583,8 @@ Show token default DACL.
 Show the default DACL in full rather than a summary.
 .PARAMETER Basic
 Show basic token information, User, Group, Privilege and Integrity.
+.PARAMETER MandatoryPolicy
+Show mandatory integrity policy.
 .OUTPUTS
 System.String
 .EXAMPLE
@@ -1631,7 +1642,9 @@ function Format-NtToken {
         [parameter(ParameterSetName = "Complex")]
         [switch]$DefaultDacl,
         [parameter(ParameterSetName = "Complex")]
-        [switch]$FullDefaultDacl
+        [switch]$FullDefaultDacl,
+        [parameter(ParameterSetName = "Complex")]
+        [switch]$MandatoryPolicy
     )
 
     if ($All) {
@@ -1648,6 +1661,7 @@ function Format-NtToken {
         $PrimaryGroup = $true
         $DefaultDacl = $true
         $DeviceGroup = $true
+        $MandatoryPolicy = $true
     }
     elseif ($Basic) {
         $Group = $true
@@ -1718,6 +1732,12 @@ function Format-NtToken {
         "INTEGRITY LEVEL"
         "---------------"
         Format-ObjectTable $token.IntegrityLevel | Write-Output
+    }
+
+    if ($MandatoryPolicy) {
+        "MANDATORY POLICY"
+        "----------------"
+        Format-ObjectTable $token.MandatoryPolicy | Write-Output
     }
 
     if ($TrustLevel) {
@@ -1813,6 +1833,8 @@ Show token default DACL.
 Show the default DACL in full rather than a summary.
 .PARAMETER Basic
 Show basic token information, User, Group, Privilege and Integrity.
+.PARAMETER MandatoryPolicy
+Show mandatory integrity policy.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1860,7 +1882,9 @@ function Show-NtTokenEffective {
         [parameter(ParameterSetName = "Complex")]
         [switch]$DefaultDacl,
         [parameter(ParameterSetName = "Complex")]
-        [switch]$FullDefaultDacl
+        [switch]$FullDefaultDacl,
+        [parameter(ParameterSetName = "Complex")]
+        [switch]$MandatoryPolicy
     )
 
     Use-NtObject($token = Get-NtToken -Effective) {
@@ -1885,6 +1909,7 @@ function Show-NtTokenEffective {
                 Token              = $token
                 DefaultDacl        = $DefaultDacl
                 FullDefaultDacl    = $FullDefaultDacl
+                MandatoryPolicy    = $MandatoryPolicy
             }
             Format-NtToken @args
         }
@@ -3186,8 +3211,9 @@ function Get-NtVirtualMemory {
         [switch]$All,
         [parameter(ParameterSetName = "All")]
         [switch]$IncludeFree,
-        [parameter(ParameterSetName = "All")]
         [NtApiDotNet.MemoryType]$Type = "All",
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.MemoryState]$State = "Commit, Reserve",
         [parameter(ParameterSetName = "All")]
         [string]$Name
     )
@@ -3196,11 +3222,14 @@ function Get-NtVirtualMemory {
             $Process.QueryMemoryInformation($Address) | Write-Output
         }
         "All" {
+            if ($IncludeFree) {
+                $State = $State -bor "Free"
+            }
             if ($Name -ne "") {
-                $Process.QueryAllMemoryInformation($IncludeFree, $Type) | Where-Object MappedImageName -eq $Name | Write-Output
+                $Process.QueryAllMemoryInformation($Type, $State) | Where-Object MappedImageName -eq $Name | Write-Output
             }
             else {
-                $Process.QueryAllMemoryInformation($IncludeFree, $Type) | Write-Output
+                $Process.QueryAllMemoryInformation($Type, $State) | Write-Output
             }
         }
     }
@@ -4346,6 +4375,8 @@ function Get-RpcServer {
         [switch]$ParseClients,
         [parameter(ParameterSetName = "FromDll")]
         [switch]$IgnoreSymbols,
+        [parameter(ParameterSetName = "FromDll")]
+        [switch]$ResolveStructureNames,
         [parameter(Mandatory = $true, ParameterSetName = "FromSerialized")]
         [string]$SerializedPath
     )
@@ -4360,6 +4391,17 @@ function Get-RpcServer {
                 $SymbolPath = $Script:GlobalSymbolPath
             }
         }
+
+        $ParserFlags = [NtApiDotNet.Win32.RpcServerParserFlags]::None
+        if ($ParseClients) {
+            $ParserFlags = $ParserFlags -bor [NtApiDotNet.Win32.RpcServerParserFlags]::ParseClients
+        }
+        if ($IgnoreSymbols) {
+            $ParserFlags = $ParserFlags -bor [NtApiDotNet.Win32.RpcServerParserFlags]::IgnoreSymbols
+        }
+        if ($ResolveStructureNames) {
+            $ParserFlags = $ParserFlags -bor [NtApiDotNet.Win32.RpcServerParserFlags]::ResolveStructureNames
+        }
     }
 
     PROCESS {
@@ -4367,7 +4409,7 @@ function Get-RpcServer {
             if ($PSCmdlet.ParameterSetName -eq "FromDll") {
                 $FullName = Resolve-Path -LiteralPath $FullName -ErrorAction Stop
                 Write-Progress -Activity "Parsing RPC Servers" -CurrentOperation "$FullName"
-                $servers = [NtApiDotNet.Win32.RpcServer]::ParsePeFile($FullName, $DbgHelpPath, $SymbolPath, $ParseClients, $IgnoreSymbols)
+                $servers = [NtApiDotNet.Win32.RpcServer]::ParsePeFile($FullName, $DbgHelpPath, $SymbolPath, $ParserFlags)
                 if ($AsText) {
                     foreach ($server in $servers) {
                         $text = $server.FormatAsText($RemoveComments)
@@ -6086,6 +6128,8 @@ Specify the get list of child windows.
 Specify to get immersive Windows.
 .PARAMETER ThreadId
 Specify the thread ID for the Window.
+.PARAMETER ProcessId
+Specify the process ID for the Window.
 .INPUTS
 None
 .OUTPUTS
@@ -6099,10 +6143,16 @@ function Get-NtWindow {
         [switch]$Immersive,
         [NtApiDotNet.NtWindow]$Parent = [NtApiDotNet.NtWindow]::Null,
         [alias("tid")]
-        [int]$ThreadId
+        [int]$ThreadId,
+        [alias("pid")]
+        [int]$ProcessId
     )
 
-    [NtApiDotNet.NtWindow]::GetWindows($Desktop, $Parent, $Children, !$Immersive, $ThreadId) | Write-Output
+    $ws = [NtApiDotNet.NtWindow]::GetWindows($Desktop, $Parent, $Children, !$Immersive, $ThreadId)
+    if ($ProcessId -ne 0) {
+         $ws = $ws | Where-Object ProcessId -eq $ProcessId
+    }
+    $ws | Write-Output
 }
 
 <#
@@ -9136,7 +9186,7 @@ List of keys to write to the file.
 .PARAMETER Path
 The path to the file to export.
 .INPUTS
-NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey
 .OUTPUTS
 None
 #>
@@ -9146,7 +9196,7 @@ function Export-KerberosKeyTab {
         [Parameter(Position = 0, Mandatory)]
         [string]$Path,
         [Parameter(Position = 1, Mandatory, ValueFromPipeline)]
-        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$Key
+        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey[]]$Key
     )
 
     BEGIN {
@@ -9160,7 +9210,7 @@ function Export-KerberosKeyTab {
     }
 
     END {
-        $key_arr = [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$keys
+        $key_arr = [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey[]]$keys
         [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosUtils]::GenerateKeyTabFile($key_arr) `
                 | Set-Content -Path $Path -Encoding Byte
     }
@@ -9176,7 +9226,7 @@ The path to the file to import.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey
 #>
 function Import-KerberosKeyTab {
     [CmdletBinding()]
@@ -9207,7 +9257,7 @@ The salt for the key, if not specified will try and derive from the principal.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey
 #>
 function Get-KerberosKey {
     [CmdletBinding(DefaultParameterSetName="FromPassword")]
@@ -9239,14 +9289,14 @@ function Get-KerberosKey {
 
     $k = switch($PSCmdlet.ParameterSetName) {
         "FromPassword" {
-            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::DeriveKey($KeyType, $Password, $Interations, $NameType, $Principal, $Salt, $Version)
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey]::DeriveKey($KeyType, $Password, $Interations, $NameType, $Principal, $Salt, $Version)
         }
         "FromKey" {
-            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
         }
         "FromBase64Key" {
             $Key = [System.Convert]::FromBase64String($Base64Key)
-            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
+            [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationKey]::new($KeyType, $Key, $NameType, $Principal, $Timestamp, $Version)
         }
     }
     $k | Write-Output
@@ -9260,20 +9310,244 @@ This cmdlet attempts to decrypt an authentication token. The call will return th
 This is primarily for Kerberos.
 .PARAMETER Key
 Specify a keys for decryption.
-.PARAMETER KerberosToken
+.PARAMETER Token
 The authentication token to decrypt.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationToken
+NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
 #>
 function Unprotect-AuthToken {
-    [CmdletBinding(DefaultParameterSetName="Kerberos")]
+    [CmdletBinding()]
     Param(
-        [Parameter(Position = 0, Mandatory, ParameterSetName="Kerberos")]
-        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosAuthenticationToken]$KerberosToken,
-        [Parameter(Position = 1, Mandatory, ParameterSetName="Kerberos")]
-        [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosKey[]]$Key
+        [Parameter(Position = 0, Mandatory)]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [Parameter(Position = 1, Mandatory)]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationKey[]]$Key
     )
-    $KerberosToken.Decrypt($Key) | Write-Output
+    $Token.Decrypt($Key) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get Kerberos Ticket.
+.DESCRIPTION
+This cmdlet gets a kerberos Ticket, or multiple tickets.
+.PARAMETER LogonId
+Specify a logon ID to query for tickets.
+.PARAMETER LogonSession
+Specify a logon session to query for tickets.
+.PARAMETER TargetName
+Specify a target name to query for a ticket. If it doesn't exist get a new one.
+.PARAMETER CacheOnly
+Specify to only lookup the TargetName in the cache.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosExternalTicket
+#>
+function Get-KerberosTicket {
+    [CmdletBinding(DefaultParameterSetName="CurrentLuid")]
+    Param(
+        [Parameter(Position = 0, ParameterSetName="FromLuid", Mandatory)]
+        [NtApiDotNet.Luid]$LogonId,
+        [Parameter(Position = 0, ParameterSetName="FromLogonSession", ValueFromPipeline, Mandatory)]
+        [NtApiDotNet.Win32.Security.Authentication.LogonSession[]]$LogonSession,
+        [Parameter(Position = 0, ParameterSetName="FromTarget", Mandatory)]
+        [string]$TargetName,
+        [Parameter(ParameterSetName="FromTarget")]
+        [switch]$CacheOnly
+    )
+
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "CurrentLuid" {
+                [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosTicketCache]::QueryTicketCache() | Write-Output
+            }
+            "FromLuid" {
+                [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosTicketCache]::QueryTicketCache($LogonId) | Write-Output
+            }
+            "FromLogonSession" {
+                foreach($l in $LogonSession) {
+                    [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosTicketCache]::QueryTicketCache($l.LogonId) | Write-Output
+                }
+            }
+            "FromTarget" {
+                [NtApiDotNet.Win32.Security.Authentication.Kerberos.KerberosTicketCache]::GetTicket($LogonId, $CacheOnly) | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get NDR complex types from memory.
+.DESCRIPTION
+This cmdlet parses NDR complex type information from a location in memory.
+.PARAMETER PicklingInfo
+Specify pointer to the MIDL_TYPE_PICKLING_INFO structure.
+.PARAMETER StubDesc
+Specify pointer to the MIDL_STUB_DESC structure.
+.PARAMETER StublessProxy
+Specify pointer to the MIDL_STUBLESS_PROXY_INFO structure.
+.PARAMETER OffsetTable
+Specify pointer to type offset table.
+.PARAMETER TypeIndex
+Specify list of type index into type offset table.
+.PARAMETER TypeFormat
+Specify list of type format string addresses for the types.
+.PARAMETER TypeOffset
+Specify list of type offsets into the format string for the types.
+.PARAMETER Process
+Specify optional process which contains the types.
+.PARAMETER Module
+Specify optional module base address for the types. If set all pointers
+are relative offsets from the module address.
+.INPUTS
+None
+.OUTPUTS
+NdrComplexTypeReference[]
+#>
+function Get-NdrComplexType {
+    [CmdletBinding(DefaultParameterSetName="FromDecode3")]
+    Param(
+        [Parameter(Mandatory)]
+        [long]$PicklingInfo,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode2")]
+        [Parameter(Mandatory, ParameterSetName = "FromDecode2Offset")]
+        [long]$StubDesc,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode2")]
+        [long[]]$TypeFormat,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode2Offset")]
+        [int[]]$TypeOffset,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode3")]
+        [long]$StublessProxy,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode3")]
+        [long]$OffsetTable,
+        [Parameter(Mandatory, ParameterSetName = "FromDecode3")]
+        [int[]]$TypeIndex,
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module,
+        [NtApiDotNet.NtProcess]$Process,
+        [NtApiDotNet.Ndr.NdrParserFlags]$Flags = "IgnoreUserMarshal"
+    )
+
+    $base_address = 0
+    if ($null -ne $Module) {
+        $base_address = $Module.DangerousGetHandle().ToInt64()
+    }
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromDecode2" {
+            $type_offset = $TypeFormat | % { $_ + $base_address }
+            [NtApiDotNet.Ndr.NdrParser]::ReadPicklingComplexTypes($Process, $PicklingInfo+$base_address,`
+                $StubDesc+$base_address, $type_offset, $Flags) | Write-Output
+        }
+        "FromDecode2Offset" {
+            [NtApiDotNet.Ndr.NdrParser]::ReadPicklingComplexTypes($Process, $PicklingInfo+$base_address,`
+                $StubDesc+$base_address, $TypeOffset, $Flags) | Write-Output
+        }
+        "FromDecode3" {
+            [NtApiDotNet.Ndr.NdrParser]::ReadPicklingComplexTypes($Process, $PicklingInfo+$base_address,`
+                $StublessProxy+$base_address, $OffsetTable+$base_address, $TypeIndex, $Flags) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get user SID for a process.
+.DESCRIPTION
+This cmdlet will get the user SID for a process.
+.PARAMETER Process
+The process object.
+.PARAMETER ProcessId
+The PID of the process.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Sid
+.EXAMPLE
+Get-NtProcessUser -ProcessId 1234
+Get user SID for process ID 1234.
+.EXAMPLE
+Get-NtProcessUser -Process $p
+Get user SID for process.
+#>
+function Get-NtProcessUser {
+    [CmdletBinding(DefaultParameterSetName = "FromProcessId")]
+    Param(
+        [parameter(ParameterSetName = "FromProcessId", Position = 0, Mandatory)]
+        [alias("pid")]
+        [int]$ProcessId,
+        [parameter(ParameterSetName = "FromProcess", Mandatory)]
+        [NtApiDotNet.NtProcess]$Process
+    )
+    switch ($PSCmdlet.ParameterSetName) {
+        "FromProcessId" {
+            Set-NtTokenPrivilege -Privilege SeDebugPrivilege -WarningAction SilentlyContinue
+            Use-NtObject($p = Get-NtProcess -ProcessId $ProcessId -Access QueryLimitedInformation) {
+                Get-NtProcessUser -Process $p | Write-Output
+            }
+        }
+        "FromProcess" {
+            $Process.User | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get environment variables from a process.
+.DESCRIPTION
+This cmdlet will get the environment variables from a process.
+.PARAMETER Process
+The process object.
+.PARAMETER ProcessId
+The process ID.
+.PARAMETER Name
+The name of the variable.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtProcessEnvironmentVariable[]
+.EXAMPLE
+Get-NtProcessEnvironment -ProcessId 1234
+Get environment for process 1234.
+.EXAMPLE
+Get-NtProcessEnvironment -Process $p
+Get environment for process.
+.EXAMPLE
+Get-NtProcessEnvironment -ProcessId 1234 -Name "TMP"
+Get environment variable TMP for process 1234.
+#>
+function Get-NtProcessEnvironment {
+    [CmdletBinding(DefaultParameterSetName = "FromProcessId")]
+    Param(
+        [parameter(ParameterSetName = "FromProcessId", Position = 0, Mandatory)]
+        [alias("pid")]
+        [int]$ProcessId,
+        [parameter(ParameterSetName = "FromProcess", Mandatory)]
+        [NtApiDotNet.NtProcess]$Process,
+        [string]$Name
+    )
+    
+    switch ($PSCmdlet.ParameterSetName) {
+        "FromProcessId" {
+            Set-NtTokenPrivilege -Privilege SeDebugPrivilege -WarningAction SilentlyContinue
+            Use-NtObject($p = Get-NtProcess -ProcessId $ProcessId -Access VmRead, QueryLimitedInformation) {
+                if ($Name -ne "") {
+                    $p.GetEnvironmentVariable($Name) | Write-Output
+                } else {
+                    $p.GetEnvironment() | Write-Output
+                }
+            }
+        }
+        "FromProcess" {
+            if ($Name -ne "") {
+                $Process.GetEnvironmentVariable($Name) | Write-Output
+            } else {
+                $Process.GetEnvironment() | Write-Output
+            }
+        }
+    }
 }

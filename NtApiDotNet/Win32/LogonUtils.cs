@@ -14,6 +14,7 @@
 
 using NtApiDotNet.Win32.SafeHandles;
 using NtApiDotNet.Win32.Security.Authentication;
+using NtApiDotNet.Win32.Security.Authentication.Kerberos;
 using NtApiDotNet.Win32.Security.Native;
 using NtApiDotNet.Win32.Security.Policy;
 using System;
@@ -117,7 +118,21 @@ namespace NtApiDotNet.Win32
         /// <returns>The logged on token.</returns>
         public static NtToken Logon(string user, string domain, string password, SecurityLogonType type)
         {
-            if (!SecurityNativeMethods.LogonUser(user, domain, password, type, 0, out SafeKernelObjectHandle handle))
+            return Logon(user, domain, password, type, Logon32Provider.Default);
+        }
+
+        /// <summary>
+        /// Logon a user with a username and password.
+        /// </summary>
+        /// <param name="user">The username.</param>
+        /// <param name="domain">The user's domain.</param>
+        /// <param name="password">The user's password.</param>
+        /// <param name="type">The type of logon token.</param>
+        /// <param name="provider">The Logon provider.</param>
+        /// <returns>The logged on token.</returns>
+        public static NtToken Logon(string user, string domain, string password, SecurityLogonType type, Logon32Provider provider)
+        {
+            if (!SecurityNativeMethods.LogonUser(user, domain, password, type, provider, out SafeKernelObjectHandle handle))
             {
                 throw new SafeWin32Exception();
             }
@@ -131,9 +146,10 @@ namespace NtApiDotNet.Win32
         /// <param name="domain">The user's domain.</param>
         /// <param name="password">The user's password.</param>
         /// <param name="type">The type of logon token.</param>
+        /// <param name="provider">The Logon provider.</param>
         /// <param name="groups">Additional groups to add. Needs SeTcbPrivilege.</param>
         /// <returns>The logged on token.</returns>
-        public static NtToken Logon(string user, string domain, string password, SecurityLogonType type, IEnumerable<UserGroup> groups)
+        public static NtToken Logon(string user, string domain, string password, SecurityLogonType type, Logon32Provider provider, IEnumerable<UserGroup> groups)
         {
             TokenGroupsBuilder builder = new TokenGroupsBuilder();
             foreach (var group in groups)
@@ -143,13 +159,57 @@ namespace NtApiDotNet.Win32
 
             using (var group_buffer = builder.ToBuffer())
             {
-                if (!SecurityNativeMethods.LogonUserExExW(user, domain, password, type, 0, group_buffer, 
+                if (!SecurityNativeMethods.LogonUserExExW(user, domain, password, type, provider, group_buffer,
                     out SafeKernelObjectHandle token, null, null, null, null))
                 {
                     throw new SafeWin32Exception();
                 }
                 return new NtToken(token);
             }
+        }
+
+        /// <summary>
+        /// Logon a user with a username and password.
+        /// </summary>
+        /// <param name="user">The username.</param>
+        /// <param name="domain">The user's domain.</param>
+        /// <param name="password">The user's password.</param>
+        /// <param name="type">The type of logon token.</param>
+        /// <param name="groups">Additional groups to add. Needs SeTcbPrivilege.</param>
+        /// <returns>The logged on token.</returns>
+        public static NtToken Logon(string user, string domain, string password, SecurityLogonType type, IEnumerable<UserGroup> groups)
+        {
+            return Logon(user, domain, password, type, Logon32Provider.Default, groups);
+        }
+
+        /// <summary>
+        /// Logon user using Kerberos Ticket.
+        /// </summary>
+        /// <param name="type">The type of logon token.</param>
+        /// <param name="service_ticket">The service ticket.</param>
+        /// <param name="tgt_ticket">Optional TGT.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The logged on token.</returns>
+        public static NtResult<NtToken> LsaLogonTicket(SecurityLogonType type, KerberosTicket service_ticket, KerberosCredential tgt_ticket, bool throw_on_error)
+        {
+            if (service_ticket is null)
+            {
+                throw new ArgumentNullException(nameof(service_ticket));
+            }
+
+            return LsaLogonTicket(type, service_ticket.TicketData, tgt_ticket?.ToArray(), throw_on_error);
+        }
+
+        /// <summary>
+        /// Logon user using Kerberos Ticket.
+        /// </summary>
+        /// <param name="type">The type of logon token.</param>
+        /// <param name="service_ticket">The service ticket.</param>
+        /// <param name="tgt_ticket">Optional TGT.</param>
+        /// <returns>The logged on token.</returns>
+        public static NtToken LsaLogonTicket(SecurityLogonType type, KerberosTicket service_ticket, KerberosCredential tgt_ticket)
+        {
+            return LsaLogonTicket(type, service_ticket, tgt_ticket, true).Result;
         }
 
         /// <summary>
@@ -466,10 +526,10 @@ namespace NtApiDotNet.Win32
                 var hlsa = list.AddResource(SafeLsaLogonHandle.Connect(throw_on_error));
                 if (!hlsa.IsSuccess)
                     return hlsa.Cast<NtToken>();
-                NtStatus status = SecurityNativeMethods.LsaLookupAuthenticationPackage(
-                    hlsa.Result, new LsaString(auth_package), out uint auth_pkg);
-                if (!status.IsSuccess())
-                    return status.CreateResultFromError<NtToken>(throw_on_error);
+
+                var auth_pkg = hlsa.Result.LookupAuthPackage(auth_package, throw_on_error);
+                if (!auth_pkg.IsSuccess)
+                    return auth_pkg.Cast<NtToken>();
 
                 var groups = local_groups == null ? SafeTokenGroupsBuffer.Null 
                     : list.AddResource(SafeTokenGroupsBuffer.Create(local_groups));
@@ -478,7 +538,7 @@ namespace NtApiDotNet.Win32
                 SecurityNativeMethods.AllocateLocallyUniqueId(out tokenSource.SourceIdentifier);
                 QUOTA_LIMITS quota_limits = new QUOTA_LIMITS();
                 return SecurityNativeMethods.LsaLogonUser(hlsa.Result, new LsaString(origin_name),
-                    type, auth_pkg, buffer, buffer.GetLength(), groups,
+                    type, auth_pkg.Result, buffer, buffer.GetLength(), groups,
                     tokenSource, out SafeLsaReturnBufferHandle profile,
                     out int cbProfile, out Luid logon_id, out SafeKernelObjectHandle token_handle,
                     quota_limits, out NtStatus subStatus).CreateResult(throw_on_error, () =>

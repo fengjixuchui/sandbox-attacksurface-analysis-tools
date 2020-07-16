@@ -17,6 +17,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace NtApiDotNet
 {
@@ -186,6 +187,11 @@ namespace NtApiDotNet
                 {
                     var trustlet_config = config.TrustletConfig ?? NtProcessTrustletConfig.CreateFromFile(image_path);
                     dispose.Add(ProcessAttribute.SecureProcess(trustlet_config));
+                }
+
+                if (config.InheritHandleList.Count > 0)
+                {
+                    dispose.Add(ProcessAttribute.HandleList(config.InheritHandleList.Select(o => o.Handle)));
                 }
 
                 var attr_list = dispose.AddResource(ProcessAttributeList.Create(dispose.OfType<ProcessAttribute>().Concat(config.AdditionalAttributes)));
@@ -486,6 +492,17 @@ namespace NtApiDotNet
         public static NtProcess OpenCurrent()
         {
             return Current.Duplicate();
+        }
+
+        /// <summary>
+        /// Test whether a process can access another protected process.
+        /// </summary>
+        /// <param name="current">The current process.</param>
+        /// <param name="target">The target process.</param>
+        /// <returns>True if the process can be accessed.</returns>
+        public static bool TestProtectedAccess(NtProcess current, NtProcess target)
+        {
+            return NtRtl.RtlTestProtectedAccess(current.Protection.Level, target.Protection.Level);
         }
 
         #endregion
@@ -1063,19 +1080,21 @@ namespace NtApiDotNet
         {
             return NtVirtualMemory.QueryMemoryInformation(Handle, base_address);
         }
+
         /// <summary>
         /// Query all memory information regions in process memory.
         /// </summary>
         /// <returns>The list of memory regions.</returns>
-        /// <param name="include_free_regions">True to include free regions of memory.</param>
         /// <param name="type">Specify memory types to filter on.</param>
+        /// <param name="state">Set of flags which indicate the memory states to return.</param>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public IEnumerable<MemoryInformation> QueryAllMemoryInformation(bool include_free_regions, MemoryType type)
+        public IEnumerable<MemoryInformation> QueryAllMemoryInformation(MemoryType type, MemoryState state)
         {
-            IEnumerable<MemoryInformation> mem_infos = NtVirtualMemory.QueryMemoryInformation(Handle);
-            if (!include_free_regions)
+            var mem_infos = NtVirtualMemory.QueryMemoryInformation(Handle);
+
+            if (state != MemoryState.All)
             {
-                mem_infos = mem_infos.Where(m => m.State != MemoryState.Free);
+                mem_infos = mem_infos.Where(m => m.State.HasFlagSet(state));
             }
 
             if (type != MemoryType.All)
@@ -1086,6 +1105,17 @@ namespace NtApiDotNet
             return mem_infos;
         }
 
+        /// <summary>
+        /// Query all memory information regions in process memory.
+        /// </summary>
+        /// <returns>The list of memory regions.</returns>
+        /// <param name="include_free_regions">True to include free regions of memory.</param>
+        /// <param name="type">Specify memory types to filter on.</param>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public IEnumerable<MemoryInformation> QueryAllMemoryInformation(bool include_free_regions, MemoryType type)
+        {
+            return QueryAllMemoryInformation(type, MemoryState.Commit | MemoryState.Reserve | (include_free_regions ? MemoryState.Free : 0));
+        }
 
         /// <summary>
         /// Query all memory information regions in process memory.
@@ -1708,6 +1738,7 @@ namespace NtApiDotNet
             {
                 using (var buffer = new SafeStructureInOutBuffer<RtlUserProcessParameters32>())
                 {
+                    buffer.FillBuffer(0);
                     buffer.WriteArray(0, bytes, 0, Math.Min(bytes.Length, buffer.Length));
                     user_params = buffer.Result.Convert();
                 }
@@ -1716,6 +1747,7 @@ namespace NtApiDotNet
             {
                 using (var buffer = new SafeStructureInOutBuffer<RtlUserProcessParameters>())
                 {
+                    buffer.FillBuffer(0);
                     buffer.WriteArray(0, bytes, 0, Math.Min(bytes.Length, buffer.Length));
                     user_params = buffer.Result;
                 }
@@ -1867,6 +1899,50 @@ namespace NtApiDotNet
         {
             return Query<ProcessSessionInformation>(ProcessInformationClass.ProcessSessionInformation, 
                 default, throw_on_error).Map(s => s.SessionId);
+        }
+
+        /// <summary>
+        /// Test whether the current process can access another protected process.
+        /// </summary>
+        /// <param name="target">The target process.</param>
+        /// <returns>True if the process can be accessed.</returns>
+        public bool TestProtectedAccess(NtProcess target)
+        {
+            return TestProtectedAccess(this, target);
+        }
+
+        /// <summary>
+        /// Get the environment from the process.
+        /// </summary>
+        /// <returns>List of environment variables.</returns>
+        public IReadOnlyList<NtProcessEnvironmentVariable> GetEnvironment()
+        {
+            var proc_params = GetUserProcessParameters();
+            int env_size;
+            if (NtObjectUtils.SupportedVersion < SupportedVersion.Windows10_RS5)
+            {
+                var mem_info = QueryMemoryInformation(proc_params.Environment.ToInt64());
+                long curr_size = mem_info.RegionSize - (proc_params.Environment.ToInt64() - mem_info.BaseAddress);
+                env_size = (int)curr_size;
+            }
+            else
+            {
+                env_size = proc_params.EnvironmentSize.ToInt32();
+            }
+
+            return NtProcessEnvironmentVariable.ParseEnvironmentBlock(
+                ReadMemory(proc_params.Environment.ToInt64(), env_size, true)).ToList().AsReadOnly();
+        }
+
+        /// <summary>
+        /// Get an environment variable by name.
+        /// </summary>
+        /// <param name="name">The name of the variable.</param>
+        /// <returns>The value of the environment variable. Returns null if it doesn't exist.</returns>
+        /// <remarks>Only returns the first variable with a case insensitive name.</remarks>
+        public string GetEnvironmentVariable(string name)
+        {
+            return GetEnvironment().Where(v => v.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).FirstOrDefault().Value;
         }
 
         /// <summary>
@@ -2287,6 +2363,31 @@ namespace NtApiDotNet
         /// Get the security domain of the process.
         /// </summary>
         public long SecurityDomain => GetSecurityDomain();
+
+        /// <summary>
+        /// Get the creation time of the process.
+        /// </summary>
+        public DateTime CreateTime => DateTime.FromFileTime(Query<KernelUserTimes>(ProcessInformationClass.ProcessTimes).CreateTime.QuadPart);
+        /// <summary>
+        /// Get the exit time of the process.
+        /// </summary>
+        public DateTime ExitTime => DateTime.FromFileTime(Query<KernelUserTimes>(ProcessInformationClass.ProcessTimes).ExitTime.QuadPart);
+        /// <summary>
+        /// Get the time spent in the kernel.
+        /// </summary>
+        public long KernelTime => Query<KernelUserTimes>(ProcessInformationClass.ProcessTimes).KernelTime.QuadPart;
+        /// <summary>
+        /// Get the time spent in user mode.
+        /// </summary>
+        public long UserTime => Query<KernelUserTimes>(ProcessInformationClass.ProcessTimes).UserTime.QuadPart;
+        /// <summary>
+        /// Get the time spent in the kernel in seconds.
+        /// </summary>
+        public double KernelTimeSeconds => new TimeSpan(KernelTime).TotalSeconds;
+        /// <summary>
+        /// Get the time spent in user mode.
+        /// </summary>
+        public double UserTimeSeconds => new TimeSpan(UserTime).TotalSeconds;
 
         #endregion
 

@@ -59,18 +59,6 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
         }
         #endregion
 
-        #region Public Methods
-        /// <summary>
-        /// Decrypt the Authentication Token using a keyset.
-        /// </summary>
-        /// <param name="keyset">The set of keys to decrypt the </param>
-        /// <returns>The decrypted token, or the same token if nothing could be decrypted.</returns>
-        public virtual KerberosAuthenticationToken Decrypt(KerberosKeySet keyset)
-        {
-            return this;
-        }
-        #endregion
-
         #region Internal Static Methods
         /// <summary>
         /// Try and parse data into an Kerberos authentication token.
@@ -93,8 +81,8 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
 
                 switch (oid)
                 {
-                    case OIDValues.KERBEROS_OID:
-                    case OIDValues.KERBEROS_USER_TO_USER_OID:
+                    case OIDValues.KERBEROS:
+                    case OIDValues.KERBEROS_USER_TO_USER:
                         if (tok_id[0] == 1)
                         {
                             if (KerberosAPRequestAuthenticationToken.TryParse(data, values, out token))

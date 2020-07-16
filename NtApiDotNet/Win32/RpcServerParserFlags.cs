@@ -1,4 +1,4 @@
-﻿//  Copyright 2016, 2017 Google Inc. All Rights Reserved.
+﻿//  Copyright 2016, 2017, 2018 Google Inc. All Rights Reserved.
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -14,37 +14,29 @@
 
 using System;
 
-namespace NtObjectManager.Cmdlets.Object
+namespace NtApiDotNet.Win32
 {
     /// <summary>
-    /// <para type="description">Flags for formatting a job.</para>
+    /// Flags for the RPC server parser.
     /// </summary>
     [Flags]
-    public enum JobFormatFilter
+    public enum RpcServerParserFlags
     {
         /// <summary>
-        /// Basic information.
+        /// None.
         /// </summary>
-        BasicInfo = 1,
+        None = 0,
         /// <summary>
-        /// Basic limits.
+        /// Parse client entries.
         /// </summary>
-        BasicLimits = 2,
+        ParseClients = 1,
         /// <summary>
-        /// List of processes.
+        /// Ignore symbols when parsing.
         /// </summary>
-        ProcessList = 4,
+        IgnoreSymbols = 2,
         /// <summary>
-        /// UI Limits.
+        /// Try and resolve structure names. Needs private symbols.
         /// </summary>
-        UILimits = 8,
-        /// <summary>
-        /// Silo information.
-        /// </summary>
-        Silo = 0x10,
-        /// <summary>
-        /// Display all formats.
-        /// </summary>
-        All = BasicLimits | ProcessList | BasicInfo | UILimits | Silo
+        ResolveStructureNames = 4,
     }
 }

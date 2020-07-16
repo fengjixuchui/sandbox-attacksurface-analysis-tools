@@ -20,6 +20,9 @@ using System.Linq;
 using NtApiDotNet.Win32;
 using System.Security;
 using System.Runtime.InteropServices;
+using NtApiDotNet.Win32.Security.Authentication;
+using NtApiDotNet.Win32.Security.Authentication.Kerberos;
+using NtApiDotNet.Win32.Security.Native;
 
 namespace NtObjectManager.Cmdlets.Object
 {
@@ -266,6 +269,12 @@ namespace NtObjectManager.Cmdlets.Object
         public SwitchParameter Logon { get; set; }
 
         /// <summary>
+        /// <para type="description">Specify logon provider.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "Logon")]
+        public Logon32Provider LogonProvider { get; set; }
+
+        /// <summary>
         /// <para type="description">Get an Services for User (S4U) logon token.</para>
         /// </summary>
         [Parameter(Mandatory = true, ParameterSetName = "S4U")]
@@ -305,8 +314,20 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify logon type for logon token.</para>
         /// </summary>
-        [Parameter(ParameterSetName = "Logon"), Parameter(ParameterSetName = "S4U")]
+        [Parameter(ParameterSetName = "Logon"), Parameter(ParameterSetName = "S4U"), Parameter(ParameterSetName = "Ticket")]
         public SecurityLogonType LogonType { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify Service Ticket for Logon.</para>
+        /// </summary>
+        [Parameter(Position = 0, ParameterSetName = "Ticket", Mandatory = true)]
+        public KerberosTicket Ticket { get; }
+
+        /// <summary>
+        /// <para type="description">Specify optional TGT for logon.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "Ticket", Mandatory = true)]
+        public KerberosCredential KerbCred { get; }
 
         /// <summary>
         /// <para type="description">Get anonymous token.</para>
@@ -565,7 +586,7 @@ namespace NtObjectManager.Cmdlets.Object
                 groups = AdditionalGroups.Select(s => new UserGroup(s,
                     GetAttributes(s)));
             }
-            using (NtToken token = TokenUtils.GetLogonUserToken(user, domain, password, logon_type, groups))
+            using (NtToken token = TokenUtils.GetLogonUserToken(user, domain, password, logon_type, LogonProvider, groups))
             {
                 if (desired_access == TokenAccessRights.MaximumAllowed)
                 {
@@ -582,7 +603,19 @@ namespace NtObjectManager.Cmdlets.Object
 
         private NtToken GetS4UToken(TokenAccessRights desired_access)
         {
-            using (NtToken token = LogonUtils.LsaLogonS4U(User, Domain, LogonType, "Negotiate"))
+            using (NtToken token = LogonUtils.LsaLogonS4U(User, Domain, LogonType, AuthenticationPackage.NEGOSSP_NAME))
+            {
+                if (desired_access == TokenAccessRights.MaximumAllowed)
+                {
+                    return token.Duplicate();
+                }
+                return token.Duplicate(desired_access);
+            }
+        }
+
+        private NtToken GetTicketToken(TokenAccessRights desired_access)
+        {
+            using (NtToken token = LogonUtils.LsaLogonTicket(LogonType, Ticket, KerbCred))
             {
                 if (desired_access == TokenAccessRights.MaximumAllowed)
                 {
@@ -721,6 +754,10 @@ namespace NtObjectManager.Cmdlets.Object
             else if (S4U)
             {
                 return GetS4UToken(desired_access);
+            }
+            else if (Ticket != null)
+            {
+                return GetTicketToken(desired_access);
             }
             else if (Anonymous)
             {

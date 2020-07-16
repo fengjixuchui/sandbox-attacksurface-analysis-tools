@@ -15,6 +15,7 @@
 using NtApiDotNet.Utilities.ASN1;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text;
 
 namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
@@ -63,10 +64,10 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
         /// </summary>
         /// <param name="keyset">The set of keys to decrypt the </param>
         /// <returns>The decrypted token, or the same token if nothing could be decrypted.</returns>
-        public override KerberosAuthenticationToken Decrypt(KerberosKeySet keyset)
+        public override AuthenticationToken Decrypt(IEnumerable<AuthenticationKey> keyset)
         {
             KerberosEncryptedData encdata = null;
-            KerberosKeySet tmp_keys = new KerberosKeySet(keyset);
+            KerberosKeySet tmp_keys = new KerberosKeySet(keyset.OfType<KerberosAuthenticationKey>());
             List<KerberosTicket> dec_tickets = new List<KerberosTicket>();
             bool decrypted_ticket = false;
             foreach (var ticket in Tickets)
@@ -136,7 +137,7 @@ namespace NtApiDotNet.Win32.Security.Authentication.Kerberos
                             List<KerberosTicket> tickets = new List<KerberosTicket>();
                             foreach (var child in next.Children[0].Children)
                             {
-                                tickets.Add(KerberosTicket.Parse(child));
+                                tickets.Add(KerberosTicket.Parse(child, next.Children[0].Data));
                             }
                             ret.Tickets = tickets.AsReadOnly();
                             break;

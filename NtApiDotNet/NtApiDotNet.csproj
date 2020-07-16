@@ -63,6 +63,7 @@
     <Compile Include="NtDesktopNative.cs" />
     <Compile Include="NtProcessCreateResult.cs" />
     <Compile Include="NtProcessCreateConfig.cs" />
+    <Compile Include="NtProcessEnvironmentVariable.cs" />
     <Compile Include="NtProcessTrustletConfig.cs" />
     <Compile Include="NtUserProcessParameters.cs" />
     <Compile Include="NtWaitNative.cs" />
@@ -293,6 +294,8 @@
     <Compile Include="Win32\Debugger\DbgHelpSymbolResolver.cs" />
     <Compile Include="Win32\Debugger\EnumProcessModulesFilter.cs" />
     <Compile Include="Win32\Debugger\EnumTypeInformation.cs" />
+    <Compile Include="Win32\Debugger\FunctionParameter.cs" />
+    <Compile Include="Win32\Debugger\FunctionTypeInformation.cs" />
     <Compile Include="Win32\Debugger\IMAGEHLP_MODULE64.cs" />
     <Compile Include="Win32\Debugger\IMAGEHLP_SYMBOL_TYPE_INFO.cs" />
     <Compile Include="Win32\Debugger\MODULEINFO.cs" />
@@ -319,9 +322,11 @@
     <Compile Include="Win32\ExecutableManifest.cs" />
     <Compile Include="Win32\Debugger\ISymbolTypeResolver.cs" />
     <Compile Include="Win32\ISymbolResolver.cs" />
+    <Compile Include="Win32\RpcServerParserFlags.cs" />
     <Compile Include="Win32\SafeHandles\SafeLsaLogonHandle.cs" />
     <Compile Include="Utilities\ASN1\DERParser.cs" />
     <Compile Include="Win32\Security\Authentication\ASN1AuthenticationToken.cs" />
+    <Compile Include="Win32\Security\Authentication\AuthenticationKey.cs" />
     <Compile Include="Win32\Security\Authentication\GSSAPIUtils.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAPReplyEncryptedPart.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACDevice.cs" />
@@ -339,8 +344,10 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosChecksum.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosChecksumGSSApi.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosCredential.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosExternalTicket.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosHostAddress.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosPreAuthenticationType.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTicketCache.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTicketDecrypted.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosKeySet.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTransitedEncoding.cs" />
@@ -354,7 +361,7 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosErrorAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTGTRequestAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthenticationToken.cs" />
-    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosKey.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthenticationKey.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTGTReplyAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosTicket.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosUtils.cs" />
@@ -364,8 +371,10 @@
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosMessageType.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosNameType.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\Ndr\PacDeviceInfoParser.cs" />
-    <Compile Include="Win32\Security\Authentication\Kerberos\PrincipalName.cs" />
+    <Compile Include="Win32\Security\Authentication\Kerberos\KerberosPrincipalName.cs" />
+    <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateInitAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateAuthenticationToken.cs" />
+    <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateResponseAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Ntlm\NtlmAuthenticateAuthenticationTokenV2.cs" />
     <Compile Include="Win32\Security\Native\KERB_TICKET_LOGON.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContextStructs.cs" />
