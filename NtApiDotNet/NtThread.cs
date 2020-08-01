@@ -959,6 +959,18 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get a partial TEB for the thread.
+        /// </summary>
+        /// <returns>The partial TEB.</returns>
+        public ITeb GetTeb()
+        {
+            using (var process = NtProcess.Open(ProcessId, ProcessAccessRights.VmRead))
+            {
+                return process.ReadMemory<PartialTeb>(TebBaseAddress.ToInt64());
+            }
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -1220,7 +1232,12 @@ namespace NtApiDotNet
         /// <summary>
         /// Get thread exit status.
         /// </summary>
-        public NtStatus ExitNtStatus => QueryBasicInformation().ExitStatus;
+        public int ExitStatus => QueryBasicInformation().ExitStatus;
+
+        /// <summary>
+        /// Get thread exit status.
+        /// </summary>
+        public NtStatus ExitNtStatus => (NtStatus)ExitStatus;
         #endregion
     }
 }

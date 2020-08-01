@@ -4881,6 +4881,8 @@ The base key to query the values from.
 The name of the value to query. If not specified then returns all values.
 .PARAMETER AsString
 Output the values as strings.
+.PARAMETER AsObject
+Output the values as the data object.
 .INPUTS
 None
 .OUTPUTS
@@ -4905,7 +4907,8 @@ function Get-NtKeyValue {
         [NtApiDotNet.NtKey]$Key,
         [parameter(ParameterSetName = "FromName", Position = 1)]
         [string]$Name,
-        [switch]$AsString
+        [switch]$AsString,
+        [switch]$AsObject
     )
     $values = switch ($PSCmdlet.ParameterSetName) {
         "All" {
@@ -4916,11 +4919,10 @@ function Get-NtKeyValue {
         }
     }
     if ($AsString) {
-        foreach ($v in $values) {
-            $v.ToString() | Write-Output
-        }
-    }
-    else {
+        $values | ForEach-Object { $_.ToString() } | Write-Output
+    } elseif($AsObject) {
+        $values | ForEach-Object { $_.ToObject() } | Write-Output
+    } else {
         $values | Write-Output
     }
 }
@@ -6153,6 +6155,62 @@ function Get-NtWindow {
          $ws = $ws | Where-Object ProcessId -eq $ProcessId
     }
     $ws | Write-Output
+}
+
+<#
+.SYNOPSIS
+Send a message to a Window handle.
+.DESCRIPTION
+This cmdlet sends a message to a window handle.
+.PARAMETER Window
+The Window to send to.
+.PARAMETER Message
+Specify the message to send.
+.PARAMETER WParam
+Specify the WPARAM value.
+.PARAMETER LParam
+Specify the LPARAM value.
+.PARAMETER Wait
+Specify to send the message and wait rather than post.
+.PARAMETER Ansi
+Specify to send the message as ANSI rather than Unicode.
+.INPUTS
+None
+.OUTPUTS
+System.IntPtr
+#>
+function Send-NtWindowMessage {
+    [CmdletBinding()]
+    Param(
+        [Parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [NtApiDotNet.NtWindow[]]$Window,
+        [Parameter(Mandatory, Position = 1)]
+        [int]$Message,
+        [Parameter(Position = 2)]
+        [IntPtr]$WParam = [IntPtr]::Zero,
+        [Parameter(Position = 3)]
+        [IntPtr]$LParam = [IntPtr]::Zero,
+        [switch]$Wait,
+        [switch]$Ansi
+    )
+
+    PROCESS {
+        foreach($w in $Window) {
+            if ($Wait) {
+                if ($Ansi) {
+                    $w.SendMessageAnsi($Message, $WParam, $LParam) | Write-Output
+                } else {
+                    $w.SendMessage($Message, $WParam, $LParam) | Write-Output
+                }
+            } else {
+                if ($Ansi) {
+                    $w.PostMessageAnsi($Message, $WParam, $LParam)
+                } else {
+                    $w.PostMessage($Message, $WParam, $LParam)
+                }
+            }
+        }
+    }
 }
 
 <#
@@ -9530,7 +9588,7 @@ function Get-NtProcessEnvironment {
         [NtApiDotNet.NtProcess]$Process,
         [string]$Name
     )
-    
+
     switch ($PSCmdlet.ParameterSetName) {
         "FromProcessId" {
             Set-NtTokenPrivilege -Privilege SeDebugPrivilege -WarningAction SilentlyContinue
@@ -9550,4 +9608,27 @@ function Get-NtProcessEnvironment {
             }
         }
     }
+}
+
+<#
+.SYNOPSIS
+Split a command line into its component parts.
+.DESCRIPTION
+This cmdlet take a process command line and split it into its component parts.
+.PARAMETER CommandLine
+The command line.
+.INPUTS
+None
+.OUTPUTS
+string[]
+.EXAMPLE
+Split-Win32CommandLine -CommandLine "notepad test.txt"
+Split the command line "notepad test.txt"
+#>
+function Split-Win32CommandLine {
+    Param(
+        [parameter(Position = 0, Mandatory)]
+        [string]$CommandLine
+    )
+    [NtApiDotNet.Win32.Win32Utils]::ParseCommandLine($CommandLine) | Write-Output
 }

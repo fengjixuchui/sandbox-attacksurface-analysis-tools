@@ -179,14 +179,38 @@ namespace NtApiDotNet
         /// <returns>The list of handles</returns>
         public static IEnumerable<NtHandle> GetHandles(int pid, bool allow_query)
         {
-            using (var buffer = QueryBuffer<SystemHandleInformationEx>(SystemInformationClass.SystemExtendedHandleInformation))
+            int repeat_count = 10;
+
+            while (repeat_count-- > 0)
             {
-                var handle_info = buffer.Result;
-                int handle_count = handle_info.NumberOfHandles.ToInt32();
-                SystemHandleTableInfoEntryEx[] handles = new SystemHandleTableInfoEntryEx[handle_count];
-                buffer.Data.ReadArray(0, handles, 0, handle_count);
-                return handles.Where(h => pid == -1 || h.UniqueProcessId.ToInt32() == pid).Select(h => new NtHandle(h, allow_query));
+                int handle_count = 0;
+                using (var buffer = new SafeStructureInOutBuffer<SystemHandleInformationExHeader>())
+                {
+                    var status = _system_info_object.QueryInformation(SystemInformationClass.SystemExtendedHandleInformation, buffer, out int _);
+                    if (status != NtStatus.STATUS_INFO_LENGTH_MISMATCH)
+                    {
+                        throw new NtException(status);
+                    }
+                    // Get count and add a 10000 handle margin in case it increases.
+                    handle_count = buffer.Result.NumberOfHandles.ToInt32() + 10000;
+                }
+
+                using (var buffer = new SafeStructureInOutBuffer<SystemHandleInformationEx>(handle_count * Marshal.SizeOf(typeof(SystemHandleTableInfoEntryEx)), true))
+                {
+                    var status = _system_info_object.QueryInformation(SystemInformationClass.SystemExtendedHandleInformation, buffer, out int _);
+                    if (status == NtStatus.STATUS_INFO_LENGTH_MISMATCH)
+                    {
+                        continue;
+                    }
+                    status.ToNtException();
+                    var handle_info = buffer.Result;
+                    handle_count = handle_info.NumberOfHandles.ToInt32();
+                    SystemHandleTableInfoEntryEx[] handles = new SystemHandleTableInfoEntryEx[handle_count];
+                    buffer.Data.ReadArray(0, handles, 0, handle_count);
+                    return handles.Where(h => pid == -1 || h.UniqueProcessId.ToInt32() == pid).Select(h => new NtHandle(h, allow_query));
+                }
             }
+            throw new NtException(NtStatus.STATUS_BUFFER_TOO_SMALL);
         }
 
         /// <summary>
@@ -1090,58 +1114,28 @@ namespace NtApiDotNet
         /// <summary>
         /// Get whether the kernel debugger is enabled.
         /// </summary>
-        public static bool KernelDebuggerEnabled
-        {
-            get
-            {
-                return GetKernelDebuggerInformation().KernelDebuggerEnabled;
-            }
-        }
+        public static bool KernelDebuggerEnabled => GetKernelDebuggerInformation().KernelDebuggerEnabled;
 
         /// <summary>
         /// Get whether the kernel debugger is not present.
         /// </summary>
-        public static bool KernelDebuggerNotPresent
-        {
-            get
-            {
-                return GetKernelDebuggerInformation().KernelDebuggerNotPresent;
-            }
-        }
+        public static bool KernelDebuggerNotPresent => GetKernelDebuggerInformation().KernelDebuggerNotPresent;
 
         /// <summary>
         /// Get current code integrity option settings.
         /// </summary>
-        public static CodeIntegrityOptions CodeIntegrityOptions
-        {
-            get
-            {
-                return Query(SystemInformationClass.SystemCodeIntegrityInformation, 
+        public static CodeIntegrityOptions CodeIntegrityOptions => Query(SystemInformationClass.SystemCodeIntegrityInformation,
                     new SystemCodeIntegrityInformation() { Length = Marshal.SizeOf(typeof(SystemCodeIntegrityInformation)) }).CodeIntegrityOptions;
-            }
-        }
 
         /// <summary>
         /// Get code integrity policy.
         /// </summary>
-        public static SystemCodeIntegrityPolicy CodeIntegrityPolicy
-        {
-            get
-            {
-                return Query<SystemCodeIntegrityPolicy>(SystemInformationClass.SystemCodeIntegrityPolicyInformation);
-            }
-        }
+        public static SystemCodeIntegrityPolicy CodeIntegrityPolicy => Query<SystemCodeIntegrityPolicy>(SystemInformationClass.SystemCodeIntegrityPolicyInformation);
 
         /// <summary>
         /// Get code integrity unlock information.
         /// </summary>
-        public static int CodeIntegrityUnlock
-        {
-            get
-            {
-                return Query<int>(SystemInformationClass.SystemCodeIntegrityUnlockInformation);
-            }
-        }
+        public static int CodeIntegrityUnlock => Query<int>(SystemInformationClass.SystemCodeIntegrityUnlockInformation);
 
         /// <summary>
         /// Get all code integrity policies.
@@ -1182,24 +1176,12 @@ namespace NtApiDotNet
         /// <summary>
         /// Get whether secure boot is enabled.
         /// </summary>
-        public static bool SecureBootEnabled
-        {
-            get
-            {
-                return Query<SystemSecurebootInformation>(SystemInformationClass.SystemSecureBootInformation).SecureBootEnabled;
-            }
-        }
+        public static bool SecureBootEnabled => Query<SystemSecurebootInformation>(SystemInformationClass.SystemSecureBootInformation).SecureBootEnabled;
 
         /// <summary>
         /// Get whether system supports secure boot.
         /// </summary>
-        public static bool SecureBootCapable
-        {
-            get
-            {
-                return Query<SystemSecurebootInformation>(SystemInformationClass.SystemSecureBootInformation).SecureBootCapable;
-            }
-        }
+        public static bool SecureBootCapable => Query<SystemSecurebootInformation>(SystemInformationClass.SystemSecureBootInformation).SecureBootCapable;
 
         /// <summary>
         /// Extract the secure boot policy.
@@ -1270,7 +1252,6 @@ namespace NtApiDotNet
         /// Get the Isolated User Mode flags.
         /// </summary>
         public static SystemIsolatedUserModeInformationFlags IsolatedUserModeFlags => GetIsolatedUserModeFlags(true).Result;
-
         #endregion
     }
 }
