@@ -14,6 +14,7 @@
 
 using NtApiDotNet;
 using NtApiDotNet.Win32.Device;
+using NtObjectManager.Utils;
 using System;
 using System.Linq;
 using System.Management.Automation;
@@ -51,6 +52,7 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">The NT object manager path to the object to use.</para>
         /// </summary>
         [Parameter(Position = 0, Mandatory = true)]
+        [AllowEmptyString]
         public override string Path { get; set; }
 
         /// <summary>
@@ -58,6 +60,12 @@ namespace NtObjectManager.Cmdlets.Object
         /// </summary>
         [Parameter]
         public SwitchParameter DeviceGuid { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the path is a file id, in string format (e.g. 12345678) or a GUID object id.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter OpenById { get; set; }
 
         /// <summary>
         /// Determine if the cmdlet can create objects.
@@ -96,68 +104,6 @@ namespace NtObjectManager.Cmdlets.Object
         [Parameter]
         public NtTransaction Transaction { get; set; }
 
-        private static string ResolveRelativePath(SessionState state, string path, RtlPathType path_type)
-        {
-            var current_path = state.Path.CurrentFileSystemLocation;
-            if (!current_path.Provider.Name.Equals("FileSystem", StringComparison.OrdinalIgnoreCase))
-            {
-                throw new ArgumentException("Can't make a relative Win32 path when not in a file system drive.");
-            }
-
-            switch (path_type)
-            {
-                case RtlPathType.Relative:
-                    return System.IO.Path.Combine(current_path.Path, path);
-                case RtlPathType.Rooted:
-                    return $"{current_path.Drive.Name}:{path}";
-                case RtlPathType.DriveRelative:
-                    if (path.Substring(0, 1).Equals(current_path.Drive.Name, StringComparison.OrdinalIgnoreCase))
-                    {
-                        return System.IO.Path.Combine(current_path.Path, path.Substring(2));
-                    }
-                    break;
-            }
-
-            return path;
-        }
-
-        /// <summary>
-        /// Resolve a Win32 path using current PS session state.
-        /// </summary>
-        /// <param name="state">The session state.</param>
-        /// <param name="path">The path to resolve.</param>
-        /// <returns>The resolved Win32 path.</returns>
-        public static string ResolveWin32Path(SessionState state, string path)
-        {
-            var path_type = NtFileUtils.GetDosPathType(path);
-            if (path_type == RtlPathType.Rooted && path.StartsWith(@"\??"))
-            {
-                path_type = RtlPathType.LocalDevice;
-            }
-            switch (path_type)
-            {
-                case RtlPathType.Relative:
-                case RtlPathType.DriveRelative:
-                case RtlPathType.Rooted:
-                    path = ResolveRelativePath(state, path, path_type);
-                    break;
-            }
-
-            return NtFileUtils.DosFileNameToNt(path);
-        }
-        
-        internal static string ResolvePath(SessionState state, string path, bool win32_path)
-        {
-            if (win32_path)
-            {
-                return ResolveWin32Path(state, path);
-            }
-            else
-            {
-                return path;
-            }
-        }
-
         /// <summary>
         /// Virtual method to resolve the value of the Path variable.
         /// </summary>
@@ -173,9 +119,28 @@ namespace NtObjectManager.Cmdlets.Object
                 }
                 return NtFileUtils.DosFileNameToNt(path);
             }
+            else if (OpenById)
+            {
+                byte[] data;
+                if (Guid.TryParse(Path, out Guid object_id))
+                {
+                    data = object_id.ToByteArray();
+                }
+                else
+                {
+                    data = BitConverter.GetBytes(long.Parse(Path));
+                }
+                
+                return Convert.ToBase64String(data);
+            }
 
-            return ResolvePath(SessionState, Path, Win32Path);
+            return PSUtils.ResolvePath(SessionState, Path, Win32Path);
         }
+
+        /// <summary>
+        /// Indicates that the path is raw and should be passed through Base64 decode.
+        /// </summary>
+        protected override bool IsRawPath => OpenById;
 
         /// <summary>
         /// Method to create an object from a set of object attributes.
@@ -186,7 +151,10 @@ namespace NtObjectManager.Cmdlets.Object
         {
             using (Transaction?.Enable())
             {
-                return NtFile.Open(obj_attributes, Access, ShareMode, Options);
+                FileOpenOptions opts = Options;
+                if (OpenById)
+                    opts |= FileOpenOptions.OpenByFileId;
+                return NtFile.Open(obj_attributes, Access, ShareMode, opts);
             }
         }
     }

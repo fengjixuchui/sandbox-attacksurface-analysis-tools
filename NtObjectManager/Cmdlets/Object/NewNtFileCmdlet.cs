@@ -63,7 +63,8 @@ namespace NtObjectManager.Cmdlets.Object
         /// <para type="description">Specify the file attributes for the new file.</para>
         /// </summary>
         [Parameter]
-        public FileAttributes Attributes { get; set; }
+        [Alias("Attributes")]
+        public FileAttributes FileAttribute { get; set; }
 
         /// <summary>
         /// <para type="description">Specify the disposition for creating the file.</para>
@@ -84,6 +85,12 @@ namespace NtObjectManager.Cmdlets.Object
         public SwitchParameter Directory { get; set; }
 
         /// <summary>
+        /// <para type="description">Specify initial allocation size.</para>
+        /// </summary>
+        [Parameter]
+        public long? AllocationSize { get; set; }
+
+        /// <summary>
         /// Method to create an object from a set of object attributes.
         /// </summary>
         /// <param name="obj_attributes">The object attributes to create/open from.</param>
@@ -92,8 +99,13 @@ namespace NtObjectManager.Cmdlets.Object
         {
             using (Transaction?.Enable())
             {
-                return NtFile.Create(obj_attributes, Access, Attributes,
-                    ShareMode, Options | (Directory ? FileOpenOptions.DirectoryFile : FileOpenOptions.None), Disposition, EaBuffer);
+                FileOpenOptions opts = Options;
+                if (OpenById)
+                    opts |= FileOpenOptions.OpenByFileId;
+                if (Directory)
+                    opts |= FileOpenOptions.DirectoryFile;
+                return NtFile.Create(obj_attributes, Access, FileAttribute,
+                    ShareMode, opts, Disposition, EaBuffer, AllocationSize);
             }
         }
 
@@ -103,7 +115,7 @@ namespace NtObjectManager.Cmdlets.Object
         public NewNtFileCmdlet()
         {
             Disposition = FileDisposition.Create;
-            Attributes = FileAttributes.Normal;
+            FileAttribute = FileAttributes.Normal;
         }
     }
 }

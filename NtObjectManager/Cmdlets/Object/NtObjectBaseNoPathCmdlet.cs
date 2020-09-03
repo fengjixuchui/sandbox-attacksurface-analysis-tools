@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet;
+using NtObjectManager.Utils;
 using System;
 using System.Management.Automation;
 
@@ -59,6 +60,19 @@ namespace NtObjectManager.Cmdlets.Object
         public SecurityQualityOfService SecurityQualityOfService { get; set; }
 
         /// <summary>
+        /// <para type="description">Close the object immediately and don't pass to the output. This is useful to create permanent objects
+        /// without needing to close the handle manually.</para>
+        /// </summary>
+        [Parameter]
+        public SwitchParameter Close { get; set; }
+
+        /// <summary>
+        /// <para type="description">Invoke a script block on the created object before writing it to the output. Can be used in combination with the Close to map objects to some value.</para>
+        /// </summary>
+        [Parameter]
+        public ScriptBlock ScriptBlock { get; set; }
+
+        /// <summary>
         /// Base constructor.
         /// </summary>
         protected NtObjectBaseNoPathCmdlet()
@@ -72,6 +86,22 @@ namespace NtObjectManager.Cmdlets.Object
         /// <param name="obj_attributes">The object attributes to create/open from.</param>
         /// <returns>The newly created object.</returns>
         protected abstract object CreateObject(ObjectAttributes obj_attributes);
+
+        /// <summary>
+        /// Indicates that the path is raw and should be passed through Base64 decode.
+        /// </summary>
+        protected virtual bool IsRawPath { get; }
+
+        private ObjectAttributes CreateAttributes(string path, AttributeFlags attributes, NtObject root,
+            SecurityQualityOfService security_quality_of_service, SecurityDescriptor security_descriptor)
+        {
+            if (IsRawPath)
+            {
+                return ObjectAttributes.CreateWithRawName(Convert.FromBase64String(path), attributes, 
+                    root, security_quality_of_service, security_descriptor);
+            }
+            return new ObjectAttributes(path, attributes, root, security_quality_of_service, security_descriptor);
+        }
 
         /// <summary>
         /// Create object from components.
@@ -89,7 +119,8 @@ namespace NtObjectManager.Cmdlets.Object
             {
                 attributes |= AttributeFlags.Inherit;
             }
-            using (ObjectAttributes obja = new ObjectAttributes(path, attributes, root, 
+
+            using (var obja = CreateAttributes(path, attributes, root, 
                 security_quality_of_service, security_descriptor))
             {
                 return CreateObject(obja);
@@ -101,7 +132,33 @@ namespace NtObjectManager.Cmdlets.Object
         /// </summary>
         protected override void ProcessRecord()
         {
-            WriteObject(CreateObject(null, AttributesFlags, null, SecurityQualityOfService, SecurityDescriptor), true);
+            WriteToOutput(CreateObject(null, AttributesFlags, null, SecurityQualityOfService, SecurityDescriptor));
+        }
+
+        private protected void WriteToOutput(object obj)
+        {
+            if (obj != null)
+            {
+                try
+                {
+                    if (ScriptBlock != null)
+                    {
+                        WriteObject(PSUtils.InvokeWithArg(ScriptBlock, obj), true);
+                    }
+
+                    if (!Close)
+                    {
+                        WriteObject(obj, true);
+                    }
+                }
+                finally
+                {
+                    if (Close)
+                    {
+                        PSUtils.Dispose(obj);
+                    }
+                }
+            }
         }
 
         #region IDisposable Support

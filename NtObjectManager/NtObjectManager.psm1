@@ -1176,6 +1176,8 @@ This cmdlet gets the full NT path for a specified DOS path.
 The DOS path to convert to NT.
 .PARAMETER Resolve
 Resolve relative paths to the current PS directory.
+.PARAMETER DeviceGuid
+Get native path from a Device Interface GUID.
 .INPUTS
 string[] List of paths to convert.
 .OUTPUTS
@@ -1188,24 +1190,37 @@ Get-ChildItem c:\windows | Get-NtFilePath
 Get list of NT file paths from the pipeline.
 #>
 function Get-NtFilePath {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="FromPath")]
     Param(
         [alias("Path")]
-        [parameter(Mandatory = $true, Position = 0, ValueFromPipeline, valueFromPipelineByPropertyName)]
+        [parameter(Mandatory = $true, Position = 0, ValueFromPipeline, valueFromPipelineByPropertyName, ParameterSetName="FromPath")]
         [string]$FullName,
-        [switch]$Resolve
+        [parameter(ParameterSetName="FromPath")]
+        [switch]$Resolve,
+        [parameter(Mandatory = $true, ParameterSetName="FromGuid")]
+        [guid[]]$DeviceGuid
     )
 
     PROCESS {
-        $type = [NtApiDotNet.NtFileUtils]::GetDosPathType($FullName)
-        $p = $FullName
-        if ($Resolve) {
-            if ($type -eq "Relative" -or $type -eq "Rooted") {
-                $p = Resolve-Path -LiteralPath $FullName
+        if ($PSCmdlet.ParameterSetName -eq "FromPath") {
+            $type = [NtApiDotNet.NtFileUtils]::GetDosPathType($FullName)
+            $p = $FullName
+            if ($Resolve) {
+                if ($type -eq "Relative" -or $type -eq "Rooted") {
+                    $p = Resolve-Path -LiteralPath $FullName
+                }
+            }
+            try {
+                $p = [NtObjectManager.Utils.PSUtils]::ResolveWin32Path($PSCmdlet.SessionState, $p)
+                Write-Output $p
+            } catch {
+                Write-Error $_
+            }
+        } elseif ($PSCmdlet.ParameterSetName -eq "FromGuid") {
+            foreach($g in $DeviceGuid) {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceList($g) | Get-NtFilePath | Write-Output
             }
         }
-        $p = [NtObjectManager.Cmdlets.Object.GetNtFileCmdlet]::ResolveWin32Path($PSCmdlet.SessionState, $p)
-        Write-Output $p
     }
 }
 
@@ -1384,6 +1399,63 @@ function New-NtEaBuffer {
     }
     else {
         return New-Object NtApiDotNet.EaBuffer -ArgumentList $ExistingBuffer
+    }
+}
+
+<#
+.SYNOPSIS
+Add an entry to an existing EA buffer.
+.DESCRIPTION
+This cmdlet adds a new extended attributes entry to a buffer.
+.PARAMETER Buffer
+The EA buffer to add to.
+.PARAMETER Byte
+The bytes to add.
+.PARAMETER Byte
+The bytes to add.
+.PARAMETER Byte
+The bytes to add.
+.PARAMETER Byte
+The bytes to add.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Add-NtEaBuffer -Buffer $ea -Name "ABC" -Byte @(0, 1, 2, 3)
+Add an entry with name ABC and a set of bytes.
+.EXAMPLE
+Add-NtEaBuffer -Buffer $ea -Name "ABC" -String "Hello"
+Add an entry with name ABC and a string.
+.EXAMPLE
+Add-NtEaBuffer -Buffer $ea -Name "ABC" -Int 1234
+Add an entry with name ABC and an integer.
+#>
+function Add-NtEaBuffer {
+    [CmdletBinding(DefaultParameterSetName="FromString")]
+    Param(
+        [Parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Eabuffer]$EaBuffer,
+        [Parameter(Mandatory, Position = 1)]
+        [string]$Name,
+        [Parameter(Mandatory, Position = 2, ParameterSetName="FromString")]
+        [string]$String,
+        [Parameter(Mandatory, Position = 2, ParameterSetName="FromBytes")]
+        [byte[]]$Byte,
+        [Parameter(Mandatory, ParameterSetName="FromInt")]
+        [int]$Int,
+        [NtApiDotNet.EaBufferEntryFlags]$Flags = 0
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromString" {
+            $EaBuffer.AddEntry($Name, $String, $Flags)
+        }
+        "FromBytes" {
+            $EaBuffer.AddEntry($Name, $Byte, $Flags)
+        }
+        "FromInt" {
+            $EaBuffer.AddEntry($Name, $Int, $Flags)
+        }
     }
 }
 
@@ -2439,6 +2511,10 @@ Specify the access component.
 Specify to try and lookup a known name for the IO control code. If no name found will just return an empty string.
 .PARAMETER All
 Specify to return all known IO control codes with names.
+.PARAMETER Name
+Specify to lookup an IO control code with a name.
+.PARAMETER AsInt
+When looking up by name return the control code as an integer.
 .OUTPUTS
 NtApiDotNet.NtIoControlCode
 System.String
@@ -2454,6 +2530,12 @@ Get the IO control code structure from component parts.
 .EXAMPLE
 Get-NtIoControlCode -DeviceType NAMED_PIPE -Function 10 -Method Buffered -Access Any -LookupName
 Get the IO control code structure from component parts and lookup its name (if known).
+.EXAMPLE
+Get-NtIoControlCode -Name "FSCTL_GET_REPARSE_POINT"
+Get the IO control code structure from a known name.
+.EXAMPLE
+Get-NtIoControlCode -Name "FSCTL_GET_REPARSE_POINT" -AsInt
+Get the IO control code structure from a known name as output an integer.
 #>
 function Get-NtIoControlCode {
     [CmdletBinding(DefaultParameterSetName = "FromCode")]
@@ -2472,7 +2554,11 @@ function Get-NtIoControlCode {
         [Parameter(ParameterSetName = "FromCode")]
         [switch]$LookupName,
         [Parameter(ParameterSetName = "FromAll", Mandatory = $true)]
-        [switch]$All
+        [switch]$All,
+        [Parameter(ParameterSetName = "FromName", Mandatory = $true)]
+        [string]$Name,
+        [Parameter(ParameterSetName = "FromName")]
+        [switch]$AsInt
     )
     $result = switch ($PsCmdlet.ParameterSetName) {
         "FromCode" {
@@ -2484,12 +2570,20 @@ function Get-NtIoControlCode {
         "FromAll" {
             [NtApiDotNet.NtWellKnownIoControlCodes]::GetKnownControlCodes()
         }
+        "FromName" {
+            [NtApiDotNet.NtWellKnownIoControlCodes]::GetKnownControlCodeByName($Name)
+        }
     }
 
     if ($LookupName) {
         return [NtApiDotNet.NtWellKnownIoControlCodes]::KnownControlCodeToName($result)
     }
-    $result
+
+    if ($AsInt) {
+        $result.ToInt32() | Write-Output
+    } else {
+        $result | Write-Output
+    }
 }
 
 <#
@@ -2932,6 +3026,8 @@ Specify an object path to get the security descriptor from.
 Specify the type name of the object at Path. Needed if the module cannot automatically determine the NT type to open.
 .PARAMETER Root
 Specify a root object for Path.
+.PARAMETER NamedPipeDefault
+ Specify to get the default security descriptor for a named pipe.
 .INPUTS
 NtApiDotNet.NtObject[]
 .OUTPUTS
@@ -2958,6 +3054,15 @@ Get the security descriptors from an array of objects.
 .EXAMPLE
 Get-NtSecurityDescriptor -Process $process -Address 0x12345678
 Get the security descriptor from another process at address 0x12345678.
+.EXAMPLE
+Get-NtSecurityDescriptor -NamedPipeDefault
+Get the default security descriptor for a named pipe.
+.EXAMPLE
+Get-NtSecurityDescriptor -ProcessId 1234
+Get the security descriptor for Process ID 1234.
+.EXAMPLE
+Get-NtSecurityDescriptor -ThreadId 5678
+Get the security descriptor for Thread ID 5678.
 #>
 function Get-NtSecurityDescriptor {
     [CmdletBinding(DefaultParameterSetName = "FromObject")]
@@ -2985,6 +3090,8 @@ function Get-NtSecurityDescriptor {
         [parameter(Mandatory, ParameterSetName = "FromTid")]
         [alias("tid")]
         [int]$ThreadId,
+        [parameter(Mandatory, ParameterSetName = "FromNp")]
+        [switch]$NamedPipeDefault,
         [switch]$ToSddl
     )
     PROCESS {
@@ -3012,6 +3119,10 @@ function Get-NtSecurityDescriptor {
                 Use-NtObject($obj = Get-NtThread -ThreadId $ThreadId -Access $mask) {
                     $obj.GetSecurityDescriptor($SecurityInformation)
                 }
+            }
+            "FromNp" {
+                $dacl = [NtApiDotNet.NtNamedPipeFile]::GetDefaultNamedPipeAcl();
+                New-NtSecurityDescriptor -Dacl $dacl -Type File
             }
         }
         if ($ToSddl) {
@@ -4888,42 +4999,65 @@ None
 .OUTPUTS
 NtKeyValue
 .EXAMPLE
-Get-NtKeyValue $key
+Get-NtKeyValue -Key $key
 Get all values from a key.
 .EXAMPLE
-Get-NtKeyValue $key -AsString
+Get-NtKeyValue -Key $key -AsString
 Get all values from a key as a string.
 .EXAMPLE
-Get-NtKeyValue $key -Name ""
+Get-NtKeyValue -Key $key -Name ""
 Get the default value from a key.
 .EXAMPLE
-Get-NtKeyValue $key -Name MyValue
+Get-NtKeyValue -Key $key -Name MyValue
 Get the MyValue value from a key.
 #>
 function Get-NtKeyValue {
-    [CmdletBinding(DefaultParameterSetName = "All")]
+    [CmdletBinding(DefaultParameterSetName = "FromKeyAll")]
     Param(
-        [parameter(Mandatory, Position = 0)]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromKeyAll")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromKeyName")]
         [NtApiDotNet.NtKey]$Key,
-        [parameter(ParameterSetName = "FromName", Position = 1)]
+        [parameter(ParameterSetName = "FromKeyName", Mandatory, Position = 1)]
+        [parameter(ParameterSetName = "FromPathName", Mandatory, Position = 1)]
         [string]$Name,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromPathAll")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromPathName")]
+        [string]$Path,
+        [parameter(ParameterSetName = "FromPathAll")]
+        [parameter(ParameterSetName = "FromPathName")]
+        [switch]$Win32Path,
         [switch]$AsString,
         [switch]$AsObject
     )
-    $values = switch ($PSCmdlet.ParameterSetName) {
-        "All" {
-            $Key.QueryValues()
+
+    try {
+        $values = switch ($PSCmdlet.ParameterSetName) {
+            "FromKeyAll" {
+                $Key.QueryValues()
+            }
+            "FromKeyName" {
+                @($Key.QueryValue($Name))
+            }
+            "FromPathName" {
+                Use-NtObject($k = Get-NtKey -Path $Path -Win32Path:$Win32Path -Access QueryValue) {
+                    @($k.QueryValue($Name))
+                }
+            }
+            "FromPathAll" {
+                Use-NtObject($k = Get-NtKey -Path $Path -Win32Path:$Win32Path -Access QueryValue) {
+                    $k.QueryValues()
+                }
+            }
         }
-        "FromName" {
-            @($Key.QueryValue($Name))
+        if ($AsString) {
+            $values | ForEach-Object { $_.ToString() } | Write-Output
+        } elseif($AsObject) {
+            $values | ForEach-Object { $_.ToObject() } | Write-Output
+        } else {
+            $values | Write-Output
         }
-    }
-    if ($AsString) {
-        $values | ForEach-Object { $_.ToString() } | Write-Output
-    } elseif($AsObject) {
-        $values | ForEach-Object { $_.ToObject() } | Write-Output
-    } else {
-        $values | Write-Output
+    } catch {
+        Write-Error $_
     }
 }
 
@@ -5772,7 +5906,7 @@ None
 .OUTPUTS
 NtApiDotNet.EaBuffer
 #>
-function Get-NtEaBuffer {
+function Get-NtFileEa {
     [CmdletBinding(DefaultParameterSetName = "FromPath")]
     Param(
         [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromPath")]
@@ -5780,10 +5914,11 @@ function Get-NtEaBuffer {
         [Parameter(ParameterSetName = "FromPath")]
         [switch]$Win32Path,
         [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromFile")]
-        [NtApiDotNet.NtFile]$File
+        [NtApiDotNet.NtFile]$File,
+        [switch]$AsEntries
     )
 
-    switch ($PsCmdlet.ParameterSetName) {
+    $ea = switch ($PsCmdlet.ParameterSetName) {
         "FromFile" {
             $File.GetEa()
         }
@@ -5793,7 +5928,15 @@ function Get-NtEaBuffer {
             }
         }
     }
+    if ($AsEntries) {
+        $ea.Entries | Write-Output
+    } else {
+        $ea | Write-Output
+    }
 }
+
+# Legacy name, remove eventually.
+Set-Alias -Name "Get-NtEaBuffer" -Value "Get-NtFileEa"
 
 <#
 .SYNOPSIS
@@ -5813,7 +5956,7 @@ None
 .OUTPUTS
 None
 #>
-function Set-NtEaBuffer {
+function Set-NtFileEa {
     [CmdletBinding(DefaultParameterSetName = "FromPath")]
     Param(
         [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromPath")]
@@ -5833,6 +5976,50 @@ function Set-NtEaBuffer {
         "FromPath" {
             Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access WriteEa) {
                 $f.SetEa($EaBuffer)
+            }
+        }
+    }
+}
+
+# Legacy name, remove eventually.
+Set-Alias -Name "Set-NtEaBuffer" -Value "Set-NtFileEa"
+
+<#
+.SYNOPSIS
+Remove an EA buffer on a file.
+.DESCRIPTION
+This cmdlet removes an Extended Attribute buffer on a file by path or a NtFile object.
+.PARAMETER Path
+NT path to file.
+.PARAMETER Win32Path
+Specify Path is a Win32 path.
+.PARAMETER Name
+Specify the name of the buffer to remove.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-NtFileEa {
+    [CmdletBinding(DefaultParameterSetName = "FromPath")]
+    Param(
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromPath")]
+        [string]$Path,
+        [Parameter(ParameterSetName = "FromPath")]
+        [switch]$Win32Path,
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromFile")]
+        [NtApiDotNet.NtFile]$File,
+        [Parameter(Mandatory = $true, Position = 1)]
+        [string]$Name
+    )
+
+    switch ($PsCmdlet.ParameterSetName) {
+        "FromFile" {
+            $File.RemoveEa($Name)
+        }
+        "FromPath" {
+            Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access WriteEa) {
+                $f.RemoveEa($Name)
             }
         }
     }
@@ -6231,9 +6418,9 @@ Hide repeating 16 byte patterns.
 .PARAMETER Buffer
 Show the contents of a safe buffer.
 .PARAMETER Offset
-Specify start offset into the safe buffer.
+Specify start offset into the safe buffer or the file.
 .PARAMETER Length
-Specify length of safe buffer.
+Specify length of safe buffer or the file.
 .PARAMETER BaseAddress
 Specify base address for the display when ShowAddress is enabled.
 .INPUTS
@@ -6246,11 +6433,15 @@ function Out-HexDump {
     Param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = "FromBytes")]
         [byte[]]$Bytes,
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
+        [string]$Path,
         [Parameter(Mandatory, Position = 0, ParameterSetName = "FromBuffer")]
         [System.Runtime.InteropServices.SafeBuffer]$Buffer,
         [Parameter(ParameterSetName = "FromBuffer")]
+        [Parameter(ParameterSetName = "FromFile")]
         [int64]$Offset = 0,
         [Parameter(ParameterSetName = "FromBuffer")]
+        [Parameter(ParameterSetName = "FromFile")]
         [int64]$Length = 0,
         [Parameter(ParameterSetName = "FromBytes")]
         [int64]$BaseAddress = 0,
@@ -6274,6 +6465,9 @@ function Out-HexDump {
             "FromBuffer" {
                 $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new($Buffer, $Offset, $Length, $ShowHeader, $ShowAddress, $ShowAscii, $HideRepeating);
             }
+            "FromFile" {
+                $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new($ShowHeader, $ShowAddress, $ShowAscii, $HideRepeating, $Offset);
+            }
         }
     }
 
@@ -6281,6 +6475,10 @@ function Out-HexDump {
         switch ($PsCmdlet.ParameterSetName) {
             "FromBytes" {
                 $builder.Append($Bytes)
+            }
+            "FromFile" {
+                $Path = Resolve-Path $Path -ErrorAction Stop
+                $builder.AppendFile($Path, $Offset, $Length)
             }
         }
     }
@@ -6299,13 +6497,15 @@ This cmdlet gets the access masks for a type.
 .PARAMETER Type
 The NT type.
 .PARAMETER Read
-Shown only read access.
+Show only read access.
 .PARAMETER Write
-Shown only write access.
+Show only write access.
 .PARAMETER Execute
-Shown only execute access.
+Show only execute access.
 .PARAMETER Mandatory
-Shown only default mandatory access.
+Show only default mandatory access.
+.PARAMETER SpecificOnly
+Show only type specific access.
 .INPUTS
 None
 .OUTPUTS
@@ -6323,7 +6523,8 @@ function Get-NtTypeAccess {
         [Parameter(ParameterSetName = "Execute")]
         [switch]$Execute,
         [Parameter(ParameterSetName = "Mandatory")]
-        [switch]$Mandatory
+        [switch]$Mandatory,
+        [switch]$SpecificOnly
     )
 
     $access = switch ($PSCmdlet.ParameterSetName) {
@@ -6334,7 +6535,11 @@ function Get-NtTypeAccess {
         "Mandatory" { $Type.MandatoryAccessRights }
     }
 
-    $access | Write-Output
+    if ($SpecificOnly) {
+        $access | Where-Object {$_.Mask.HasSpecificAccess} | Write-Output
+    } else {
+        $access | Write-Output
+    }
 }
 
 <#
@@ -9631,4 +9836,936 @@ function Split-Win32CommandLine {
         [string]$CommandLine
     )
     [NtApiDotNet.Win32.Win32Utils]::ParseCommandLine($CommandLine) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Gets the list of loaded hives.
+.DESCRIPTION
+This cmdlet enumerates the list of loaded hives from the Registry.
+.PARAMETER FormatWin32File
+Format the file path to a Win32 string if possible.
+.INPUTS
+None
+.OUTPUTS
+NtKeyHive[]
+.EXAMPLE
+Get-NtKeyHiveSplit
+Get the list of loaded hives.
+.EXAMPLE
+Get-NtKeyHiveSplit -FormatWin32File
+Get the list of loaded hives with the file path in Win32 format.
+#>
+function Get-NtKeyHive {
+    Param(
+        [switch]$FormatWin32File
+    )
+    [NtApiDotNet.NtKeyUtils]::GetHiveList($FormatWin32File) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Backup a key to a file.
+.DESCRIPTION
+This cmdlet back ups a key to a file.
+.PARAMETER Path
+The path to the file to backup to.
+.PARAMETER Win32Path
+The path is a Win32 path.
+.PARAMETER File
+Specify the file to write to.
+.PARAMETER Key
+The key to backup.
+.PARAMETER Flags
+Flags for the backup operation.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Backup-NtKey -Key $key -Path \??\c:\backup.hiv
+Backup the key to c:\backup.hiv
+.EXAMPLE
+Backup-NtKey -Key $key -Path backup.hiv -Win32Path
+Backup the key to backup.hiv in the current directory.
+.EXAMPLE
+Backup-NtKey -Key $key -File $file
+Backup the key to a file object.
+#>
+function Backup-NtKey {
+    [CmdletBinding(DefaultParameterSetName = "FromPath")]
+    Param(
+        [parameter(Position = 0, Mandatory)]
+        [NtApiDotNet.NtKey]$Key,
+        [NtApiDotNet.SaveKeyFlags]$Flags = "StandardFormat",
+        [parameter(Position = 1, Mandatory, ParameterSetName="FromPath")]
+        [string]$Path,
+        [parameter(ParameterSetName="FromPath")]
+        [switch]$Win32Path,
+        [parameter(Position = 1, Mandatory, ParameterSetName="FromFile")]
+        [NtApiDotNet.NtFile]$File
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromFile" {
+            $Key.Save($File, $Flags)
+        }
+        "FromPath" {
+            if ($Win32Path) {
+                $Path = Get-NtFilePath -FullName $Path
+            }
+            $Key.Save($Path, $Flags)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Restore a key from a file.
+.DESCRIPTION
+This cmdlet restores a key from a file.
+.PARAMETER Path
+The path to the file to restore from.
+.PARAMETER Win32Path
+The path is a Win32 path.
+.PARAMETER File
+Specify the file to read from.
+.PARAMETER Key
+The key to restore.
+.PARAMETER Flags
+Flags for the restore operation.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Restore-NtKey -Key $key -Path \??\c:\backup.hiv
+Restore the key from c:\backup.hiv
+.EXAMPLE
+Restore-NtKey -Key $key -Path backup.hiv -Win32Path
+Restore the key from backup.hiv in the current directory.
+.EXAMPLE
+Restore-NtKey -Key $key -File $file
+Restore the key from a file object.
+#>
+function Restore-NtKey {
+    [CmdletBinding(DefaultParameterSetName = "FromPath")]
+    Param(
+        [parameter(Position = 0, Mandatory)]
+        [NtApiDotNet.NtKey]$Key,
+        [NtApiDotNet.RestoreKeyFlags]$Flags = "None",
+        [parameter(Position = 1, Mandatory, ParameterSetName="FromPath")]
+        [string]$Path,
+        [parameter(ParameterSetName="FromPath")]
+        [switch]$Win32Path,
+        [parameter(Position = 1, Mandatory, ParameterSetName="FromFile")]
+        [NtApiDotNet.NtFile]$File
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromFile" {
+            $Key.Restore($File, $Flags)
+        }
+        "FromPath" {
+            if ($Win32Path) {
+                $Path = Get-NtFilePath -FullName $Path
+            }
+            $Key.Restore($Path, $Flags)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Enables virtualization on a Access Token or Process.
+.DESCRIPTION
+This cmdlet enables virtualization on an Access Token or Process.
+.PARAMETER Token
+Specify the token to modify.
+.PARAMETER Process
+Specify the process to modify.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Enable-NtTokenVirtualization
+Enable virtualization on the current primary token.
+.EXAMPLE
+Enable-NtTokenVirtualization -Token $token
+Enable virtualization on a specific token.
+.EXAMPLE
+Enable-NtTokenVirtualization -Process $proc
+Enable virtualization on a specific process.
+#>
+function Enable-NtTokenVirtualization {
+    [CmdletBinding(DefaultParameterSetName = "FromProcess")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromToken")]
+        [NtApiDotNet.NtToken]$Token,
+        [parameter(Position = 0, ParameterSetName="FromProcess")]
+        [NtApiDotNet.NtProcess]$Process
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromProcess" {
+            if ($null -EQ $Process) {
+                $Process = Get-NtProcess -Current
+            }
+            $Process.VirtualizationEnabled = $true
+        }
+        "FromToken" {
+            $Token.VirtualizationEnabled = $true
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Disables virtualization on a Access Token or Process.
+.DESCRIPTION
+This cmdlet disables virtualization on an Access Token or Process.
+.PARAMETER Token
+Specify the token to modify.
+.PARAMETER Process
+Specify the process to modify.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Disable-NtTokenVirtualization
+Disable virtualization on the current primary token.
+.EXAMPLE
+Disable-NtTokenVirtualization -Token $token
+Disable virtualization on a specific token.
+.EXAMPLE
+Disable-NtTokenVirtualization -Process $proc
+Disable virtualization on a specific process.
+#>
+function Disable-NtTokenVirtualization {
+    [CmdletBinding(DefaultParameterSetName = "FromProcess")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromToken")]
+        [NtApiDotNet.NtToken]$Token,
+        [parameter(Position = 0, ParameterSetName="FromProcess")]
+        [NtApiDotNet.NtProcess]$Process
+    )
+    switch($PSCmdlet.ParameterSetName) {
+        "FromProcess" {
+            if ($null -EQ $Process) {
+                $Process = Get-NtProcess -Current
+            }
+            $Process.VirtualizationEnabled = $false
+        }
+        "FromToken" {
+            $Token.VirtualizationEnabled = $false
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Write bytes to a file.
+.DESCRIPTION
+This cmdlet writes bytes to a file optionally specifying the offset.
+.PARAMETER File
+Specify the file to write to.
+.PARAMETER Bytes
+Specify the bytes to write.
+.PARAMETER Offset
+Specify the offset in the file to write to.
+.PARAMETER PassThru
+Specify to the return the length written.
+.INPUTS
+None
+.OUTPUTS
+int
+.EXAMPLE
+Write-NtFile -File $f -Bytes @(0, 1, 2, 3)
+Write to a file at the current offset.
+.EXAMPLE
+Write-NtFile -File $f -Bytes @(0, 1, 2, 3) -Offset 1234
+Write to a file at offset 1234.
+.EXAMPLE
+$count = Write-NtFile -File $f -Bytes @(0, 1, 2, 3) -PassThru
+Write to a file and return the number of bytes written.
+#>
+function Write-NtFile {
+    [CmdletBinding(DefaultParameterSetName = "NoOffset")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1)]
+        [byte[]]$Bytes,
+        [parameter(Position = 2, ParameterSetName="UseOffset")]
+        [int64]$Offset,
+        [switch]$PassThru
+    )
+    $result = switch($PSCmdlet.ParameterSetName) {
+        "NoOffset" {
+            $File.Write($Bytes)
+        }
+        "UseOffset" {
+            $File.Write($Bytes, $Offset)
+        }
+    }
+
+    if ($PassThru) {
+        $result | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Read bytes from a file.
+.DESCRIPTION
+This cmdlet writes byte to a file optionally specifying the offset.
+.PARAMETER File
+Specify the file to read from.
+.PARAMETER Length
+Specify the number of bytes to read.
+.PARAMETER Offset
+Specify the offset in the file to read from.
+.INPUTS
+None
+.OUTPUTS
+byte[]
+.EXAMPLE
+Read-NtFile -File $f -Length 8
+Read 8 bytes from a file at the current offset.
+.EXAMPLE
+Read-NtFile -File $f -Length 8 -Offset 1234
+Read 8 bytes from a file at offset 1234.
+#>
+function Read-NtFile {
+    [CmdletBinding(DefaultParameterSetName = "NoOffset")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1)]
+        [int]$Length,
+        [parameter(Position = 2, ParameterSetName="UseOffset")]
+        [int64]$Offset
+    )
+
+    $result = switch($PSCmdlet.ParameterSetName) {
+        "NoOffset" {
+            $File.Read($Length)
+        }
+        "UseOffset" {
+            $File.Read($Length, $Offset)
+        }
+    }
+
+    Write-Output $result 
+}
+
+<#
+.SYNOPSIS
+Open a filter communications port.
+.DESCRIPTION
+This cmdlet opens a filter communication port by name.
+.PARAMETER Path
+Specify the path to the filter communication port.
+.PARAMETER SyncHandle
+Specify to make the handle synchronous.
+.PARAMETER Context
+Specify optional context buffer.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Filter.FilterCommunicationPort
+.EXAMPLE
+Get-FilterCommunicationPort -Path "\FilterDriver"
+Open the filter communication port named \FilterDriver.
+#>
+function Get-FilterCommunicationPort {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$Path,
+        [switch]$SyncHandle,
+        [byte[]]$Context = $null
+    )
+
+    [NtApiDotNet.Win32.Filter.FilterCommunicationPort]::Open($Path, $SyncHandle, $Context) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get list of filter drivers loaded on the system.
+.DESCRIPTION
+This cmdlet enumerates the list of filter drivers loaded on the system.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Filter.FilterDriver[]
+.EXAMPLE
+Get-FilterDriver
+Get list of filter drivers.
+#>
+function Get-FilterDriver {
+    [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterDrivers() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get list of filter driver instances on the system.
+.DESCRIPTION
+This cmdlet enumerates the list of filter driver instances for a specified filter driver.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Filter.FilterInstance[]
+.EXAMPLE
+Get-FilterDriverInstance 
+Get list of filter driver instances for all filter drivers.
+.EXAMPLE
+Get-FilterDriverInstance -FilterName "luafv"
+Get list of filter driver instances for the "luafv" driver.
+#>
+function Get-FilterDriverInstance {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName")]
+        [string]$FilterName
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterDriverInstances() | Write-Output
+        }
+        "FromName" {
+            [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterDriverInstances($FilterName) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get list of filter driver instances on the system.
+.DESCRIPTION
+This cmdlet enumerates the list of filter driver instances for a specified filter driver.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Filter.FilterVolume[]
+.EXAMPLE
+Get-FilterDriverVolume 
+Get list of filter driver volumes.
+#>
+function Get-FilterDriverVolume {
+    [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterVolumes() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Get list of filter driver volume instances on the system.
+.DESCRIPTION
+This cmdlet enumerates the list of filter driver volume instances for a specified filter driver.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Filter.FilterInstance[]
+.EXAMPLE
+Get-FilterDriverVolumeInstance 
+Get list of filter driver instances for all filter driver volumes.
+.EXAMPLE
+Get-FilterDriverInstance -VolumeName "C:\"
+Get list of filter driver volume instances for the C: drive.
+#>
+function Get-FilterDriverVolumeInstance {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName")]
+        [string]$VolumeName
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterVolumeInstances() | Write-Output
+        }
+        "FromName" {
+            [NtApiDotNet.Win32.Filter.FilterManagerUtils]::GetFilterVolumeInstances($VolumeName) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the attributes for a file.
+.DESCRIPTION
+This cmdlet gets the attributes from a file.
+.PARAMETER File
+The file to get the attributes from.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.FileAttributes
+.EXAMPLE
+Get-NtFileAttribute -File $f
+Get the file attributes for the file.
+#>
+function Get-NtFileAttribute {
+    [CmdletBinding(DefaultParameterSetName = "FromFile")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
+        [NtApiDotNet.NtFile]$File
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromFile" {
+            $File.FileAttributes | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Set the attributes for a file.
+.DESCRIPTION
+This cmdlet sets the attributes on a file.
+.PARAMETER File
+The file to set the attributes on.
+.PARAMETER FileAttribute
+The attributes to set.
+.PARAMETER PassThru
+Return the newly set attribute value.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.FileAttributes
+.EXAMPLE
+Get-NtFileAttribute -File $f
+Get the file attributes for the file.
+#>
+function Set-NtFileAttribute {
+    [CmdletBinding(DefaultParameterSetName = "FromFile")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1, ParameterSetName = "FromFile")]
+        [NtApiDotNet.FileAttributes]$FileAttribute,
+        [switch]$PassThru
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromFile" {
+            $File.FileAttributes = $FileAttribute
+            if ($PassThru) {
+                $File.FileAttributes | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the list of processes which are sharing this file.
+.DESCRIPTION
+This cmdlet gets the list of processes which are sharing this file.
+.PARAMETER File
+The file to get the listing of sharing processes.
+.PARAMETER Path
+The path to the file to get the list of sharing processes.
+.PARAMETER Win32Path
+Specify to Path as a Win32 path.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtProcessInformation
+.EXAMPLE
+Get-NtFileShareProcess -File $f
+Get the sharing processes for the file.
+.EXAMPLE
+Get-NtFileShareProcess -Path "\??\C:\windows\system32\kernel32.dll"
+Get the sharing processes for kernel32.dll.
+.EXAMPLE
+Get-NtFileShareProcess -Path "C:\windows\system32\kernel32.dll" -Win32Path
+Get the sharing processes for kernel32.dll.
+#>
+function Get-NtFileShareProcess {
+    [CmdletBinding(DefaultParameterSetName="FromPath")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromFile")]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromPath")]
+        [string]$Path,
+        [switch]$Win32Path
+    )
+
+    try {
+        $pids = switch($PSCmdlet.ParameterSetName) {
+            "FromFile" {
+                $File.GetUsingProcessIds() | Write-Output
+            }
+            "FromPath" {
+                Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access ReadAttributes) {
+                    $f.GetUsingProcessIds() | Write-Output
+                }
+            }
+        }
+        Get-NtProcess -InfoOnly | Where-Object {$_.ProcessId -in $pids} | Write-Output
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Get the device setup classes.
+.DESCRIPTION
+This cmdlet gets device setup classes, either all installed or from a GUID/Name.
+.PARAMETER Name
+The name of the setup class.
+.PARAMETER Class
+The GUID of the setup class.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceSetupClass
+.EXAMPLE
+Get-NtDeviceSetupClass
+Get all device setup classes.
+.EXAMPLE
+Get-NtDeviceSetupClass -Class '6BDD1FC1-810F-11D0-BEC7-08002BE20920'
+Get the device setup class for the specified GUID.
+.EXAMPLE
+Get-NtDeviceSetupClass -Name 'USB'
+Get the device setup class for the USB class.
+#>
+function Get-NtDeviceSetupClass {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName")]
+        [string]$Name,
+        [parameter(Mandatory, ParameterSetName = "FromClass", ValueFromPipelineByPropertyName)]
+        [guid]$Class
+    )
+
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "All" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceSetupClasses() | Write-Output
+            }
+            "FromName" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceSetupClasses() | Where-Object Name -eq $Name | Write-Output
+            }
+            "FromClass" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceSetupClass($Class) | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the device interface classes.
+.DESCRIPTION
+This cmdlet gets device interface classes, either all installed or from a GUID.
+.PARAMETER Class
+The GUID of the interface class.
+.PARAMETER All
+Get all devices including ones not present.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceInterfaceClass
+.EXAMPLE
+Get-NtDeviceInterfaceClass
+Get all device interface classes.
+.EXAMPLE
+Get-NtDeviceInterfaceClass -Class '6BDD1FC1-810F-11D0-BEC7-08002BE20920'
+Get the device interface class for the specified GUID.
+#>
+function Get-NtDeviceInterfaceClass {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromClass")]
+        [guid]$Class,
+        [switch]$All
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceClasses($All) | Write-Output
+        }
+        "FromClass" {
+            [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceClass($Class, $All) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the device node.
+.DESCRIPTION
+This cmdlet gets device nodes, either all present or from a GUID/Name.
+.PARAMETER Class
+The GUID of the setup class.
+.PARAMETER All
+Get all device instances. The default is to only get present instances.
+.PARAMETER Tree
+Get all device nodes as a tree.
+.PARAMETER InstanceId
+Get device from instance ID.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceNode
+.EXAMPLE
+Get-NtDeviceNode
+Get all present device instances.
+.EXAMPLE
+Get-NtDeviceNode -All
+Get all device instances.
+.EXAMPLE
+Get-NtDeviceNode -Class '6BDD1FC1-810F-11D0-BEC7-08002BE20920'
+Get the device instances class for the specified setup class GUID.
+.EXAMPLE
+Get-NtDeviceNode -Tree
+Get all device instances in a tree structure.
+#>
+function Get-NtDeviceNode {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, ParameterSetName = "FromClass", ValueFromPipelineByPropertyName)]
+        [guid]$Class,
+        [parameter(ParameterSetName = "FromClass")]
+        [parameter(ParameterSetName = "All")]
+        [switch]$All,
+        [parameter(Mandatory, ParameterSetName = "FromTree")]
+        [switch]$Tree,
+        [parameter(Mandatory, ParameterSetName = "FromInstanceId")]
+        [string]$InstanceId,
+        [parameter(Mandatory, ParameterSetName = "FromPDOName")]
+        [string]$PDOName
+    )
+
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "All" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceNodeList($All) | Write-Output
+            }
+            "FromClass" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceNodeList($Class, $All) | Write-Output
+            }
+            "FromTree" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceNodeTree() | Write-Output
+            }
+            "FromInstanceId" {
+                [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceNode($InstanceId) | Write-Output
+            }
+            "FromPDOName" {
+                Get-NtDeviceNode | Where-Object PDOName -eq $PDOName
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get device properties.
+.DESCRIPTION
+This cmdlet gets device properties.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceProperty[]
+.EXAMPLE
+Get-NtDeviceProperty -Device $dev
+Get all properties for a device.
+#>
+function Get-NtDeviceProperty {
+    [CmdletBinding(DefaultParameterSetName = "FromDevice")]
+    Param(
+        [parameter(Mandatory, ParameterSetName = "FromDevice", ValueFromPipeline)]
+        [NtApiDotNet.Win32.Device.IDevicePropertyProvider]$Device
+    )
+
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "FromDevice" {
+                $Device.GetProperties() | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get device node children.
+.DESCRIPTION
+This cmdlet gets device node children.
+.PARAMETER Node
+The device node to query the children for.
+.PARAMETER Recurse
+Recursively get child nodes.
+.PARAMETER Depth
+Specify the maximum depth for the recursion.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceTreeNode[]
+.EXAMPLE
+Get-NtDeviceNodeChild -Node $dev
+Get all children for a device node
+.EXAMPLE
+Get-NtDeviceNodeChild -Node $dev -Recurse
+Get all children for a device node recursively.
+.EXAMPLE
+Get-NtDeviceNodeChild -Node $dev -Recurse -Depth 2
+Get all children for a device node recursively with max depth of 2.
+#>
+function Get-NtDeviceNodeChild {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, ParameterSetName = "FromNode", Position = 0)]
+        [NtApiDotNet.Win32.Device.DeviceNode]$Node,
+        [switch]$Recurse,
+        [int]$Depth = [int]::MaxValue
+    )
+
+    if ($Recurse -and $Depth -lt 1) {
+        return
+    }
+
+    try
+    {
+        if ($Node -isNot [NtApiDotNet.Win32.Device.DeviceTreeNode]) {
+            $Node = [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceNodeTree($Node.InstanceId)
+        }
+
+        switch($PSCmdlet.ParameterSetName) {
+            "FromNode" {
+                if ($Recurse) {
+                    $recdepth = $Depth - 1
+                    $Device.Children | ForEach-Object { Get-NtDeviceNodeChild -Node $_ -Recurse -Depth $recdepth }
+                }
+                $Node.Children | Write-Output
+            }
+        }
+    }
+    catch 
+    {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Get device instance parent.
+.DESCRIPTION
+This cmdlet gets device node parent.
+.PARAMETER Node
+The device node to query the parent for.
+.PARAMETER Recurse
+Get all parents recursively.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceNode[]
+.EXAMPLE
+Get-NtDeviceNodeParent -Node $dev
+Get parent for device node.
+.EXAMPLE
+Get-NtDeviceNodeParent -Node $dev -Recurse
+Get all parents for device node.
+#>
+function Get-NtDeviceNodeParent {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, ParameterSetName = "FromNode", Position = 0)]
+        [NtApiDotNet.Win32.Device.DeviceNode]$Node,
+        [switch]$Recurse
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromNode" {
+            if ($Recurse) {
+                $Node.GetParentNodes() | Write-Output
+            } else {
+                $Node.Parent | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get device stack for a node.
+.DESCRIPTION
+This cmdlet gets device node's device stack.
+.PARAMETER Node
+The device node to query device stack for.
+.PARAMETER Summary
+Summarize the device stack as a single line.
+.INPUTS
+None
+.OUTPUTS
+string[]
+.EXAMPLE
+Get-NtDeviceNodeStack -Node $dev
+Get device stack for device node.
+#>
+function Get-NtDeviceNodeStack {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, ParameterSetName = "FromNode", Position = 0)]
+        [NtApiDotNet.Win32.Device.DeviceNode]$Node,
+        [switch]$Summary
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromNode" {
+            if ($Summary) {
+                [string]::Join(", ", $Node.DeviceStack) | Write-Output
+            } else {
+                $Node.DeviceStack | Write-Output
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get the device interface instances.
+.DESCRIPTION
+This cmdlet gets device interface instances either all present, from a GUID or instance name.
+.PARAMETER Class
+The GUID of the interface class.
+.PARAMETER Instance
+The path the instance symbolic link.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Device.DeviceInterfaceInstance[]
+.EXAMPLE
+Get-NtDeviceInterfaceInstance
+Get all device interface instances.
+.EXAMPLE
+Get-NtDeviceInterfaceInstance -Class '6BDD1FC1-810F-11D0-BEC7-08002BE20920'
+Get the device interface instances for the specified GUID.
+.EXAMPLE
+Get-NtDeviceInterfaceInstance -Instance '\\?\HSIDS&1234'
+Get the device interface instances for the instance symbolic link path.
+#>
+function Get-NtDeviceInterfaceInstance {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromClass")]
+        [guid]$Class,
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromInstance")]
+        [string]$Instance
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceInstances() | Write-Output
+        }
+        "FromClass" {
+            [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceInstances($Class) | Write-Output
+        }
+        "FromInstance" {
+            [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceInstance($Instance) | Write-Output
+        }
+    }
 }

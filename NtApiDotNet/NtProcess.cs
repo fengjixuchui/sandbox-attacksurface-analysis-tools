@@ -17,7 +17,6 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace NtApiDotNet
 {
@@ -1943,6 +1942,28 @@ namespace NtApiDotNet
         public string GetEnvironmentVariable(string name)
         {
             return GetEnvironment().Where(v => v.Name.Equals(name, StringComparison.OrdinalIgnoreCase)).FirstOrDefault().Value;
+        }
+
+        /// <summary>
+        /// Revoke file handles for an AppContainer process.
+        /// </summary>
+        /// <param name="device_path">The device path for the files to revoke.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus RevokeFileHandles(string device_path, bool throw_on_error)
+        {
+            return Set(ProcessInformationClass.ProcessRevokeFileHandles, 
+                new ProcessRevokeFileHandlesInformation() { TargetDevicePath = new UnicodeString(device_path) },
+                throw_on_error);
+        }
+
+        /// <summary>
+        /// Revoke file handles for an AppContainer process.
+        /// </summary>
+        /// <param name="device_path">The device path for the files to revoke.</param>
+        public void RevokeFileHandles(string device_path)
+        {
+            RevokeFileHandles(device_path, true);
         }
 
         /// <summary>

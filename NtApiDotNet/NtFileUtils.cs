@@ -14,8 +14,10 @@
 
 using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Text;
 
 namespace NtApiDotNet
 {
@@ -24,6 +26,34 @@ namespace NtApiDotNet
     /// </summary>
     public static class NtFileUtils
     {
+        /// <summary>
+        /// Convert a DOS filename to an absolute NT filename
+        /// </summary>
+        /// <param name="filename">The filename, can be relative</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT filename</returns>
+        public static NtResult<string> DosFileNameToNt(string filename, bool throw_on_error)
+        {
+            if (filename == null)
+            {
+                throw new ArgumentNullException("filename");
+            }
+
+            UnicodeStringOut nt_name = new UnicodeStringOut();
+            try
+            {
+                return NtRtl.RtlDosPathNameToRelativeNtPathName_U_WithStatus(filename, out nt_name, 
+                    out IntPtr short_path, null).CreateResult(throw_on_error, () => nt_name.ToString());
+            }
+            finally
+            {
+                if (nt_name.Buffer != IntPtr.Zero)
+                {
+                    NtRtl.RtlFreeUnicodeString(ref nt_name);
+                }
+            }
+        }
+
         /// <summary>
         /// Convert a DOS filename to an absolute NT filename
         /// </summary>
@@ -52,11 +82,26 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Convert a DOS filename to an absolute NT filename
+        /// </summary>
+        /// <param name="paths">List of paths to combine before converting.</param>
+        /// <returns>The NT filename</returns>
+        public static string DosFileNameToNt(params string[] paths)
+        {
+            return DosFileNameToNt(Path.Combine(paths));
+        }
+
+        /// <summary>
         /// Convert a DOS filename to an NT filename and get as an ObjectAttributes structure
         /// </summary>
-        /// <param name="filename">The filename</param>
+        /// <param name="filename">The DOS filename.</param>
+        /// <param name="attributes">The object attribute flags.</param>
+        /// <param name="sqos">An optional security quality of service.</param>
+        /// <param name="security_descriptor">An optional security descriptor.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The object attributes</returns>
-        public static ObjectAttributes DosFileNameToObjectAttributes(string filename)
+        public static NtResult<ObjectAttributes> DosFileNameToObjectAttributes(string filename, AttributeFlags attributes, 
+            SecurityQualityOfService sqos, SecurityDescriptor security_descriptor, bool throw_on_error)
         {
             if (filename == null)
             {
@@ -67,16 +112,25 @@ namespace NtApiDotNet
             RtlRelativeName relative_name = new RtlRelativeName();
             try
             {
-                NtRtl.RtlDosPathNameToRelativeNtPathName_U_WithStatus(filename, out nt_name, out IntPtr short_path, relative_name).ToNtException();
+                NtStatus status = NtRtl.RtlDosPathNameToRelativeNtPathName_U_WithStatus(filename, out nt_name, 
+                    out IntPtr short_path, relative_name);
+                if (!status.IsSuccess())
+                    return status.CreateResultFromError<ObjectAttributes>(throw_on_error);
+                string final_name;
+                SafeKernelObjectHandle root = SafeKernelObjectHandle.Null;
+
                 if (relative_name.RelativeName.Buffer != IntPtr.Zero)
                 {
-                    return new ObjectAttributes(relative_name.RelativeName.ToString(), AttributeFlags.CaseInsensitive,
-                        new SafeKernelObjectHandle(relative_name.ContainingDirectory, false), null, null);
+                    final_name = relative_name.RelativeName.ToString();
+                    root = new SafeKernelObjectHandle(relative_name.ContainingDirectory, false);
                 }
                 else
                 {
-                    return new ObjectAttributes(nt_name.ToString(), AttributeFlags.CaseInsensitive);
+                    final_name = nt_name.ToString();
                 }
+
+                return status.CreateResult(false, () =>
+                        new ObjectAttributes(final_name, attributes, root, sqos, security_descriptor));
             }
             finally
             {
@@ -90,6 +144,30 @@ namespace NtApiDotNet
                     NtRtl.RtlReleaseRelativeName(relative_name);
                 }
             }
+        }
+
+        /// <summary>
+        /// Convert a DOS filename to an NT filename and get as an ObjectAttributes structure
+        /// </summary>
+        /// <param name="filename">The DOS filename.</param>
+        /// <param name="attributes">The object attribute flags.</param>
+        /// <param name="sqos">An optional security quality of service.</param>
+        /// <param name="security_descriptor">An optional security descriptor.</param>
+        /// <returns>The object attributes</returns>
+        public static ObjectAttributes DosFileNameToObjectAttributes(string filename, AttributeFlags attributes,
+            SecurityQualityOfService sqos, SecurityDescriptor security_descriptor)
+        {
+            return DosFileNameToObjectAttributes(filename, attributes, sqos, security_descriptor, true).Result;
+        }
+
+        /// <summary>
+        /// Convert a DOS filename to an NT filename and get as an ObjectAttributes structure
+        /// </summary>
+        /// <param name="filename">The filename</param>
+        /// <returns>The object attributes</returns>
+        public static ObjectAttributes DosFileNameToObjectAttributes(string filename)
+        {
+            return DosFileNameToObjectAttributes(filename, AttributeFlags.CaseInsensitive, null, null);
         }
 
         /// <summary>
@@ -266,6 +344,89 @@ namespace NtApiDotNet
         public static IEnumerable<long> SplitAddressToPages(SafeBuffer buffer)
         {
             return SplitAddressToPages(buffer.DangerousGetHandle().ToInt64(), buffer.GetLength());
+        }
+
+        /// <summary>
+        /// Attempt to convert an NT device filename to a DOS filename.
+        /// </summary>
+        /// <param name="filename">The filename to convert.</param>
+        /// <returns>The converted string. Returns a path prefixed with GLOBALROOT if it doesn't understand the format.</returns>
+        public static string NtFileNameToDos(string filename)
+        {
+            if (!filename.StartsWith(@"\"))
+            {
+                return filename;
+            }
+
+            if (filename.StartsWith(@"\??\UNC\", StringComparison.OrdinalIgnoreCase))
+            {
+                return @"\\" + filename.Substring(8);
+            }
+            else if (filename.StartsWith(@"\??\"))
+            {
+                return @"\\." + filename.Substring(3);
+            }
+            else if (filename.StartsWith(@"\Device\"))
+            {
+                for (char drive = 'A'; drive <= 'Z'; drive++)
+                {
+                    using (var link = NtSymbolicLink.Open($@"\??\{drive}:", null, SymbolicLinkAccessRights.Query, false))
+                    {
+                        if (!link.IsSuccess)
+                            continue;
+                        var target = link.Result.GetTarget(false);
+                        if (!target.IsSuccess || target.Result.Length == 0)
+                            continue;
+                        if (filename.StartsWith($@"{target.Result}\"))
+                        {
+                            return $"{drive}:" + filename.Substring(target.Result.Length);
+                        }
+                    }
+                }
+            }
+
+            return @"\\.\GLOBALROOT" + filename;
+        }
+
+        /// <summary>
+        /// Build a path for an open by ID file.
+        /// </summary>
+        /// <param name="volume_path">The path to the volume.</param>
+        /// <param name="id">The ID.</param>
+        /// <returns>The bytes for the ID path.</returns>
+        public static byte[] GetOpenByIdPath(string volume_path, byte[] id)
+        {
+            MemoryStream stm = new MemoryStream();
+            BinaryWriter writer = new BinaryWriter(stm);
+            if (!volume_path.EndsWith(@"\"))
+            {
+                volume_path += @"\";
+            }
+            writer.Write(Encoding.Unicode.GetBytes(volume_path));
+            writer.Write(id);
+            return stm.ToArray();
+        }
+
+        /// <summary>
+        /// Build a path for a file ID volume.
+        /// </summary>
+        /// <param name="volume_path">The path to the volume.</param>
+        /// <param name="file_reference">The file reference number.</param>
+        /// <returns>The bytes for the file ID path.</returns>
+        public static byte[] GetFileIdPath(string volume_path, long file_reference)
+        {
+            return GetOpenByIdPath(volume_path, BitConverter.GetBytes(file_reference));
+        }
+
+        /// <summary>
+        /// Build a path for an object ID volume.
+        /// </summary>
+        /// <param name="volume_path">The path to the volume.</param>
+        /// <param name="object_id">The file object ID.</param>
+        /// <returns>The bytes for the file ID path.</returns>
+        public static byte[] GetObjectIdPath(string volume_path, Guid object_id)
+        {
+            return GetOpenByIdPath(volume_path, object_id.ToByteArray());
         }
     }
 }

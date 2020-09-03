@@ -670,6 +670,12 @@ namespace NtApiDotNet
         public ProcessHandleTableEntryInfo Handles;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct ProcessRevokeFileHandlesInformation
+    {
+        public UnicodeString TargetDevicePath;
+    }
+
     public static partial class NtSystemCalls
     {
         [DllImport("ntdll.dll")]
@@ -780,6 +786,7 @@ namespace NtApiDotNet
 
     public interface IPeb
     {
+        bool GetBeingDebugged();
         PebFlags GetPebFlags();
         IntPtr GetImageBaseAddress();
         IntPtr GetProcessHeap();
@@ -805,6 +812,11 @@ namespace NtApiDotNet
         public IntPtr ProcessParameters; // PRTL_USER_PROCESS_PARAMETERS
         public IntPtr SubSystemData;
         public IntPtr ProcessHeap;
+
+        public bool GetBeingDebugged()
+        {
+            return BeingDebugged;
+        }
 
         IntPtr IPeb.GetProcessParameters()
         {
@@ -846,6 +858,11 @@ namespace NtApiDotNet
         public int ProcessParameters; // PRTL_USER_PROCESS_PARAMETERS
         public int SubSystemData;
         public int ProcessHeap;
+
+        public bool GetBeingDebugged()
+        {
+            return BeingDebugged;
+        }
 
         IntPtr IPeb.GetImageBaseAddress()
         {

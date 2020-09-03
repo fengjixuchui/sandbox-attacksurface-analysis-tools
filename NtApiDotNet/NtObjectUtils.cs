@@ -19,6 +19,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Threading.Tasks;
 
 namespace NtApiDotNet
@@ -817,6 +818,23 @@ namespace NtApiDotNet
             if (a == null || a.Length == 0)
                 return 0;
             return a.Aggregate((v, c) => (byte)(v ^ c));
+        }
+
+        internal static T[] Slice<T>(this T[] arr, int offset, int count)
+        {
+            return new ArraySegment<T>(arr, offset, count).ToArray();
+        }
+
+        internal static LargeIntegerStruct ToLargeIntegerStruct(this DateTime time)
+        {
+            if (time == DateTime.MinValue)
+                return new LargeIntegerStruct();
+            return new LargeIntegerStruct() { QuadPart = time.ToFileTime() };
+        }
+
+        internal static string[] ParseMultiString(byte[] data)
+        {
+            return Encoding.Unicode.GetString(data).Split(new char[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
         }
     }
 }

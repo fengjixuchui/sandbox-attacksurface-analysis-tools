@@ -28,7 +28,7 @@ namespace NtApiDotNet
     /// <summary>
     /// Class representing a NT File object
     /// </summary>
-    [NtType("File"), NtType("Device")]
+    [NtType("File"), NtType("Device"), NtType("Driver", DisableOpen = true)]
     public class NtFile : NtObjectWithDuplicateAndInfo<NtFile, FileAccessRights, FileInformationClass, FileInformationClass>
     {
         #region Constructors
@@ -85,10 +85,12 @@ namespace NtApiDotNet
 
         private static NtFile CreateFileObject(SafeKernelObjectHandle handle, IoStatus io_status)
         {
-            if (GetDeviceType(handle) == FileDeviceType.NAMED_PIPE)
+            switch (GetDeviceType(handle))
             {
-                return new NtNamedPipeFileClient(handle, io_status);
+                case FileDeviceType.NAMED_PIPE:
+                    return new NtNamedPipeFileClient(handle, io_status);
             }
+
             return new NtFile(handle, io_status);
         }
 
@@ -243,45 +245,56 @@ namespace NtApiDotNet
 
         private T QueryVolumeFixed<T>(FsInformationClass info_class) where T : new()
         {
+            return QueryVolumeFixed<T>(info_class, true).Result;
+        }
+
+        private NtResult<T> QueryVolumeFixed<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
+        {
             using (var buffer = new SafeStructureInOutBuffer<T>())
             {
                 IoStatus status = new IoStatus();
-                NtSystemCalls.NtQueryVolumeInformationFile(Handle, status, buffer,
-                    buffer.Length, info_class).ToNtException();
-                return buffer.Result;
+                return NtSystemCalls.NtQueryVolumeInformationFile(Handle, status, buffer,
+                    buffer.Length, info_class).CreateResult(throw_on_error, () => buffer.Result);
             }
         }
 
-        private SafeStructureInOutBuffer<T> QueryVolume<T>(FsInformationClass info_class) where T : new()
+        private NtResult<SafeStructureInOutBuffer<T>> QueryVolume<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
         {
-            SafeStructureInOutBuffer<T> ret = null;
-            NtStatus status = NtStatus.STATUS_BUFFER_TOO_SMALL;
-            try
+            int length = 128;
+            while (true)
             {
-                int length = Marshal.SizeOf(typeof(T)) + 128;
-                while (true)
+                using (var buffer = new SafeStructureInOutBuffer<T>(length, true))
                 {
-                    ret = new SafeStructureInOutBuffer<T>(length, false);
                     IoStatus io_status = new IoStatus();
-                    status = NtSystemCalls.NtQueryVolumeInformationFile(Handle, io_status, ret, ret.Length, info_class);
+                    NtStatus status = NtSystemCalls.NtQueryVolumeInformationFile(Handle, io_status, buffer, buffer.Length, info_class);
                     if (status.IsSuccess())
-                        break;
+                        return status.CreateResult(false, () => buffer.Detach());
 
                     if ((status != NtStatus.STATUS_BUFFER_OVERFLOW) && (status != NtStatus.STATUS_INFO_LENGTH_MISMATCH))
-                        throw new NtException(status);
-                    ret.Close();
-                    length *= 2;
+                        return status.CreateResultFromError<SafeStructureInOutBuffer<T>>(throw_on_error);
                 }
+                length *= 2;
             }
-            finally
+        }
+
+        private static FileFsFullSizeInformationEx ConvertToSizeEx(FileFsFullSizeInformation size)
+        {
+            return new FileFsFullSizeInformationEx()
             {
-                if (ret != null && !status.IsSuccess())
-                {
-                    ret.Close();
-                    ret = null;
-                }
-            }
-            return ret;
+                BytesPerSector = size.BytesPerSector,
+                SectorsPerAllocationUnit = size.SectorsPerAllocationUnit,
+                ActualAvailableAllocationUnits = size.ActualAvailableAllocationUnits.ToUInt64(),
+                CallerAvailableAllocationUnits = size.CallerAvailableAllocationUnits.ToUInt64(),
+                ActualTotalAllocationUnits = size.TotalAllocationUnits.ToUInt64()
+            };
+        }
+
+        private NtResult<FileFsFullSizeInformationEx> QueryVolumeSize(bool throw_on_error)
+        {
+            var ex_result = QueryVolumeFixed<FileFsFullSizeInformationEx>(FsInformationClass.FileFsFullSizeInformationEx, false);
+            if (ex_result.IsSuccess)
+                return ex_result;
+            return QueryVolumeFixed<FileFsFullSizeInformation>(FsInformationClass.FileFsFullSizeInformation, throw_on_error).Map(ConvertToSizeEx);
         }
 
         private static SafeFileHandle DuplicateAsFile(SafeKernelObjectHandle handle)
@@ -360,6 +373,11 @@ namespace NtApiDotNet
             return Query(FileInformationClass.FileBasicInformation, new FileBasicInformation(), throw_on_error);
         }
 
+        private NtStatus SetBasicInformation(FileBasicInformation basic_info, bool throw_on_error)
+        {
+            return Set(FileInformationClass.FileBasicInformation, basic_info, throw_on_error);
+        }
+
         private IEnumerable<DirectoryChangeNotification> ReadNotifications(SafeHGlobalBuffer buffer, IoStatus status)
         {
             List<DirectoryChangeNotification> ns = new List<DirectoryChangeNotification>();
@@ -402,6 +420,32 @@ namespace NtApiDotNet
                 offset += result.NextEntryOffset;
             }
             return ns.AsReadOnly();
+        }
+
+        private IEnumerable<T> QueryFixedDirectoryEntries<T>(FileInformationClass info_class) where T : struct
+        {
+            using (var buffer = new SafeStructureInOutBuffer<T>())
+            {
+                using (NtAsyncResult result = new NtAsyncResult(this))
+                {
+                    NtStatus status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle,
+                        IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer, buffer, buffer.Length,
+                        info_class, true, null, true));
+
+                    while (status.IsSuccess())
+                    {
+                        yield return buffer.Result;
+                        result.Reset();
+                        status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero,
+                            result.IoStatusBuffer, buffer, buffer.Length, info_class, true, null, false));
+                    }
+
+                    if (status != NtStatus.STATUS_NO_MORE_FILES && status != NtStatus.STATUS_NO_SUCH_FILE)
+                    {
+                        status.ToNtException();
+                    }
+                }
+            }
         }
 
         #endregion
@@ -710,17 +754,58 @@ namespace NtApiDotNet
         /// <param name="open_options">Open options for file</param>
         /// <param name="mailslot_quota">Mailslot quota</param>
         /// <param name="maximum_message_size">Maximum message size (0 for any size)</param>
-        /// <param name="default_timeout">Timeout in MS ( &lt;0 is infinite)</param>
+        /// <param name="default_timeout">Read Timeout.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The file instance for the mailslot.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtFile CreateMailslot(ObjectAttributes obj_attributes, FileAccessRights desired_access,
+        public static NtResult<NtMailslotFile> CreateMailslot(ObjectAttributes obj_attributes, FileAccessRights desired_access,
+            FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
+            NtWaitTimeout default_timeout, bool throw_on_error)
+        {
+            IoStatus io_status = new IoStatus();
+            LargeInteger timeout = default_timeout?.Timeout ?? new LargeInteger(-1);
+            return NtSystemCalls.NtCreateMailslotFile(out SafeKernelObjectHandle handle, desired_access,
+                obj_attributes, io_status, open_options, mailslot_quota, maximum_message_size, timeout)
+                .CreateResult(throw_on_error, () => new NtMailslotFile(handle, io_status));
+        }
+
+        /// <summary>
+        /// Create a new named mailslot file
+        /// </summary>
+        /// <param name="obj_attributes">The object attributes</param>
+        /// <param name="desired_access">Desired access for the file</param>
+        /// <param name="open_options">Open options for file</param>
+        /// <param name="mailslot_quota">Mailslot quota</param>
+        /// <param name="maximum_message_size">Maximum message size (0 for any size)</param>
+        /// <param name="default_timeout">Read timeout in MS (&lt;0 is infinite)</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The file instance for the mailslot.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public static NtResult<NtMailslotFile> CreateMailslot(ObjectAttributes obj_attributes, FileAccessRights desired_access,
+            FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
+            long default_timeout, bool throw_on_error)
+        {
+            return CreateMailslot(obj_attributes, desired_access, open_options,
+                maximum_message_size, mailslot_quota, default_timeout >= 0 ? NtWaitTimeout.FromMilliseconds(default_timeout) : null, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a new named mailslot file
+        /// </summary>
+        /// <param name="obj_attributes">The object attributes</param>
+        /// <param name="desired_access">Desired access for the file</param>
+        /// <param name="open_options">Open options for file</param>
+        /// <param name="mailslot_quota">Mailslot quota</param>
+        /// <param name="maximum_message_size">Maximum message size (0 for any size)</param>
+        /// <param name="default_timeout">Read timeout in MS ( &lt;0 is infinite)</param>
+        /// <returns>The file instance for the mailslot.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public static NtMailslotFile CreateMailslot(ObjectAttributes obj_attributes, FileAccessRights desired_access,
             FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
             long default_timeout)
         {
-            IoStatus io_status = new IoStatus();
-            LargeInteger timeout = default_timeout < 0 ? new LargeInteger(-1) : NtWaitTimeout.FromMilliseconds(default_timeout).ToLargeInteger();
-            NtSystemCalls.NtCreateMailslotFile(out SafeKernelObjectHandle handle, desired_access, obj_attributes, io_status, open_options, mailslot_quota, maximum_message_size, timeout);
-            return new NtFile(handle, io_status);
+            return CreateMailslot(obj_attributes, desired_access, open_options, 
+                maximum_message_size, mailslot_quota, default_timeout, true).Result;
         }
 
         /// <summary>
@@ -735,7 +820,7 @@ namespace NtApiDotNet
         /// <param name="default_timeout">Timeout in MS ( &lt;0 is infinite)</param>
         /// <returns>The file instance for the mailslot.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtFile CreateMailslot(string path, NtObject root, FileAccessRights desired_access,
+        public static NtMailslotFile CreateMailslot(string path, NtObject root, FileAccessRights desired_access,
             FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
             long default_timeout)
         {
@@ -832,6 +917,7 @@ namespace NtApiDotNet
         /// <param name="path">The path to the file</param>
         /// <returns>The object ID as a string</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
+        [Obsolete("Use FileIdValue")]
         public static string GetFileId(string path)
         {
             using (NtFile file = Open(path, null, FileAccessRights.MaximumAllowed, FileShareMode.None, FileOpenOptions.None))
@@ -850,6 +936,7 @@ namespace NtApiDotNet
         /// <param name="open_options">Open options.</param>
         /// <param name="throw_on_error">True to throw on error</param>
         /// <returns>The opened file object</returns>
+        [Obsolete("Use version of OpenFileById which accepts a long or GUID instead.")]
         public static NtResult<NtFile> OpenFileById(NtFile volume, string id,
             FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
         {
@@ -864,12 +951,29 @@ namespace NtApiDotNet
         /// <param name="desired_access">The desired access for the file</param>
         /// <param name="share_access">File share access</param>
         /// <param name="open_options">Open options.</param>
+        /// <returns>The opened file object</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        [Obsolete("Use version of OpenFileById which accepts a long or GUID instead.")]
+        public static NtFile OpenFileById(NtFile volume, string id,
+            FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options)
+        {
+            return OpenFileById(volume, id, desired_access, share_access, open_options, true).Result;
+        }
+
+        /// <summary>
+        /// Open a file by its ID
+        /// </summary>
+        /// <param name="volume">A handle to the volume on which the file resides.</param>
+        /// <param name="id">The file's ID. Can be a file reference number or an Object ID.</param>
+        /// <param name="desired_access">The desired access for the file</param>
+        /// <param name="share_access">File share access</param>
+        /// <param name="open_options">Open options.</param>
         /// <param name="throw_on_error">True to throw on error</param>
         /// <returns>The opened file object</returns>
-        public static NtResult<NtFile> OpenFileById(NtFile volume, long id,
+        public static NtResult<NtFile> OpenFileById(NtFile volume, byte[] id,
             FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
         {
-            using (ObjectAttributes obja = new ObjectAttributes(id, AttributeFlags.CaseInsensitive, volume.GetHandle(), null, null))
+            using (ObjectAttributes obja = ObjectAttributes.CreateWithRawName(id, AttributeFlags.CaseInsensitive, volume, null, null))
             {
                 IoStatus iostatus = new IoStatus();
                 return NtSystemCalls.NtOpenFile(out SafeKernelObjectHandle handle, desired_access, obja,
@@ -879,16 +983,15 @@ namespace NtApiDotNet
         }
 
         /// <summary>
-        /// Open a file by its object ID
+        /// Open a file by its ID
         /// </summary>
         /// <param name="volume">A handle to the volume on which the file resides.</param>
-        /// <param name="id">The object ID as a binary string</param>
+        /// <param name="id">The file's ID. Can be a file reference number or an Object ID.</param>
         /// <param name="desired_access">The desired access for the file</param>
         /// <param name="share_access">File share access</param>
         /// <param name="open_options">Open options.</param>
         /// <returns>The opened file object</returns>
-        /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtFile OpenFileById(NtFile volume, string id,
+        public static NtFile OpenFileById(NtFile volume, byte[] id,
             FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options)
         {
             return OpenFileById(volume, id, desired_access, share_access, open_options, true).Result;
@@ -898,16 +1001,64 @@ namespace NtApiDotNet
         /// Open a file by its object ID
         /// </summary>
         /// <param name="volume">A handle to the volume on which the file resides.</param>
-        /// <param name="id">The object ID as a binary string</param>
+        /// <param name="fileid">The file ID.</param>
+        /// <param name="desired_access">The desired access for the file</param>
+        /// <param name="share_access">File share access</param>
+        /// <param name="open_options">Open options.</param>
+        /// <param name="throw_on_error">True to throw on error</param>
+        /// <returns>The opened file object</returns>
+        public static NtResult<NtFile> OpenFileById(NtFile volume, long fileid,
+            FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
+        {
+            return OpenFileById(volume, BitConverter.GetBytes(fileid), desired_access, share_access, open_options, throw_on_error);
+        }
+
+        /// <summary>
+        /// Open a file by its file ID
+        /// </summary>
+        /// <param name="volume">A handle to the volume on which the file resides.</param>
+        /// <param name="fileid">The file ID.</param>
         /// <param name="desired_access">The desired access for the file</param>
         /// <param name="share_access">File share access</param>
         /// <param name="open_options">Open options.</param>
         /// <returns>The opened file object</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public static NtFile OpenFileById(NtFile volume, long id,
+        public static NtFile OpenFileById(NtFile volume, long fileid,
             FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options)
         {
-            return OpenFileById(volume, id, desired_access, share_access, open_options, true).Result;
+            return OpenFileById(volume, fileid, desired_access, share_access, open_options, true).Result;
+        }
+
+        /// <summary>
+        /// Open a file by its file ID
+        /// </summary>
+        /// <param name="volume_path">The path to the volume which contains the file.</param>
+        /// <param name="fileid">The file ID.</param>
+        /// <param name="desired_access">The desired access for the file</param>
+        /// <param name="share_access">File share access</param>
+        /// <param name="open_options">Open options.</param>
+        /// <param name="throw_on_error">True to throw on error</param>
+        /// <returns>The opened file object</returns>
+        public static NtResult<NtFile> OpenFileById(string volume_path, long fileid,
+            FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
+        {
+            return OpenFileById(null, NtFileUtils.GetFileIdPath(volume_path, fileid), 
+                desired_access, share_access, open_options, throw_on_error);
+        }
+
+        /// <summary>
+        /// Open a file by its file ID
+        /// </summary>
+        /// <param name="volume_path">The path to the volume which contains the file.</param>
+        /// <param name="fileid">The file ID.</param>
+        /// <param name="desired_access">The desired access for the file</param>
+        /// <param name="share_access">File share access</param>
+        /// <param name="open_options">Open options.</param>
+        /// <returns>The opened file object</returns>
+        public static NtFile OpenFileById(string volume_path, long fileid,
+            FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options)
+        {
+            return OpenFileById(volume_path, fileid, desired_access, share_access, open_options, true).Result;
         }
 
         /// <summary>
@@ -1033,6 +1184,64 @@ namespace NtApiDotNet
             {
                 return file.DeleteReparsePoint();
             }
+        }
+
+        /// <summary>
+        /// Query attributes of a file.
+        /// </summary>
+        /// <param name="object_attributes">The object attributes.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The file attributes.</returns>
+        public static NtResult<FileInformation> QueryAttributes(ObjectAttributes object_attributes, bool throw_on_error)
+        {
+            return NtSystemCalls.NtQueryFullAttributesFile(object_attributes, 
+                out FileNetworkOpenInformation open_info).CreateResult(throw_on_error, () => new FileInformation(open_info));
+        }
+
+        /// <summary>
+        /// Query attributes of a file.
+        /// </summary>
+        /// <param name="object_attributes">The object attributes.</param>
+        /// <returns>The file attributes.</returns>
+        public static FileInformation QueryAttributes(ObjectAttributes object_attributes)
+        {
+            return QueryAttributes(object_attributes, true).Result;
+        }
+
+        /// <summary>
+        /// Query attributes of a file.
+        /// </summary>
+        /// <param name="path">The path to the file.</param>
+        /// <param name="root">The root directory to parse from.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The file attributes.</returns>
+        public static NtResult<FileInformation> QueryAttributes(string path, NtObject root, bool throw_on_error)
+        {
+            using (var obja = new ObjectAttributes(path, AttributeFlags.CaseInsensitive, root))
+            {
+                return QueryAttributes(obja, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Query attributes of a file.
+        /// </summary>
+        /// <param name="path">The path to the file.</param>
+        /// <param name="root">The root directory to parse from.</param>
+        /// <returns>The file attributes.</returns>
+        public static FileInformation QueryAttributes(string path, NtObject root)
+        {
+            return QueryAttributes(path, root, true).Result;
+        }
+
+        /// <summary>
+        /// Query attributes of a file.
+        /// </summary>
+        /// <param name="path">The path to the file.</param>
+        /// <returns>The file attributes.</returns>
+        public static FileInformation QueryAttributes(string path)
+        {
+            return QueryAttributes(path, null);
         }
 
         #endregion
@@ -1615,7 +1824,18 @@ namespace NtApiDotNet
         /// <param name="reparse">The reparse point data.</param>
         public void SetReparsePoint(ReparseBuffer reparse)
         {
-            SetReparsePoint(reparse.ToByteArray());
+            SetReparsePoint(reparse, true);
+        }
+
+        /// <summary>
+        /// Set an arbitrary reparse point.
+        /// </summary>
+        /// <param name="reparse">The reparse point data.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetReparsePoint(ReparseBuffer reparse, bool throw_on_error)
+        {
+            return SetReparsePoint(reparse.ToByteArray(), throw_on_error);
         }
 
         /// <summary>
@@ -1624,9 +1844,37 @@ namespace NtApiDotNet
         /// <param name="reparse">The reparse point data as a byte array.</param>
         public void SetReparsePoint(byte[] reparse)
         {
+            SetReparsePoint(reparse, true);
+        }
+
+        /// <summary>
+        /// Set an arbitrary reparse point as a raw byte array.
+        /// </summary>
+        /// <param name="reparse">The reparse point data as a byte array.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetReparsePoint(byte[] reparse, bool throw_on_error)
+        {
             using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(reparse))
             {
-                FsControl(NtWellKnownIoControlCodes.FSCTL_SET_REPARSE_POINT, buffer, null);
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_SET_REPARSE_POINT, buffer, null, throw_on_error).Status;
+            }
+        }
+
+        /// <summary>
+        /// Set an arbitrary reparse point.
+        /// </summary>
+        /// <param name="reparse">The reparse point data.</param>
+        /// <param name="flags">Flags for the reparse buffer.</param>
+        /// <param name="existing_tag">Existing tag to check against. If no check required use 0.</param>
+        /// <param name="existing_guid">Existing Guid to check against. If no check requested use empty GUID.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetReparsePointEx(ReparseBuffer reparse, ReparseBufferExFlags flags, ReparseTag existing_tag, Guid existing_guid, bool throw_on_error)
+        {
+            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(reparse.ToByteArray(flags, existing_tag, existing_guid)))
+            {
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_SET_REPARSE_POINT_EX, buffer, null, throw_on_error).Status;
             }
         }
 
@@ -1639,10 +1887,7 @@ namespace NtApiDotNet
         /// <param name="existing_guid">Existing Guid to check against. If no check requested use empty GUID.</param>
         public void SetReparsePointEx(ReparseBuffer reparse, ReparseBufferExFlags flags, ReparseTag existing_tag, Guid existing_guid)
         {
-            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(reparse.ToByteArray(flags, existing_tag, existing_guid)))
-            {
-                FsControl(NtWellKnownIoControlCodes.FSCTL_SET_REPARSE_POINT_EX, buffer, null);
-            }
+            SetReparsePointEx(reparse, flags, existing_tag, existing_guid, true);
         }
 
         /// <summary>
@@ -1671,7 +1916,7 @@ namespace NtApiDotNet
         /// <param name="print_name">The print name to display (can be null).</param>
         public void SetMountPoint(string substitute_name, string print_name)
         {
-            SetReparsePoint(new MountPointReparseBuffer(substitute_name, print_name));
+            SetMountPoint(substitute_name, print_name, true);
         }
 
         /// <summary>
@@ -1682,19 +1927,42 @@ namespace NtApiDotNet
         /// <param name="flags">Additional flags for the symlink.</param>
         public void SetSymlink(string substitute_name, string print_name, SymlinkReparseBufferFlags flags)
         {
-            SetReparsePoint(new SymlinkReparseBuffer(substitute_name, print_name, flags));
+            SetSymlink(substitute_name, print_name, flags, true);
+        }
+
+        /// <summary>
+        /// Set a mount point on the current file object.
+        /// </summary>
+        /// <param name="substitute_name">The substitute name to reparse to.</param>
+        /// <param name="print_name">The print name to display (can be null).</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetMountPoint(string substitute_name, string print_name, bool throw_on_error)
+        {
+            return SetReparsePoint(new MountPointReparseBuffer(substitute_name, print_name), throw_on_error);
+        }
+
+        /// <summary>
+        /// Set a symlink on the current file object.
+        /// </summary>
+        /// <param name="substitute_name">The substitute name to reparse to.</param>
+        /// <param name="print_name">The print name to display.</param>
+        /// <param name="flags">Additional flags for the symlink.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetSymlink(string substitute_name, string print_name, SymlinkReparseBufferFlags flags, bool throw_on_error)
+        {
+            return SetReparsePoint(new SymlinkReparseBuffer(substitute_name, print_name, flags), throw_on_error);
         }
 
         /// <summary>
         /// Get the reparse point buffer for the file.
         /// </summary>
-        /// <param name="opaque_buffer">If the reparse tag isn't known 
-        /// return an opaque buffer, otherwise a generic buffer</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The reparse point buffer.</returns>
-        [Obsolete("opaque_buffer parameter no longer has any effect, use parameter-less version")]
-        public ReparseBuffer GetReparsePoint(bool opaque_buffer)
+        public NtResult<ReparseBuffer> GetReparsePoint(bool throw_on_error)
         {
-            return GetReparsePoint();
+            return GetReparsePointRaw(throw_on_error).Map(ba => ReparseBuffer.FromByteArray(ba));
         }
 
         /// <summary>
@@ -1709,14 +1977,63 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the reparse point buffer for the file as a raw buffer.
         /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The reparse point buffer.</returns>
-        public byte[] GetReparsePointRaw()
+        public NtResult<byte[]> GetReparsePointRaw(bool throw_on_error)
         {
             using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(16 * 1024))
             {
-                int res = FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT, null, buffer);
-                return buffer.ReadBytes(res);
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT, 
+                    null, buffer, throw_on_error).Map(i => buffer.ReadBytes(i));
             }
+        }
+
+        /// <summary>
+        /// Get the reparse point buffer for the file as a raw buffer.
+        /// </summary>
+        /// <returns>The reparse point buffer.</returns>
+        public byte[] GetReparsePointRaw()
+        {
+            return GetReparsePointRaw(true).Result;
+        }
+
+        /// <summary>
+        /// Delete the reparse point buffer
+        /// </summary>
+        /// <param name="tag">The reparse tag.</param>
+        /// <returns>The NT status code.</returns>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        public NtStatus DeleteReparsePoint(ReparseTag tag, bool throw_on_error)
+        {
+            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(
+                new OpaqueReparseBuffer(tag, new byte[0]).ToByteArray()))
+            {
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_DELETE_REPARSE_POINT, buffer, null, throw_on_error).Status;
+            }
+        }
+
+        /// <summary>
+        /// Delete the reparse point buffer
+        /// </summary>
+        /// <param name="tag">The reparse tag.</param>
+        public void DeleteReparsePoint(ReparseTag tag)
+        {
+            DeleteReparsePoint(tag, true);
+        }
+
+        /// <summary>
+        /// Delete the reparse point buffer
+        /// </summary>
+        /// <returns>The original reparse buffer.</returns>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        public NtResult<ReparseBuffer> DeleteReparsePoint(bool throw_on_error)
+        {
+            var reparse = GetReparsePoint(throw_on_error);
+            if (!reparse.IsSuccess)
+                return reparse;
+
+            return DeleteReparsePoint(reparse.Result.Tag, false)
+                .CreateResult(throw_on_error, () => reparse.Result);
         }
 
         /// <summary>
@@ -1725,13 +2042,7 @@ namespace NtApiDotNet
         /// <returns>The original reparse buffer.</returns>
         public ReparseBuffer DeleteReparsePoint()
         {
-            ReparseBuffer reparse = GetReparsePoint();
-            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(
-                new OpaqueReparseBuffer(reparse.Tag, new byte[0]).ToByteArray()))
-            {
-                FsControl(NtWellKnownIoControlCodes.FSCTL_DELETE_REPARSE_POINT, buffer, null);
-            }
-            return reparse;
+            return DeleteReparsePoint(true).Result;
         }
 
         /// <summary>
@@ -3036,7 +3347,20 @@ namespace NtApiDotNet
         /// <param name="catalog_path">Optional directory path to look for catalog files.</param>
         public void SetCachedSigningLevel(int flags, SigningLevel signing_level, IEnumerable<NtFile> files, string catalog_path)
         {
-            NtSecurity.SetCachedSigningLevel(Handle, flags, signing_level, files.Select(f => f.Handle), catalog_path);
+            SetCachedSigningLevel(flags, signing_level, files, catalog_path, true);
+        }
+
+        /// <summary>
+        /// Set the cached signing level for a file.
+        /// </summary>
+        /// <param name="flags">Flags to set for the cache.</param>
+        /// <param name="signing_level">The signing level to cache</param>
+        /// <param name="files">Files for signature.</param>
+        /// <param name="catalog_path">Optional directory path to look for catalog files.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        public NtStatus SetCachedSigningLevel(int flags, SigningLevel signing_level, IEnumerable<NtFile> files, string catalog_path, bool throw_on_error)
+        {
+            return NtSecurity.SetCachedSigningLevel(Handle, flags, signing_level, files.Select(f => f.Handle), catalog_path, throw_on_error);
         }
 
         /// <summary>
@@ -3558,8 +3882,306 @@ namespace NtApiDotNet
         /// <returns>The file attributes.</returns>
         public NtResult<FileAttributes> GetFileAttributes(bool throw_on_error)
         {
-            return Query<FileBasicInformation>(FileInformationClass.FileBasicInformation, 
-                default, throw_on_error).Map(b => b.FileAttributes);
+            return QueryBasicInformation(throw_on_error).Map(b => b.FileAttributes);
+        }
+
+        /// <summary>
+        /// Set the file attributes.
+        /// </summary>
+        /// <param name="file_attributes">The file attributes to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetFileAttributes(FileAttributes file_attributes, bool throw_on_error)
+        {
+            return SetBasicInformation(new FileBasicInformation() { FileAttributes = file_attributes }, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get the creation time.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The creation time.</returns>
+        public NtResult<DateTime> GetCreationTime(bool throw_on_error)
+        {
+            return QueryBasicInformation(throw_on_error).Map(b => b.CreationTime.ToDateTime());
+        }
+
+        /// <summary>
+        /// Get the last write time.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The last write time.</returns>
+        public NtResult<DateTime> GetLastWriteTime(bool throw_on_error)
+        {
+            return QueryBasicInformation(throw_on_error).Map(b => b.LastWriteTime.ToDateTime());
+        }
+
+        /// <summary>
+        /// Get the change time time.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The change time.</returns>
+        public NtResult<DateTime> GetChangeTime(bool throw_on_error)
+        {
+            return QueryBasicInformation(throw_on_error).Map(b => b.ChangeTime.ToDateTime());
+        }
+
+        /// <summary>
+        /// Get the last access time.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The last access time time.</returns>
+        public NtResult<DateTime> GetLastAccessTime(bool throw_on_error)
+        {
+            return QueryBasicInformation(throw_on_error).Map(b => b.LastAccessTime.ToDateTime());
+        }
+
+        /// <summary>
+        /// Set the file's creation time.
+        /// </summary>
+        /// <param name="time">The time to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetCreationTime(DateTime time, bool throw_on_error)
+        {
+            return SetBasicInformation(new FileBasicInformation() 
+                { CreationTime = time.ToLargeIntegerStruct() }, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the file's last access time.
+        /// </summary>
+        /// <param name="time">The time to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetLastAccessTime(DateTime time, bool throw_on_error)
+        {
+            return SetBasicInformation(new FileBasicInformation()
+            { LastAccessTime = time.ToLargeIntegerStruct() }, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the file's last write time.
+        /// </summary>
+        /// <param name="time">The time to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetLastWriteTime(DateTime time, bool throw_on_error)
+        {
+            return SetBasicInformation(new FileBasicInformation()
+                { LastWriteTime = time.ToLargeIntegerStruct() }, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the file's change time.
+        /// </summary>
+        /// <param name="time">The time to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetChangeTime(DateTime time, bool throw_on_error)
+        {
+            return SetBasicInformation(new FileBasicInformation()
+                { ChangeTime = time.ToLargeIntegerStruct() }, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the file position.
+        /// </summary>
+        /// <param name="position">The file position to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetFilePosition(long position, bool throw_on_error)
+        {
+            var position_struct = new FilePositionInformation();
+            position_struct.CurrentByteOffset.QuadPart = position;
+            return Set(FileInformationClass.FilePositionInformation, position_struct, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get file information.
+        /// </summary>
+        /// <param name="throw_on_error"></param>
+        /// <returns></returns>
+        public NtResult<FileInformation> GetFileInformation(bool throw_on_error)
+        {
+            return Query<FileNetworkOpenInformation>(FileInformationClass.FileNetworkOpenInformation, 
+                default, throw_on_error).Map(n => new FileInformation(n));
+        }
+
+        /// <summary>
+        /// Query all reparse points from a volume.
+        /// </summary>
+        /// <returns>The list of reparse points.</returns>
+        /// <remarks>You'll need to open the reparse database, which is typically \$Extend\$Reparse:$R:$INDEX_ALLOCATION on the volume.</remarks>
+        public IEnumerable<FileReparsePointInformation> QueryReparsePoints()
+        {
+            return QueryFixedDirectoryEntries<FileReparsePointInformation>(FileInformationClass.FileReparsePointInformation);
+        }
+
+        /// <summary>
+        /// Query all object ids from a volume.
+        /// </summary>
+        /// <returns>The list of object ids.</returns>
+        /// <remarks>You need to open the object ID database, which is typically \$Extend\$ObjId:$O:$INDEX_ALLOCATION on the volume.</remarks>
+        public IEnumerable<FileObjectIdInformation> QueryObjectIds()
+        {
+            return QueryFixedDirectoryEntries<FileObjectIdInformation>(FileInformationClass.FileObjectIdInformation);
+        }
+
+        /// <summary>
+        /// Get the Object ID buffer for a file.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The object ID buffer.</returns>
+        public NtResult<FileObjectIdBuffer> GetObjectId(bool throw_on_error)
+        {
+            using (var buffer = new SafeStructureInOutBuffer<FileObjectIdBuffer>())
+            {
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_GET_OBJECT_ID,
+                    null, buffer, throw_on_error)
+                    .Map(i => i == buffer.Length ? buffer.Result : throw new ArgumentException("Invalid length returned."));
+            }
+        }
+
+        /// <summary>
+        /// Get the Object ID create for a file.
+        /// </summary>
+        /// <returns>The object ID buffer.</returns>
+        public FileObjectIdBuffer GetObjectId()
+        {
+            return GetObjectId(true).Result;
+        }
+
+        /// <summary>
+        /// Get the Object ID buffer for a file.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The object ID buffer.</returns>
+        public NtResult<FileObjectIdBuffer> CreateOrGetObjectId(bool throw_on_error)
+        {
+            using (var buffer = new SafeStructureInOutBuffer<FileObjectIdBuffer>())
+            {
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_CREATE_OR_GET_OBJECT_ID,
+                    null, buffer, throw_on_error)
+                    .Map(i => i == buffer.Length ? buffer.Result : throw new ArgumentException("Invalid length returned."));
+            }
+        }
+
+        /// <summary>
+        /// Get or create the Object ID for a file.
+        /// </summary>
+        /// <returns>The object ID buffer.</returns>
+        public FileObjectIdBuffer CreateOrGetObjectId()
+        {
+            return CreateOrGetObjectId(true).Result;
+        }
+
+        /// <summary>
+        /// Set Object ID and extended information.
+        /// </summary>
+        /// <param name="object_id">The Object ID buffer.</param>
+        /// <param name="extended_only">Only set the extended information.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetObjectId(FileObjectIdBuffer object_id, bool extended_only, bool throw_on_error)
+        {
+            if (object_id.ExtendedInfo?.Length != 48)
+            {
+                throw new ArgumentException("Extended info needs to be 48 bytes in length.");
+            }
+
+            using (var buffer = object_id.ToBuffer())
+            {
+                return FsControl(extended_only ? NtWellKnownIoControlCodes.FSCTL_SET_OBJECT_ID_EXTENDED : NtWellKnownIoControlCodes.FSCTL_SET_OBJECT_ID, 
+                    buffer, null, throw_on_error).Status;
+            }
+        }
+
+        /// <summary>
+        /// Set Object ID and extended information.
+        /// </summary>
+        /// <param name="object_id">The Object ID buffer.</param>
+        /// <param name="extended_only">Only set the extended information.</param>
+        /// <returns>The NT status code.</returns>
+        public void SetObjectId(FileObjectIdBuffer object_id, bool extended_only)
+        {
+            SetObjectId(object_id, extended_only, true);
+        }
+
+        /// <summary>
+        /// Set Object ID and extended information.
+        /// </summary>
+        /// <param name="object_id">The Object ID GUID.</param>
+        /// <param name="extended_info">Extended info buffer, needs to be 48 bytes in size.</param>
+        /// <returns>The NT status code.</returns>
+        public void SetObjectId(Guid object_id, byte[] extended_info)
+        {
+            SetObjectId(new FileObjectIdBuffer() { ObjectId = object_id, ExtendedInfo = extended_info }, false);
+        }
+
+        /// <summary>
+        /// Set only Object ID extended information.
+        /// </summary>>
+        /// <param name="extended_info">Extended info buffer, needs to be 48 bytes in size.</param>
+        /// <returns>The NT status code.</returns>
+        public void SetObjectId(byte[] extended_info)
+        {
+            SetObjectId(new FileObjectIdBuffer() { ExtendedInfo = extended_info }, true);
+        }
+
+        /// <summary>
+        /// Delete the Object ID for a file.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus DeleteObjectId(bool throw_on_error)
+        {
+            return FsControl(NtWellKnownIoControlCodes.FSCTL_DELETE_OBJECT_ID, null, null, throw_on_error).Status;
+        }
+
+        /// <summary>
+        /// Delete the Object ID for a file.
+        /// </summary>
+        public void DeleteObjectId()
+        {
+            DeleteObjectId(true);
+        }
+
+        /// <summary>
+        /// Make the file sparse.
+        /// </summary>
+        /// <param name="sparse">True to make the file sparse.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetSparse(bool sparse, bool throw_on_error)
+        {
+            using (var buffer = new FileSetSparseBuffer() { SetSparse = sparse }.ToBuffer())
+            {
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_SET_SPARSE, buffer, null, throw_on_error).Status;
+            }
+        }
+
+        /// <summary>
+        /// Get filesystem and volume information.
+        /// </summary>
+        public NtResult<FileSystemVolumeInformation> GetVolumeInformation(bool throw_on_error)
+        {
+            using (var list = new DisposableList())
+            {
+                var attr_info = list.AddResource(QueryVolume<FileFsAttributeInformation>(FsInformationClass.FileFsAttributeInformation, throw_on_error));
+                if (!attr_info.IsSuccess)
+                    return attr_info.Cast<FileSystemVolumeInformation>();
+
+                var vol_info = list.AddResource(QueryVolume<FileFsVolumeInformation>(FsInformationClass.FileFsVolumeInformation, throw_on_error));
+                if (!vol_info.IsSuccess)
+                    return vol_info.Cast<FileSystemVolumeInformation>();
+
+                var size_info = QueryVolumeSize(throw_on_error);
+                if (!size_info.IsSuccess)
+                    return size_info.Cast<FileSystemVolumeInformation>();
+
+                return new FileSystemVolumeInformation(attr_info.Result, vol_info.Result, size_info.Result).CreateResult();
+            }
         }
 
         /// <summary>
@@ -3598,6 +4220,7 @@ namespace NtApiDotNet
         /// </summary>
         /// <returns>The object ID as a string</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
+        [Obsolete("Use FileIdValue instead.")]
         public string FileId => NtFileUtils.FileIdToString(FileIdValue);
 
         /// <summary>
@@ -3605,14 +4228,7 @@ namespace NtApiDotNet
         /// </summary>
         /// <returns>The object ID as a number.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
-        public long FileIdValue
-        {
-            get
-            {
-                var internal_info = Query<FileInternalInformation>(FileInformationClass.FileInternalInformation);
-                return internal_info.IndexNumber.QuadPart;
-            }
-        }
+        public long FileIdValue => Query<FileInternalInformation>(FileInformationClass.FileInternalInformation).IndexNumber.QuadPart;
 
         /// <summary>
         /// Get or set the attributes of a file.
@@ -3621,15 +4237,58 @@ namespace NtApiDotNet
         /// <exception cref="NtException">Thrown on error.</exception>
         public FileAttributes FileAttributes
         {
-            get
-            {
-                return GetFileAttributes(true).Result;
-            }
-            set
-            {
-                var basic_info = new FileBasicInformation() { FileAttributes = value };
-                Set(FileInformationClass.FileBasicInformation, basic_info);
-            }
+            get => GetFileAttributes(true).Result;
+            set => SetFileAttributes(value, true);
+        }
+
+        /// <summary>
+        /// Get or set the creation time.
+        /// </summary>
+        public DateTime FileCreationTime
+        {
+            get => GetCreationTime(true).Result;
+            set => SetCreationTime(value, true);
+        }
+
+        /// <summary>
+        /// Get or set the last access time.
+        /// </summary>
+        public DateTime LastAccessTime
+        {
+            get => GetLastAccessTime(true).Result;
+            set => SetLastAccessTime(value, true);
+        }
+
+        /// <summary>
+        /// Get or set the last write time.
+        /// </summary>
+        public DateTime LastWriteTime
+        {
+            get => GetLastWriteTime(true).Result;
+            set => SetLastWriteTime(value, true);
+        }
+
+        /// <summary>
+        /// Get or set the change time.
+        /// </summary>
+        public DateTime ChangeTime
+        {
+            get => GetChangeTime(true).Result;
+            set => SetChangeTime(value, true);
+        }
+
+        /// <summary>
+        /// Get file information, which is times, attributes and sizes.
+        /// </summary>
+        public FileInformation FileInformation => GetFileInformation(true).Result;
+
+        /// <summary>
+        /// Get or set the file as sparse.
+        /// </summary>
+        public bool Sparse
+        {
+            get => FileAttributes.HasFlagSet(FileAttributes.SparseFile);
+            set => SetSparse(value, true);
         }
 
         /// <summary>
@@ -3651,13 +4310,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Get whether this file repsents a reparse point.
         /// </summary>
-        public bool IsReparsePoint
-        {
-            get
-            {
-                return GetFileAttributes(false).GetResultOrDefault(FileAttributes.None).HasFlagSet(FileAttributes.ReparsePoint);
-            }
-        }
+        public bool IsReparsePoint => GetFileAttributes(false).GetResultOrDefault(FileAttributes.None).HasFlagSet(FileAttributes.ReparsePoint);
 
         /// <summary>
         /// The result of opening the file, whether it was created, overwritten etc.
@@ -3669,18 +4322,8 @@ namespace NtApiDotNet
         /// </summary>
         public long Position
         {
-            get
-            {
-                return Query<FilePositionInformation>(FileInformationClass.FilePositionInformation).CurrentByteOffset.QuadPart;
-            }
-
-            set
-            {
-                var position = new FilePositionInformation();
-                position.CurrentByteOffset.QuadPart = value;
-
-                Set(FileInformationClass.FilePositionInformation, position);
-            }
+            get => Query<FilePositionInformation>(FileInformationClass.FilePositionInformation).CurrentByteOffset.QuadPart;
+            set => SetFilePosition(value, true);
         }
 
         /// <summary>
@@ -3688,16 +4331,14 @@ namespace NtApiDotNet
         /// </summary>
         public long Length
         {
-            get
-            {
-                return Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).EndOfFile.QuadPart;
-            }
-
-            set
-            {
-                SetEndOfFile(value);
-            }
+            get => Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).EndOfFile.QuadPart;
+            set => SetEndOfFile(value);
         }
+
+        /// <summary>
+        /// Get the file's allocation size.
+        /// </summary>
+        public long AllocationSize => Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).AllocationSize.QuadPart;
 
         /// <summary>
         /// Get the Win32 path name for the file.
@@ -3738,42 +4379,18 @@ namespace NtApiDotNet
         /// Get the low-level device type of the file.
         /// </summary>
         /// <returns>The file device type.</returns>
-        public FileDeviceType DeviceType
-        {
-            get
-            {
-                return QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).DeviceType;
-            }
-        }
+        public FileDeviceType DeviceType => QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).DeviceType;
 
         /// <summary>
         /// Get the low-level device characteristics of the file.
         /// </summary>
         /// <returns>The file device characteristics.</returns>
-        public FileDeviceCharacteristics Characteristics
-        {
-            get
-            {
-                return QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).Characteristics;
-            }
-        }
+        public FileDeviceCharacteristics Characteristics => QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).Characteristics;
 
         /// <summary>
         /// Get filesystem and volume information.
         /// </summary>
-        public FileSystemVolumeInformation VolumeInformation
-        {
-            get
-            {
-                using (var attr_info = QueryVolume<FileFsAttributeInformation>(FsInformationClass.FileFsAttributeInformation))
-                {
-                    using (var vol_info = QueryVolume<FileFsVolumeInformation>(FsInformationClass.FileFsVolumeInformation))
-                    {
-                        return new FileSystemVolumeInformation(attr_info, vol_info);
-                    }
-                }
-            }
-        }
+        public FileSystemVolumeInformation VolumeInformation => GetVolumeInformation(true).Result;
 
         /// <summary>
         /// Get or set the file's compression format.
@@ -3801,13 +4418,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Gets whether the file is on a remote file system.
         /// </summary>
-        public bool IsRemote
-        {
-            get
-            {
-                return Query<bool>(FileInformationClass.FileIsRemoteDeviceInformation);
-            }
-        }
+        public bool IsRemote => Query<bool>(FileInformationClass.FileIsRemoteDeviceInformation);
 
         /// <summary>
         /// Get or set whether this file/directory is case sensitive.
@@ -3816,7 +4427,7 @@ namespace NtApiDotNet
         {
             get
             {
-                return (CaseSensitiveFlags & FileCaseSensitiveFlags.CaseSensitiveDir) != 0;
+                return CaseSensitiveFlags.HasFlagSet(FileCaseSensitiveFlags.CaseSensitiveDir);
             }
 
             set
@@ -3870,49 +4481,30 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the file mode.
         /// </summary>
-        public FileOpenOptions Mode
-        {
-            get
-            {
-                return (FileOpenOptions)Query<int>(FileInformationClass.FileModeInformation);
-            }
-        }
+        public FileOpenOptions Mode => QueryEnum<FileOpenOptions>(FileInformationClass.FileModeInformation);
 
         /// <summary>
         /// Get file access information.
         /// </summary>
-        public AccessMask Access
-        {
-            get
-            {
-                return Query<AccessMask>(FileInformationClass.FileAccessInformation);
-            }
-        }
+        public AccessMask Access => Query<AccessMask>(FileInformationClass.FileAccessInformation);
 
         /// <summary>
         /// Get the filename with the volume path.
         /// </summary>
-        public string FileName
-        {
-            get
-            {
-                return TryGetName(FileInformationClass.FileNameInformation);
-            }
-        }
+        public string FileName => TryGetName(FileInformationClass.FileNameInformation);
+
+        /// <summary>
+        /// Get the normalized filename with the volume path.
+        /// </summary>
+        public string NormalizedFileName => TryGetName(FileInformationClass.FileNormalizedNameInformation);
 
         /// <summary>
         /// Get the associated short filename
         /// </summary>
         public string FileShortName
         {
-            get
-            {
-                return TryGetName(FileInformationClass.FileAlternateNameInformation);
-            }
-            set
-            {
-                SetName(FileInformationClass.FileShortNameInformation, value);
-            }
+            get => TryGetName(FileInformationClass.FileAlternateNameInformation);
+            set => SetName(FileInformationClass.FileShortNameInformation, value);
         }
 
         /// <summary>
@@ -3939,14 +4531,8 @@ namespace NtApiDotNet
         /// </summary>
         public StorageReserveId StorageReserveId
         {
-            get
-            {
-                return Query<FileStorageReserveIdInformation>(FileInformationClass.FileStorageReserveIdInformation).StorageReserveId;
-            }
-            set
-            {
-                Set(FileInformationClass.FileStorageReserveIdInformation, new FileStorageReserveIdInformation() { StorageReserveId = value });
-            }
+            get => Query<FileStorageReserveIdInformation>(FileInformationClass.FileStorageReserveIdInformation).StorageReserveId;
+            set => Set(FileInformationClass.FileStorageReserveIdInformation, new FileStorageReserveIdInformation() { StorageReserveId = value });
         }
 
         /// <summary>
