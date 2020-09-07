@@ -176,7 +176,7 @@ namespace NtApiDotNet
             }
         }
 
-        private NtStatus DoRenameEx(string filename, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
+        private NtStatus DoLinkRenameEx(FileInformationClass file_info, string filename, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
         {
             FileRenameInformationEx information = new FileRenameInformationEx
             {
@@ -188,7 +188,7 @@ namespace NtApiDotNet
             using (var buffer = information.ToBuffer(information.FileNameLength, true))
             {
                 buffer.Data.WriteArray(0, chars, 0, chars.Length);
-                return SetBuffer(FileInformationClass.FileRenameInformationEx, buffer, throw_on_error);
+                return SetBuffer(file_info, buffer, throw_on_error);
             }
         }
 
@@ -240,40 +240,6 @@ namespace NtApiDotNet
                     result.Result._is_directory = directory;
                     return visitor(result.Result);
                 }
-            }
-        }
-
-        private T QueryVolumeFixed<T>(FsInformationClass info_class) where T : new()
-        {
-            return QueryVolumeFixed<T>(info_class, true).Result;
-        }
-
-        private NtResult<T> QueryVolumeFixed<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
-        {
-            using (var buffer = new SafeStructureInOutBuffer<T>())
-            {
-                IoStatus status = new IoStatus();
-                return NtSystemCalls.NtQueryVolumeInformationFile(Handle, status, buffer,
-                    buffer.Length, info_class).CreateResult(throw_on_error, () => buffer.Result);
-            }
-        }
-
-        private NtResult<SafeStructureInOutBuffer<T>> QueryVolume<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
-        {
-            int length = 128;
-            while (true)
-            {
-                using (var buffer = new SafeStructureInOutBuffer<T>(length, true))
-                {
-                    IoStatus io_status = new IoStatus();
-                    NtStatus status = NtSystemCalls.NtQueryVolumeInformationFile(Handle, io_status, buffer, buffer.Length, info_class);
-                    if (status.IsSuccess())
-                        return status.CreateResult(false, () => buffer.Detach());
-
-                    if ((status != NtStatus.STATUS_BUFFER_OVERFLOW) && (status != NtStatus.STATUS_INFO_LENGTH_MISMATCH))
-                        return status.CreateResultFromError<SafeStructureInOutBuffer<T>>(throw_on_error);
-                }
-                length *= 2;
             }
         }
 
@@ -386,11 +352,13 @@ namespace NtApiDotNet
             buffer.Initialize((uint)status.Information32);
 
             int offset = 0;
+            string full_path = FullPath;
+            string win32_path = Win32PathName;
             while (offset < buffer.Length)
             {
                 var info = buffer.GetStructAtOffset<FileNotifyInformation>(offset);
                 var result = info.Result;
-                ns.Add(new DirectoryChangeNotification(FullPath, info));
+                ns.Add(new DirectoryChangeNotification(full_path, win32_path, info));
                 if (result.NextEntryOffset == 0)
                 {
                     break;
@@ -406,13 +374,14 @@ namespace NtApiDotNet
 
             // Change buffer size to reflect what's in the buffer.
             buffer.Initialize((uint)status.Information32);
-
+            string full_path = FullPath;
+            string win32_path = Win32PathName;
             int offset = 0;
             while (offset < buffer.Length)
             {
                 var info = buffer.GetStructAtOffset<FileNotifyExtendedInformation>(offset);
                 var result = info.Result;
-                ns.Add(new DirectoryChangeNotificationExtended(FullPath, info));
+                ns.Add(new DirectoryChangeNotificationExtended(full_path, win32_path, info));
                 if (result.NextEntryOffset == 0)
                 {
                     break;
@@ -804,7 +773,7 @@ namespace NtApiDotNet
             FileOpenOptions open_options, int maximum_message_size, int mailslot_quota,
             long default_timeout)
         {
-            return CreateMailslot(obj_attributes, desired_access, open_options, 
+            return CreateMailslot(obj_attributes, desired_access, open_options,
                 maximum_message_size, mailslot_quota, default_timeout, true).Result;
         }
 
@@ -1042,7 +1011,7 @@ namespace NtApiDotNet
         public static NtResult<NtFile> OpenFileById(string volume_path, long fileid,
             FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
         {
-            return OpenFileById(null, NtFileUtils.GetFileIdPath(volume_path, fileid), 
+            return OpenFileById(null, NtFileUtils.GetFileIdPath(volume_path, fileid),
                 desired_access, share_access, open_options, throw_on_error);
         }
 
@@ -1194,7 +1163,7 @@ namespace NtApiDotNet
         /// <returns>The file attributes.</returns>
         public static NtResult<FileInformation> QueryAttributes(ObjectAttributes object_attributes, bool throw_on_error)
         {
-            return NtSystemCalls.NtQueryFullAttributesFile(object_attributes, 
+            return NtSystemCalls.NtQueryFullAttributesFile(object_attributes,
                 out FileNetworkOpenInformation open_info).CreateResult(throw_on_error, () => new FileInformation(open_info));
         }
 
@@ -1724,6 +1693,44 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Create a new hardlink to this file.
+        /// </summary>
+        /// <param name="linkname">The target NT path.</param>
+        /// <param name="root">The root directory if linkname is relative</param>
+        /// <param name="replace_if_exists">If TRUE, replaces the target file if it exists. If FALSE, fails if the target file already exists.</param>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public void CreateHardlink(string linkname, NtObject root, bool replace_if_exists)
+        {
+            CreateHardlink(linkname, root, replace_if_exists, true);
+        }
+
+        /// <summary>
+        /// Create a new hardlink to this file.
+        /// </summary>
+        /// <param name="linkname">The target NT path.</param>
+        /// <param name="root">The root directory if linkname is relative</param>
+        /// <param name="flags">The flags associated to FileLinkInformationEx.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtStatus CreateHardlinkEx(string linkname, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
+        {
+            return DoLinkRenameEx(FileInformationClass.FileLinkInformationEx, linkname, root, flags, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a new hardlink to this file.
+        /// </summary>
+        /// <param name="linkname">The target NT path.</param>
+        /// <param name="root">The root directory if linkname is relative</param>
+        /// <param name="flags">The flags associated to FileLinkInformationEx.</param>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public void CreateHardlinkEx(string linkname, NtObject root, FileRenameInformationExFlags flags)
+        {
+            CreateHardlinkEx(linkname, root, flags, true);
+        }
+
+        /// <summary>
         /// Rename file.
         /// </summary>
         /// <param name="new_name">The target NT path.</param>
@@ -1792,7 +1799,7 @@ namespace NtApiDotNet
         /// <exception cref="NtException">Thrown on error.</exception>
         public NtStatus RenameEx(string new_name, NtObject root, FileRenameInformationExFlags flags, bool throw_on_error)
         {
-            return DoRenameEx(new_name, root, flags, throw_on_error);
+            return DoLinkRenameEx(FileInformationClass.FileRenameInformationEx, new_name, root, flags, throw_on_error);
         }
 
         /// <summary>
@@ -1804,7 +1811,7 @@ namespace NtApiDotNet
         /// <exception cref="NtException">Thrown on error.</exception>
         public void RenameEx(string new_name, NtObject root, FileRenameInformationExFlags flags)
         {
-            DoRenameEx(new_name, root, flags, true);
+            RenameEx(new_name, root, flags, true);
         }
 
         /// <summary>
@@ -1983,7 +1990,7 @@ namespace NtApiDotNet
         {
             using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(16 * 1024))
             {
-                return FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT, 
+                return FsControl(NtWellKnownIoControlCodes.FSCTL_GET_REPARSE_POINT,
                     null, buffer, throw_on_error).Map(i => buffer.ReadBytes(i));
             }
         }
@@ -2761,7 +2768,7 @@ namespace NtApiDotNet
         /// <returns>The path.</returns>
         public NtResult<string> GetWin32PathName(Win32PathNameFlags flags, bool throw_on_error)
         {
-            return Win32Utils.GetWin32PathName(this, flags, true);
+            return Win32Utils.GetWin32PathName(this, flags, throw_on_error);
         }
 
         /// <summary>
@@ -3394,20 +3401,24 @@ namespace NtApiDotNet
             int size = 16 * 1024;
             while (true)
             {
-                FileLinksInformation info = new FileLinksInformation();
-                info.BytesNeeded = size;
+                FileLinksInformation info = new FileLinksInformation
+                {
+                    BytesNeeded = size
+                };
 
                 using (var buffer = new SafeStructureInOutBuffer<FileLinksInformation>(info, size, true))
                 {
                     IoStatus io_status = new IoStatus();
-                    NtStatus status = NtSystemCalls.NtQueryInformationFile(Handle, io_status,
-                        buffer, buffer.Length, FileInformationClass.FileHardLinkInformation);
+                    NtStatus status = QueryInformation(FileInformationClass.FileHardLinkInformation, buffer, out int length);
                     if (status == NtStatus.STATUS_BUFFER_OVERFLOW)
                     {
                         size *= 2;
                         continue;
                     }
+
                     status.ToNtException();
+                    buffer.Initialize((ulong)length);
+                    
                     info = buffer.Result;
 
                     int ofs = 0;
@@ -3417,6 +3428,7 @@ namespace NtApiDotNet
                         var entry_buffer = buffer.Data.GetStructAtOffset<FileLinkEntryInformation>(ofs);
                         var entry = entry_buffer.Result;
                         string parent_path = string.Empty;
+                        string win32_path = string.Empty;
 
                         using (var parent = OpenFileById(this, entry.ParentFileId,
                             FileAccessRights.ReadAttributes, FileShareMode.None, FileOpenOptions.None, false))
@@ -3424,16 +3436,17 @@ namespace NtApiDotNet
                             if (parent.IsSuccess)
                             {
                                 parent_path = parent.Result.FullPath;
+                                win32_path = Win32Utils.RemoveDevicePrefix(parent.Result.GetWin32PathName(Win32PathNameFlags.None, false).GetResultOrDefault(string.Empty));
                             }
                         }
 
-                        yield return new FileLinkEntry(entry_buffer, parent_path);
+                        yield return new FileLinkEntry(entry_buffer, parent_path, win32_path);
 
                         if (entry.NextEntryOffset == 0)
                         {
                             break;
                         }
-                        ofs = ofs + entry.NextEntryOffset;
+                        ofs += entry.NextEntryOffset;
                     }
                     break;
                 }
@@ -3683,6 +3696,65 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get full change notifications. Will pick ex version if available and revert to old format if not.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <param name="timeout">Wait timeout.</param>
+        /// <returns>The list of changes.</returns>
+        public NtResult<IEnumerable<DirectoryChangeNotification>> GetChangeNotificationFull(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree,
+            NtWaitTimeout timeout, bool throw_on_error)
+        {
+            if (NtObjectUtils.SupportedVersion >= SupportedVersion.Windows10_RS3)
+            {
+                return GetChangeNotificationEx(completion_filter, watch_subtree, 
+                    timeout, throw_on_error).Map(n => n.Cast<DirectoryChangeNotification>());
+            }
+            return GetChangeNotification(completion_filter, watch_subtree, timeout, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get full change notifications. Will pick ex version if available and revert to old format if not.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="timeout">Wait timeout.</param>
+        /// <returns>The list of changes.</returns>
+        public IEnumerable<DirectoryChangeNotification> GetChangeNotificationFull(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree,
+            NtWaitTimeout timeout)
+        {
+            return GetChangeNotificationFull(completion_filter, watch_subtree, timeout, true).Result;
+        }
+
+        /// <summary>
+        /// Get change notifications.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <param name="timeout">Wait timeout.</param>
+        /// <returns>The list of changes.</returns>
+        public NtResult<IEnumerable<DirectoryChangeNotification>> GetChangeNotification(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree,
+            NtWaitTimeout timeout, bool throw_on_error)
+        {
+            using (NtAsyncResult result = new NtAsyncResult(this))
+            {
+                using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
+                {
+                    return result.CompleteCall(NtSystemCalls.NtNotifyChangeDirectoryFile(
+                        Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
+                        buffer, buffer.Length, completion_filter, watch_subtree), timeout)
+                        .CreateResult(throw_on_error,
+                        s => s == NtStatus.STATUS_SUCCESS ? ReadNotifications(buffer, result.IoStatusBuffer.Result) : new DirectoryChangeNotification[0]);
+                }
+            }
+        }
+
+        /// <summary>
         /// Get change notifications.
         /// </summary>
         /// <param name="completion_filter">The filter of events to watch for.</param>
@@ -3692,16 +3764,21 @@ namespace NtApiDotNet
         public NtResult<IEnumerable<DirectoryChangeNotification>> GetChangeNotification(
             DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
-                {
-                    return result.CompleteCall(NtSystemCalls.NtNotifyChangeDirectoryFile(
-                        Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
-                        buffer, buffer.Length, completion_filter, watch_subtree))
-                        .CreateResult(throw_on_error, () => ReadNotifications(buffer, result.IoStatusBuffer.Result));
-                }
-            }
+            return GetChangeNotification(completion_filter, watch_subtree, NtWaitTimeout.Infinite, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get change notifications.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="timeout">Wait timeout.</param>
+        /// <returns>The list of changes.</returns>
+        public IEnumerable<DirectoryChangeNotification> GetChangeNotification(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree,
+            NtWaitTimeout timeout)
+        {
+            return GetChangeNotification(completion_filter, watch_subtree, timeout, true).Result;
         }
 
         /// <summary>
@@ -3780,11 +3857,12 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="completion_filter">The filter of events to watch for.</param>
         /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="timeout">Timeout to wait.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The list of changes.</returns>
         [SupportedVersion(SupportedVersion.Windows10_RS3)]
         public NtResult<IEnumerable<DirectoryChangeNotificationExtended>> GetChangeNotificationEx(
-            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, bool throw_on_error)
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, NtWaitTimeout timeout, bool throw_on_error)
         {
             using (NtAsyncResult result = new NtAsyncResult(this))
             {
@@ -3793,10 +3871,38 @@ namespace NtApiDotNet
                     return result.CompleteCall(NtSystemCalls.NtNotifyChangeDirectoryFileEx(
                         Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
                         buffer, buffer.Length, completion_filter, watch_subtree, 
-                        DirectoryNotifyInformationClass.DirectoryNotifyExtendedInformation))
-                        .CreateResult(throw_on_error, () => ReadExtendedNotifications(buffer, result.IoStatusBuffer.Result));
+                        DirectoryNotifyInformationClass.DirectoryNotifyExtendedInformation), timeout)
+                        .CreateResult(throw_on_error, s => s == NtStatus.STATUS_SUCCESS ? ReadExtendedNotifications(buffer, result.IoStatusBuffer.Result) : new DirectoryChangeNotificationExtended[0]);
                 }
             }
+        }
+
+        /// <summary>
+        /// Get extended change notifications.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The list of changes.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS3)]
+        public NtResult<IEnumerable<DirectoryChangeNotificationExtended>> GetChangeNotificationEx(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, bool throw_on_error)
+        {
+            return GetChangeNotificationEx(completion_filter, watch_subtree, NtWaitTimeout.Infinite, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get change notifications.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="timeout">Timeout to wait.</param>
+        /// <returns>The list of changes.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS3)]
+        public IEnumerable<DirectoryChangeNotificationExtended> GetChangeNotificationEx(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, NtWaitTimeout timeout)
+        {
+            return GetChangeNotificationEx(completion_filter, watch_subtree, timeout, true).Result;
         }
 
         /// <summary>
@@ -4013,9 +4119,9 @@ namespace NtApiDotNet
         /// </summary>
         /// <returns>The list of reparse points.</returns>
         /// <remarks>You'll need to open the reparse database, which is typically \$Extend\$Reparse:$R:$INDEX_ALLOCATION on the volume.</remarks>
-        public IEnumerable<FileReparsePointInformation> QueryReparsePoints()
+        public IEnumerable<NtFileReparsePoint> QueryReparsePoints()
         {
-            return QueryFixedDirectoryEntries<FileReparsePointInformation>(FileInformationClass.FileReparsePointInformation);
+            return QueryFixedDirectoryEntries<FileReparsePointInformation>(FileInformationClass.FileReparsePointInformation).Select(i => new NtFileReparsePoint(this, i)).ToArray();
         }
 
         /// <summary>
@@ -4023,9 +4129,9 @@ namespace NtApiDotNet
         /// </summary>
         /// <returns>The list of object ids.</returns>
         /// <remarks>You need to open the object ID database, which is typically \$Extend\$ObjId:$O:$INDEX_ALLOCATION on the volume.</remarks>
-        public IEnumerable<FileObjectIdInformation> QueryObjectIds()
+        public IEnumerable<NtFileObjectId> QueryObjectIds()
         {
-            return QueryFixedDirectoryEntries<FileObjectIdInformation>(FileInformationClass.FileObjectIdInformation);
+            return QueryFixedDirectoryEntries<FileObjectIdInformation>(FileInformationClass.FileObjectIdInformation).Select(i => new NtFileObjectId(this, i)).ToArray();
         }
 
         /// <summary>
@@ -4185,6 +4291,185 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Query a fixed buffer for a volume.
+        /// </summary>
+        /// <typeparam name="T">The type to query.</typeparam>
+        /// <param name="info_class">The volume information class.</param>
+        /// <returns>The returned type.</returns>
+        public T QueryVolumeFixed<T>(FsInformationClass info_class) where T : new()
+        {
+            return QueryVolumeFixed<T>(info_class, true).Result;
+        }
+
+        /// <summary>
+        /// Query a fixed buffer for a volume.
+        /// </summary>
+        /// <typeparam name="T">The type to query.</typeparam>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The returned type.</returns>
+        public NtResult<T> QueryVolumeFixed<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
+        {
+            using (var buffer = new SafeStructureInOutBuffer<T>())
+            {
+                IoStatus status = new IoStatus();
+                return NtSystemCalls.NtQueryVolumeInformationFile(Handle, status, buffer,
+                    buffer.Length, info_class).CreateResult(throw_on_error, () => buffer.Result);
+            }
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <typeparam name="T">The type to query.</typeparam>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The returned type.</returns>
+        public NtResult<SafeStructureInOutBuffer<T>> QueryVolume<T>(FsInformationClass info_class, bool throw_on_error) where T : new()
+        {
+            int length = 128;
+            while (true)
+            {
+                using (var buffer = new SafeStructureInOutBuffer<T>(length, true))
+                {
+                    IoStatus io_status = new IoStatus();
+                    NtStatus status = QueryVolume(info_class, buffer, false);
+                    if (status.IsSuccess())
+                        return status.CreateResult(throw_on_error, () => buffer.Detach());
+
+                    if ((status != NtStatus.STATUS_BUFFER_OVERFLOW) && (status != NtStatus.STATUS_INFO_LENGTH_MISMATCH))
+                        return status.CreateResultFromError<SafeStructureInOutBuffer<T>>(throw_on_error);
+                }
+                length *= 2;
+            }
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="init_buffer">Initialization buffer.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The returned type.</returns>
+        public NtResult<SafeHGlobalBuffer> QueryVolumeBuffer(FsInformationClass info_class, byte[] init_buffer, bool throw_on_error)
+        {
+            int length = Math.Max(128, init_buffer?.Length ?? 0);
+            while (true)
+            {
+                using (var buffer = new SafeHGlobalBuffer(length))
+                {
+                    if (init_buffer != null)
+                    {
+                        buffer.WriteBytes(0, init_buffer);
+                    }
+                    IoStatus io_status = new IoStatus();
+                    NtStatus status = QueryVolume(info_class, buffer, false);
+                    if (status.IsSuccess())
+                        return status.CreateResult(throw_on_error, () => buffer.Detach());
+
+                    if ((status != NtStatus.STATUS_BUFFER_OVERFLOW) && (status != NtStatus.STATUS_INFO_LENGTH_MISMATCH))
+                        return status.CreateResultFromError<SafeHGlobalBuffer>(throw_on_error);
+                }
+                length *= 2;
+            }
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="init_buffer">Initialization buffer.</param>
+        /// <returns>The returned type.</returns>
+        public SafeHGlobalBuffer QueryVolumeBuffer(FsInformationClass info_class, byte[] init_buffer)
+        {
+            return QueryVolumeBuffer(info_class, init_buffer, true).Result;
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <typeparam name="T">The type to query.</typeparam>
+        /// <param name="info_class">The volume information class.</param>
+        /// <returns>The returned type.</returns>
+        public SafeStructureInOutBuffer<T> QueryVolume<T>(FsInformationClass info_class) where T : new()
+        {
+            return QueryVolume<T>(info_class, true).Result;
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="buffer">The buffer for the query. Can be initialized.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus QueryVolume(FsInformationClass info_class, SafeBuffer buffer, bool throw_on_error)
+        {
+            IoStatus io_status = new IoStatus();
+            return NtSystemCalls.NtQueryVolumeInformationFile(Handle, io_status, buffer, 
+                buffer.GetLength(), info_class).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Query a buffer for a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="buffer">The buffer for the query. Can be initialized.</param>
+        public void QueryVolume(FsInformationClass info_class, SafeBuffer buffer)
+        {
+            QueryVolume(info_class, buffer, true);
+        }
+
+        /// <summary>
+        /// Set a buffer on a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="buffer">The buffer for the set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetVolume(FsInformationClass info_class, SafeBuffer buffer, bool throw_on_error)
+        {
+            IoStatus io_status = new IoStatus();
+            return NtSystemCalls.NtSetVolumeInformationFile(Handle, io_status, buffer,
+                buffer.GetLength(), info_class).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Set a buffer on a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="buffer">The buffer for the set.</param>
+        public void SetVolume(FsInformationClass info_class, SafeBuffer buffer)
+        {
+            SetVolume(info_class, buffer);
+        }
+
+        /// <summary>
+        /// Set a fixed value on a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="value">The fixed value to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetVolumeFixed<T>(FsInformationClass info_class, T value, bool throw_on_error) where T : new()
+        {
+            using (var buffer = value.ToBuffer())
+            {
+                return SetVolume(info_class, buffer, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Set a fixed value on a volume.
+        /// </summary>
+        /// <param name="info_class">The volume information class.</param>
+        /// <param name="value">The fixed value to set.</param>
+        public void SetVolumeFixed<T>(FsInformationClass info_class, T value) where T : new()
+        {
+            SetVolumeFixed(info_class, value, true);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -4300,8 +4585,8 @@ namespace NtApiDotNet
             {
                 if (!_is_directory.HasValue)
                 {
-                    var attr = GetFileAttributes(false).GetResultOrDefault(FileAttributes.None);
-                    _is_directory = attr.HasFlagSet(FileAttributes.Directory);
+                    var info = Query<FileStandardInformation>(FileInformationClass.FileStandardInformation, default, false).GetResultOrDefault();
+                    _is_directory = info.Directory;
                 }
                 return _is_directory.Value;
             }
@@ -4341,39 +4626,20 @@ namespace NtApiDotNet
         public long AllocationSize => Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).AllocationSize.QuadPart;
 
         /// <summary>
+        /// Get the number of links.
+        /// </summary>
+        public int NumberOfLinks => Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).NumberOfLinks;
+
+        /// <summary>
+        /// Get whether delete is pending.
+        /// </summary>
+        public bool DeletePending => Query<FileStandardInformation>(FileInformationClass.FileStandardInformation).DeletePending;
+
+        /// <summary>
         /// Get the Win32 path name for the file.
         /// </summary>
         /// <returns>The path, string.Empty on error.</returns>
-        public string Win32PathName
-        {
-            get
-            {
-                var result = GetWin32PathName(Win32.Win32PathNameFlags.None, false);
-                if (!result.IsSuccess)
-                {
-                    return string.Empty;
-                }
-
-                var ret = result.Result;
-
-                if (ret.StartsWith(@"\\?\"))
-                {
-                    if (ret.StartsWith(@"\\?\GLOBALROOT\", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return ret;
-                    }
-                    else if (ret.StartsWith(@"\\?\UNC\", StringComparison.OrdinalIgnoreCase))
-                    {
-                        return @"\\" + ret.Substring(8);
-                    }
-                    else
-                    {
-                        return ret.Substring(4);
-                    }
-                }
-                return ret;
-            }
-        }
+        public string Win32PathName => GetWin32PathName(Win32PathNameFlags.None, false).Map(Win32Utils.RemoveDevicePrefix).GetResultOrDefault(string.Empty);
 
         /// <summary>
         /// Get the low-level device type of the file.
@@ -4399,7 +4665,7 @@ namespace NtApiDotNet
         {
             get
             {
-                using (var buffer = new SafeStructureInOutBuffer<int>())
+                using (var buffer = new SafeStructureInOutBuffer<short>())
                 {
                     FsControl(NtWellKnownIoControlCodes.FSCTL_GET_COMPRESSION, SafeHGlobalBuffer.Null, buffer);
                     return (CompressionFormat)buffer.Result;
@@ -4407,7 +4673,7 @@ namespace NtApiDotNet
             }
             set
             {
-                using (var buffer = ((int)value).ToBuffer())
+                using (var buffer = ((short)value).ToBuffer())
                 {
                     FsControl(NtWellKnownIoControlCodes.FSCTL_SET_COMPRESSION, buffer, SafeHGlobalBuffer.Null);
                 }
@@ -4566,6 +4832,11 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Is the file compressed.
+        /// </summary>
+        public bool Compressed => FileAttributes.HasFlagSet(FileAttributes.Compressed);
+
+        /// <summary>
         /// Get remote protocol information.
         /// </summary>
         public FileRemoteProtocol RemoteProtocol
@@ -4579,6 +4850,42 @@ namespace NtApiDotNet
                 else
                     info.StructureVersion = 2;
                 return new FileRemoteProtocol(Query(FileInformationClass.FileRemoteProtocolInformation, info));
+            }
+        }
+
+        /// <summary>
+        /// Get the granted access as directory rights.
+        /// </summary>
+        public FileDirectoryAccessRights DirectoryGrantedAccess => GrantedAccessMask.ToSpecificAccess<FileDirectoryAccessRights>();
+
+        /// <summary>
+        /// Get the file system control flags.
+        /// </summary>
+        public FileSystemControlFlags ControlFlags => QueryVolumeFixed<FileFsControlInformation>(FsInformationClass.FileFsControlInformation).FileSystemControlFlags;
+
+        /// <summary>
+        /// Get persist volume flags.
+        /// </summary>
+        public FileFsPersistentVolumeInformationFlags PersistentVolumeFlags
+        {
+            get
+            {
+                FileFsPersistentVolumeInformation vol_info = new FileFsPersistentVolumeInformation()
+                {
+                    Version = 1,
+                    FlagMask = (FileFsPersistentVolumeInformationFlags)uint.MaxValue
+                };
+
+                using (var in_buffer = vol_info.ToBuffer())
+                {
+                    using (var out_buffer = new SafeStructureInOutBuffer<FileFsPersistentVolumeInformation>())
+                    {
+                        int size = FsControl(NtWellKnownIoControlCodes.FSCTL_QUERY_PERSISTENT_VOLUME_STATE, in_buffer, out_buffer);
+                        if (size != out_buffer.Length)
+                            throw new NtException(NtStatus.STATUS_BUFFER_TOO_SMALL);
+                        return out_buffer.Result.VolumeFlags;
+                    }
+                }
             }
         }
 

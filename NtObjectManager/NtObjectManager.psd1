@@ -97,7 +97,9 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Get-NtFileAttribute', 'Set-NtFileAttribute', 'Get-NtFileShareProcess',
           'Add-NtEaBuffer', 'Remove-NtFileEa', 'Get-NtDeviceSetupClass', 'Get-NtDeviceNode',
           'Get-NtDeviceInterfaceClass', 'Get-NtDeviceProperty', 'Get-NtDeviceNodeChild',
-          'Get-NtDeviceInterfaceInstance', 'Get-NtDeviceNodeParent', 'Get-NtDeviceNodeStack'
+          'Get-NtDeviceInterfaceInstance', 'Get-NtDeviceNodeParent', 'Get-NtDeviceNodeStack',
+          'Get-NtFileItem', 'Get-NtFileChange', 'Lock-NtFile', 'Unlock-NtFile', 'Get-NtFileLink',
+          'Get-NtFileDisposition', 'Set-NtFileDisposition'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -142,7 +144,9 @@ CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile
                'Revoke-NtAccessMask', 'Select-NtSecurityDescriptorAce', 'Write-NtAudit',
                'New-AuthZResourceManager', 'New-AuthZContext', 'Get-AuthZGrantedAccess',
                'Add-AuthZSid', 'Remove-AuthZSid', 'Set-NtToken', 'Get-NtTokenDefaultDacl',
-               'Set-NtTokenDefaultDacl', 'Get-NtKeySymbolicLinkTarget', 'New-NtKeySymbolicLink'
+               'Set-NtTokenDefaultDacl', 'Get-NtKeySymbolicLinkTarget', 'New-NtKeySymbolicLink',
+               'Rename-NtFile', 'Get-NtFileVolumeInformation', 'Set-NtFileVolumeInformation',
+               'Send-NtFileControl'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = 'Get-NtEaBuffer', 'Set-NtEaBuffer'

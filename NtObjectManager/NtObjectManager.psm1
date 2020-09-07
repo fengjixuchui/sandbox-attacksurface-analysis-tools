@@ -2557,6 +2557,7 @@ function Get-NtIoControlCode {
         [switch]$All,
         [Parameter(ParameterSetName = "FromName", Mandatory = $true)]
         [string]$Name,
+        [Parameter(ParameterSetName = "FromParts")]
         [Parameter(ParameterSetName = "FromName")]
         [switch]$AsInt
     )
@@ -5959,25 +5960,40 @@ None
 function Set-NtFileEa {
     [CmdletBinding(DefaultParameterSetName = "FromPath")]
     Param(
-        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromPath")]
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromPath")]
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromPathAndName")]
         [string]$Path,
         [Parameter(ParameterSetName = "FromPath")]
+        [Parameter(ParameterSetName = "FromPathAndName")]
         [switch]$Win32Path,
-        [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromFile")]
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromFileAndName")]
         [NtApiDotNet.NtFile]$File,
-        [Parameter(Mandatory = $true, Position = 1)]
-        [NtApiDotNet.EaBuffer]$EaBuffer
+        [Parameter(Mandatory, Position = 1, ParameterSetName = "FromFile")]
+        [Parameter(Mandatory, Position = 1, ParameterSetName = "FromPath")]
+        [NtApiDotNet.EaBuffer]$EaBuffer,
+        [Parameter(Mandatory, Position = 1, ParameterSetName = "FromPathAndName")]
+        [Parameter(Mandatory, Position = 1, ParameterSetName = "FromFileAndName")]
+        [string]$Name,
+        [Parameter(Mandatory, Position = 2, ParameterSetName = "FromPathAndName")]
+        [Parameter(Mandatory, Position = 2, ParameterSetName = "FromFileAndName")]
+        [byte[]]$Byte,
+        [Parameter(Position = 3, ParameterSetName = "FromPathAndName")]
+        [Parameter(Position = 3, ParameterSetName = "FromFileAndName")]
+        [NtApiDotNet.EaBufferEntryFlags]$Flags = 0
     )
 
-    switch ($PsCmdlet.ParameterSetName) {
-        "FromFile" {
-            $File.SetEa($EaBuffer)
+    if ($PSCmdlet.ParameterSetName -eq "FromPathAndName" -or $PSCmdlet.ParameterSetName -eq "FromFileAndName") {
+        $EaBuffer = New-NtEaBuffer
+        Add-NtEaBuffer -EaBuffer $EaBuffer -Name $Name -Byte $Byte -Flags $Flags
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq "FromPath" -or $PSCmdlet.ParameterSetName -eq "FromPathAndName") {
+        Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access WriteEa) {
+            $f.SetEa($EaBuffer)
         }
-        "FromPath" {
-            Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access WriteEa) {
-                $f.SetEa($EaBuffer)
-            }
-        }
+    } elseif ($PSCmdlet.ParameterSetName -eq "FromFile" -or $PSCmdlet.ParameterSetName -eq "FromFileAndName"){
+        $File.SetEa($EaBuffer)
     }
 }
 
@@ -7356,6 +7372,8 @@ The NT type to get information classes for.
 The object to get information classes for.
 .PARAMETER Set
 Specify to get the set information classes which might differ.
+.PARAMETER Volume
+Specify to get the volume information classes.
 .INPUTS
 None
 .OUTPUTS
@@ -7368,18 +7386,26 @@ function Get-NtObjectInformationClass {
         [NtApiDotNet.NtType]$Type,
         [Parameter(Position = 0, Mandatory, ParameterSetName = "FromObject")]
         [NtApiDotNet.NtObject]$Object,
-        [switch]$Set
+        [Parameter(ParameterSetName = "FromObject")]
+        [Parameter(ParameterSetName = "FromType")]
+        [switch]$Set,
+        [Parameter(ParameterSetName = "FromVolume")]
+        [switch]$Volume
     )
 
-    if ($PSCmdlet.ParameterSetName -eq "FromObject") {
-        $Type = $Object.NtType
-    }
+    if ($Volume) {
+        [NtObjectManager.Utils.PSUtils]::GetFsVolumeInfoClass() | Write-Output
+    } else {
+        if ($PSCmdlet.ParameterSetName -eq "FromObject") {
+            $Type = $Object.NtType
+        }
 
-    if ($Set) {
-        $Type.SetInformationClass | Write-Output
-    }
-    else {
-        $Type.QueryInformationClass | Write-Output
+        if ($Set) {
+            $Type.SetInformationClass | Write-Output
+        }
+        else {
+            $Type.QueryInformationClass | Write-Output
+        }
     }
 }
 
@@ -10768,4 +10794,337 @@ function Get-NtDeviceInterfaceInstance {
             [NtApiDotNet.Win32.Device.DeviceUtils]::GetDeviceInterfaceInstance($Instance) | Write-Output
         }
     }
+}
+
+<#
+.SYNOPSIS
+Enumerate file entries for a file.
+.DESCRIPTION
+This cmdlet writes enumerates directory entries from a file.
+.PARAMETER File
+Specify the file directory to enumerate.
+.PARAMETER Pattern
+A file pattern to specify the files to enumerate. e.g. *.txt.
+.PARAMETER FileType
+Specify all files or either files or directories.
+.PARAMETER ReparsePoint
+Enumerate reparse point information.
+.PARAMETER ObjectId
+Enumerate object ID information.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.FileDirectoryEntry[]
+NtApiDotNet.NtFileReparsePoint[]
+NtApiDotNet.NtFileObjectId[]
+.EXAMPLE
+Get-NtFileItem -File $f
+Enumerate all file items.
+.EXAMPLE
+Get-NtFileItem -File $f -Pattern *.txt
+Enumerate all files with a TXT extension.
+.EXAMPLE
+Get-NtFileItem -File $f -FileType FilesOnly
+Enumerate only files.
+.EXAMPLE
+Get-NtFileItem -File $f -FileType DirectoriesOnly
+Enumerate only directories.
+.EXAMPLE
+Get-NtFileItem -File $f -ReparsePoint
+Enumerate reparse points.
+.EXAMPLE
+Get-NtFileItem -File $f -ObjectId
+Enumerate object IDs.
+#>
+function Get-NtFileItem {
+    [CmdletBinding(DefaultParameterSetName = "FromDirectory")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(ParameterSetName="FromDirectory")]
+        [string]$Pattern = "*",
+        [parameter(ParameterSetName="FromDirectory")]
+        [NtApiDotNet.FileTypeMask]$FileType = "All",
+        [parameter(ParameterSetName="FromReparsePoint")]
+        [switch]$ReparsePoint,
+        [parameter(ParameterSetName="FromObjectID")]
+        [switch]$ObjectId
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromDirectory" {
+            $File.QueryDirectoryInfo($Pattern, $FileType) | Write-Output
+        }
+        "FromReparsePoint" {
+            $File.QueryReparsePoints() | Write-Output
+        }
+        "FromObjectID" {
+            $File.QueryObjectIds() | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get change notification events for a file directory.
+.DESCRIPTION
+This cmdlet gets change notification envents for a file directory.
+.PARAMETER File
+Specify the file directory to get change notification events from.
+.PARAMETER Filter
+Specify what types of events to receive.
+.PARAMETER WatchSubtree
+Specify to watch all directories in a subtree.
+.PARAMETER Timeout
+Specify a timeout to wait if the handle is asynchronous.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.DirectoryChangeNotification[]
+.EXAMPLE
+Get-NtFileChange -File $f
+Get all change notifications for the file directory.
+.EXAMPLE
+Get-NtFileChange -File $f -Filter FileName
+Get only filename change notifications for the file directory.
+.EXAMPLE
+Get-NtFileChange -File $f -WatchSubtree
+Get all change notifications for the file directory and its children.
+#>
+function Get-NtFileChange {
+    [CmdletBinding(DefaultParameterSetName = "FromDirectory")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [NtApiDotNet.DirectoryChangeNotifyFilter]$Filter = "All",
+        [switch]$WatchSubtree,
+        [NtApiDotNet.NtWaitTimeout]$Timeout = (Get-NtWaitTimeout -Infinite)
+    )
+
+    $File.GetChangeNotificationFull($Filter, $WatchSubtree, $Timeout) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Lock a file range.
+.DESCRIPTION
+This cmdlet locks a file range in an open file.
+.PARAMETER File
+Specify the file directory to lock.
+.PARAMETER Offset
+The offset into the file to lock.
+.PARAMETER Length
+The length of the locked region. 
+.PARAMETER All
+Specify to lock the entire file.
+.PARAMETER Wait
+Specify to wait for the lock to be available otherwise fail immediately.
+.PARAMETER Exclusive
+Specify to create an exclusive lock.
+.PARAMETER PassThru
+Specify to return a scoped lock which will unlock when disposed.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Utilities.IO.NtFileScopedLock
+.EXAMPLE
+Lock-NtFile -File $f -Offset 0 -Length 256
+Lock the first 256 bytes.
+.EXAMPLE
+Lock-NtFile -File $f -Offset 0 -Length 256 -Wait
+Lock the first 256 bytes and wait if already locked.
+.EXAMPLE
+Lock-NtFile -File $f -All
+Lock the entire file.
+.EXAMPLE
+Lock-NtFile -File $f -All -Exclusive
+Lock the entire file exclusively.
+#>
+function Lock-NtFile {
+    [CmdletBinding(DefaultParameterSetName = "FromOffset")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromOffset")]
+        [int64]$Offset,
+        [parameter(Mandatory, Position = 2, ParameterSetName="FromOffset")]
+        [int64]$Length,
+        [parameter(Mandatory, ParameterSetName="All")]
+        [switch]$All,
+        [switch]$Wait,
+        [switch]$Exclusive,
+        [switch]$PassThru
+    )
+
+    if ($All) {
+        $Offset = 0
+        $Length = $File.Length
+    }
+
+    if ($PassThru) {
+        [NtApiDotNet.Utilities.IO.NtFileScopedLock]::Create($File, $Offset, $Length, !$Wait, $Exclusive) | Write-Output
+    } else {
+        $File.Lock($Offset, $Length, !$Wait, $Exclusive)
+    }
+}
+
+<#
+.SYNOPSIS
+Unlock a file range.
+.DESCRIPTION
+This cmdlet unlocks a file range in an open file.
+.PARAMETER File
+Specify the file directory to unlock.
+.PARAMETER Offset
+The offset into the file to unlock.
+.PARAMETER Length
+The length of the unlocked region. 
+.PARAMETER All
+Specify to unlock the entire file.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Unlock-NtFile -File $f -Offset 0 -Length 256
+Unlock the first 256 bytes.
+.EXAMPLE
+Unlock-NtFile -File $f -All
+Unlock the entire file.
+#>
+function Unlock-NtFile {
+    [CmdletBinding(DefaultParameterSetName = "FromOffset")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromOffset")]
+        [int64]$Offset,
+        [parameter(Mandatory, Position = 2, ParameterSetName="FromOffset")]
+        [int64]$Length,
+        [parameter(Mandatory, ParameterSetName="All")]
+        [switch]$All
+    )
+
+    if ($All) {
+        $Offset = 0
+        $Length = $File.Length
+    }
+
+    $File.Unlock($Offset, $Length)
+}
+
+<#
+.SYNOPSIS
+Get linknames to a file.
+.DESCRIPTION
+This cmdlet gets a list of link names to an open file.
+.PARAMETER File
+Specify the file to query.
+.PARAMETER Win32Path
+Specify to return Win32 paths.
+.INPUTS
+None
+.OUTPUTS
+string[]
+.EXAMPLE
+Get-NtFileLink -File $f
+Get all links to the file.
+.EXAMPLE
+Get-NtFileLink -File $f -Win32Path
+Get all links to the file as win32 paths.
+#>
+function Get-NtFileLink {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [switch]$Win32Path
+    )
+
+    $ret = $File.GetHardLinks()
+    if ($Win32Path) {
+        $ret | Select-Object -ExpandProperty Win32Path | Write-Output
+    } else {
+        $ret | Select-Object -ExpandProperty FullPath | Write-Output
+    }
+}
+
+
+<#
+.SYNOPSIS
+Sets the disposition on a file.
+.DESCRIPTION
+This cmdlet sets the disposition on a file such as deleting the file.
+.PARAMETER File
+Specify the file to set.
+.PARAMETER Delete
+Specify to mark the file as delete on close.
+.PARAMETER PosixSemantics
+Specify to mark the file as delete on close with POSIX semantics.
+.PARAMETER Flags
+Specify disposition flags.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtFileDisposition -File $f -Delete
+Set the file to delete on close.
+.EXAMPLE
+Set-NtFileDisposition -File $f -Delete:$false
+Clear the file delete on close flag.
+.EXAMPLE
+Set-NtFileDisposition -File $f -Delete -PosixSemantics
+Set the file to delete on close with POSIX semantics.
+.EXAMPLE
+Set-NtFileDisposition -File $f -Flags Delete, IgnoreReadOnlyAttribute
+Set the file delete on close flag and ignore the readonly attribute.
+#>
+function Set-NtFileDisposition {
+    [CmdletBinding(DefaultParameterSetName="FromDelete")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, ParameterSetName="FromDelete")]
+        [switch]$Delete,
+        [parameter(ParameterSetName="FromDelete")]
+        [switch]$PosixSemantics,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromFlags")]
+        [NtApiDotNet.FileDispositionInformationExFlags]$Flags
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromDelete" {
+            if ($PosixSemantics -and $Delete) {
+                $File.SetDispositionEx("Delete, PosixSemantics")
+            } else {
+                $File.SetDisposition($Delete)
+            }
+        }
+        "FromFlags" {
+            $File.SetDispositionEx($Flags)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Gets whether the file is being deleted.
+.DESCRIPTION
+This cmdlet gets whether the file is going to be deleted when closed.
+.PARAMETER File
+Specify the file to query.
+.INPUTS
+None
+.OUTPUTS
+bool
+.EXAMPLE
+Get-NtFileDisposition -File $f
+Get the file to delete on close flag.
+#>
+function Get-NtFileDisposition {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File
+    )
+    $File.DeletePending | Write-Output
 }
