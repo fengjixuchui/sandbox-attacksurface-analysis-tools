@@ -5104,10 +5104,12 @@ The file to oplock on.
 The oplock level to start.
 .PARAMETER LeaseLevel
 The oplock lease level to start.
+.PARAMETER Async
+Specify to return an asynchronous task which can be waited on with Wait-AsyncTaskResult.
 .INPUTS
 None
 .OUTPUTS
-None or NtApiDotNet.RequestOplockOutputBuffer if using LeaseLevel.
+None or NtApiDotNet.RequestOplockOutputBuffer if using LeaseLevel. If Async then a Task.
 .EXAMPLE
 Start-NtFileOplock $file -Exclusive
 Start an exclusive oplock.
@@ -5128,20 +5130,35 @@ function Start-NtFileOplock {
         [parameter(Mandatory, Position = 1, ParameterSetName = "OplockLevel")]
         [NtApiDotNet.OplockRequestLevel]$Level,
         [parameter(Mandatory, ParameterSetName = "OplockLease")]
-        [NtApiDotNet.OplockLevelCache]$LeaseLevel
+        [NtApiDotNet.OplockLevelCache]$LeaseLevel,
+        [switch]$Async
     )
 
-    switch ($PSCmdlet.ParameterSetName) {
+    $result = switch ($PSCmdlet.ParameterSetName) {
         "OplockExclusive" {
-            $File.OplockExclusive()
+            if ($Async) {
+                $File.OplockExclusiveAsync()
+            } else {
+                $File.OplockExclusive()
+            }
         }
         "OplockLevel" {
-            $File.RequestOplock($Level)
+            if ($Async) {
+                $File.RequestOplockAsync($Level)
+            } else {
+                $File.RequestOplock($Level)
+            }
         }
         "OplockLease" {
-            $File.RequestOplockLease($LeaseLevel)
+            if ($Async) {
+                $File.RequestOplockLeaseAsync($LeaseLevel)
+            } else {
+                $File.RequestOplockLease($LeaseLevel)
+            }
         }
     }
+
+    $result | Write-Output
 }
 
 <#
@@ -10811,10 +10828,17 @@ Specify all files or either files or directories.
 Enumerate reparse point information.
 .PARAMETER ObjectId
 Enumerate object ID information.
+.PARAMETER IncludePlaceholder
+Include placeholder directories in output.
+.PARAMETER FileId
+Include file ID in the entries.
+.PARAMETER ShortName
+Include the short name in the output.
 .INPUTS
 None
 .OUTPUTS
 NtApiDotNet.FileDirectoryEntry[]
+NtApiDotNet.FileIdDirectoryEntry[]
 NtApiDotNet.NtFileReparsePoint[]
 NtApiDotNet.NtFileObjectId[]
 .EXAMPLE
@@ -10835,16 +10859,28 @@ Enumerate reparse points.
 .EXAMPLE
 Get-NtFileItem -File $f -ObjectId
 Enumerate object IDs.
+.EXAMPLE
+Get-NtFileItem -File $f -FileId
+Enumerate files with file ID.
+.EXAMPLE
+Get-NtFileItem -File $f -ShortName
+Enumerate files with short name.
 #>
 function Get-NtFileItem {
-    [CmdletBinding(DefaultParameterSetName = "FromDirectory")]
+    [CmdletBinding(DefaultParameterSetName = "Default")]
     Param(
         [parameter(Mandatory, Position = 0)]
         [NtApiDotNet.NtFile]$File,
-        [parameter(ParameterSetName="FromDirectory")]
+        [parameter(ParameterSetName="Default")]
         [string]$Pattern = "*",
-        [parameter(ParameterSetName="FromDirectory")]
+        [parameter(ParameterSetName="Default")]
         [NtApiDotNet.FileTypeMask]$FileType = "All",
+        [parameter(ParameterSetName="Default")]
+        [switch]$FileId,
+        [parameter(ParameterSetName="Default")]
+        [switch]$ShortName,
+        [parameter(ParameterSetName="Default")]
+        [switch]$IncludePlaceholder,
         [parameter(ParameterSetName="FromReparsePoint")]
         [switch]$ReparsePoint,
         [parameter(ParameterSetName="FromObjectID")]
@@ -10852,8 +10888,20 @@ function Get-NtFileItem {
     )
 
     switch($PSCmdlet.ParameterSetName) {
-        "FromDirectory" {
-            $File.QueryDirectoryInfo($Pattern, $FileType) | Write-Output
+        "Default" {
+            $flags = "Default"
+            if ($FileId -and $ShortName) {
+                $flags = "FileId, ShortName"
+            } elseif($FileId) {
+                $flags = "FileId"
+            } elseif($ShortName) {
+                $flags = "ShortName"
+            }
+
+            if ($IncludePlaceholder) {
+                $flags += ", Placeholders"
+            }
+            $File.QueryDirectoryInfo($Pattern, $FileType, $flags) | Write-Output
         }
         "FromReparsePoint" {
             $File.QueryReparsePoints() | Write-Output
@@ -10875,8 +10923,11 @@ Specify the file directory to get change notification events from.
 Specify what types of events to receive.
 .PARAMETER WatchSubtree
 Specify to watch all directories in a subtree.
-.PARAMETER Timeout
-Specify a timeout to wait if the handle is asynchronous.
+.PARAMETER TimeoutSec
+Specify a timeout in seconds to wait if the handle is asynchronous.
+.PARAMETER Async
+Specify to return an asynchronous task instead of waiting. You can use Wait-AsyncTaskResult
+to get the result. The handle must be asynchronous.
 .INPUTS
 None
 .OUTPUTS
@@ -10890,18 +10941,32 @@ Get only filename change notifications for the file directory.
 .EXAMPLE
 Get-NtFileChange -File $f -WatchSubtree
 Get all change notifications for the file directory and its children.
+.EXAMPLE
+Get-NtFileChange -File $f -TimeoutSec 10
+Get all change notifications for the file directory, waiting for 10 seconds for a result.
 #>
 function Get-NtFileChange {
-    [CmdletBinding(DefaultParameterSetName = "FromDirectory")]
+    [CmdletBinding(DefaultParameterSetName = "Sync")]
     Param(
         [parameter(Mandatory, Position = 0)]
         [NtApiDotNet.NtFile]$File,
         [NtApiDotNet.DirectoryChangeNotifyFilter]$Filter = "All",
         [switch]$WatchSubtree,
-        [NtApiDotNet.NtWaitTimeout]$Timeout = (Get-NtWaitTimeout -Infinite)
+        [parameter(ParameterSetName="Sync")]
+        [int]$TimeoutSec = -1,
+        [parameter(Mandatory, ParameterSetName="Async")]
+        [switch]$Async
     )
 
-    $File.GetChangeNotificationFull($Filter, $WatchSubtree, $Timeout) | Write-Output
+    if ($Async) {
+        $File.GetChangeNotificationFullAsync($Filter, $WatchSubtree) | Write-Output
+    } else {
+        $timeout = Get-NtWaitTimeout -Infinite
+        if ($TimeoutSec -ge 0) {
+            $timeout = Get-NtWaitTimeout -Second $TimeoutSec
+        }
+        $File.GetChangeNotificationFull($Filter, $WatchSubtree, $timeout) | Write-Output
+    }
 }
 
 <#
@@ -11127,4 +11192,67 @@ function Get-NtFileDisposition {
         [NtApiDotNet.NtFile]$File
     )
     $File.DeletePending | Write-Output
+}
+
+<#
+.SYNOPSIS
+Waits on an async task and gets the result.
+.DESCRIPTION
+This cmdlet waits on a .net asynchronous task and returns any result.
+.PARAMETER Task
+Specify the asynchronous task to wait on.
+.PARAMETER TimeoutSec
+Specify the timeout in seconds to wait for.
+.INPUTS
+None
+.OUTPUTS
+object
+.EXAMPLE
+Wait-AsyncTaskResult -Task $task
+Wait on the task and result.
+.EXAMPLE
+Wait-AsyncTaskResult -Task $task -TimeoutSec 10
+Wait on the task and result for up to 10 seconds.
+#>
+function Wait-AsyncTaskResult {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [System.Threading.Tasks.Task]$Task,
+        [int]$TimeoutSec = [int]::MaxValue
+    )
+
+    while (-not $Task.Wait(1000)) {
+        $TimeoutSec--
+        if ($TimeoutSec -le 0) {
+            return
+        }
+    }
+
+    $Task.GetAwaiter().GetResult() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Generate a 8dot3 name for a full name.
+.DESCRIPTION
+This cmdlet generates a 8dot3 filename from a full name.
+.PARAMETER Name
+The name to generate from.
+.PARAMETER ExtendedCharacters
+Allow extended characters.
+.INPUTS
+None
+.OUTPUTS
+string generated name.
+.EXAMPLE
+Get-NtFile8dot3Path 0123456789.config
+Generate a 8dot3 name from a full name.
+#>
+function Get-NtFile8dot3Name {
+    Param(
+        [parameter(Mandatory = $true, Position = 0)]
+        [string]$Name,
+        [switch]$ExtendedCharacters
+    )
+    [NtApiDotNet.NtFileUtils]::Generate8dot3Name($Name, $ExtendedCharacters) | Write-Output
 }

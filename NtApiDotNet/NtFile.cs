@@ -37,6 +37,7 @@ namespace NtApiDotNet
         {
             _cts = new CancellationTokenSource();
             OpenResult = io_status != null ? (FileOpenResult)io_status.Information.ToInt32() : FileOpenResult.Opened;
+            _sync_mode = new Lazy<bool>(() => Mode.HasFlagSet(FileOpenOptions.SynchronousIoAlert | FileOpenOptions.SynchronousIoNonAlert));
         }
 
         internal NtFile(SafeKernelObjectHandle handle)
@@ -65,6 +66,7 @@ namespace NtApiDotNet
         // Cancellation source for stopping pending IO on close.
         private CancellationTokenSource _cts;
         private bool? _is_directory;
+        private readonly Lazy<bool> _sync_mode;
 
         private const int ChangeNotificationBufferSize = 64 * 1024;
 
@@ -120,6 +122,7 @@ namespace NtApiDotNet
                         SafeBuffer output_buffer, CancellationToken token,
                         bool throw_on_error)
         {
+            CheckForSyncMode();
             using (var linked_cts = CancellationTokenSource.CreateLinkedTokenSource(token, _cts.Token))
             {
                 using (NtAsyncResult result = new NtAsyncResult(this))
@@ -152,12 +155,9 @@ namespace NtApiDotNet
 
         private NtResult<int> IoControlGeneric(IoControlFunction func, NtIoControlCode control_code, SafeBuffer input_buffer, SafeBuffer output_buffer, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(func(Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
+            return RunFileCallSync(r => func(Handle, r.EventHandle, IntPtr.Zero, IntPtr.Zero, r.IoStatusBuffer,
                     control_code.ToInt32(), GetSafePointer(input_buffer), GetSafeLength(input_buffer), GetSafePointer(output_buffer),
-                    GetSafeLength(output_buffer))).CreateResult(throw_on_error, () => result.Information32);
-            }
+                    GetSafeLength(output_buffer)), throw_on_error).Map(s => s.Information32);
         }
 
         private NtResult<byte[]> IoControlGeneric(IoControlFunction func, NtIoControlCode control_code, byte[] input_buffer, int max_output, bool throw_on_error)
@@ -208,8 +208,16 @@ namespace NtApiDotNet
             }
         }
 
+        private void CheckForSyncMode()
+        {
+            if (_sync_mode.Value)
+                throw new ArgumentException("File was opened synchronously. Can't perform asynchronous operations.");
+        }
+
         private async Task<NtResult<IoStatus>> RunFileCallAsync(Func<NtAsyncResult, NtStatus> func, CancellationToken token, bool throw_on_error)
         {
+            CheckForSyncMode();
+
             using (var linked_cts = CancellationTokenSource.CreateLinkedTokenSource(token, _cts.Token))
             {
                 using (NtAsyncResult result = new NtAsyncResult(this))
@@ -223,6 +231,22 @@ namespace NtApiDotNet
                     return status.CreateResult(throw_on_error, () => result.Result);
                 }
             }
+        }
+
+        private NtResult<IoStatus> RunFileCallSync(Func<NtAsyncResult, NtStatus> func, NtWaitTimeout timeout, bool throw_on_error)
+        {
+            if (timeout?.Timeout != null)
+                CheckForSyncMode();
+            using (NtAsyncResult result = new NtAsyncResult(this))
+            {
+                return result.CompleteCall(func(result), timeout)
+                    .CreateResult(throw_on_error, () => result.IoStatusBuffer.Result);
+            }
+        }
+
+        private NtResult<IoStatus> RunFileCallSync(Func<NtAsyncResult, NtStatus> func, bool throw_on_error)
+        {
+            return RunFileCallSync(func, NtWaitTimeout.Infinite, throw_on_error);
         }
 
         private bool VisitFileEntry(string filename, bool directory, Func<NtFile, bool> visitor, FileAccessRights desired_access,
@@ -407,6 +431,70 @@ namespace NtApiDotNet
                         result.Reset();
                         status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero,
                             result.IoStatusBuffer, buffer, buffer.Length, info_class, true, null, false));
+                    }
+
+                    if (status != NtStatus.STATUS_NO_MORE_FILES && status != NtStatus.STATUS_NO_SUCH_FILE)
+                    {
+                        status.ToNtException();
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<U> QueryDirectoryInfo<T, U>(FileInformationClass info_class, string file_mask, FileTypeMask type_mask, bool include_placeholders) where T : struct, IFileDirectoryInformation<T, U> where U : FileDirectoryEntry
+        {
+            UnicodeString mask = new UnicodeString(string.IsNullOrEmpty(file_mask) ? "*" : file_mask);
+            // 32k seems to be a reasonable size, too big and some volumes will fail with STATUS_INVALID_PARAMETER.
+            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(32 * 1024))
+            {
+                using (NtAsyncResult result = new NtAsyncResult(this))
+                {
+                    NtStatus status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle,
+                        IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer, buffer, buffer.Length,
+                        info_class, false, mask, true));
+
+                    while (status.IsSuccess())
+                    {
+                        var dir_buffer = buffer.GetStructAtOffset<T>(0);
+                        do
+                        {
+                            var dir_info = dir_buffer.Result;
+                            bool valid_entry = false;
+                            switch (type_mask)
+                            {
+                                case FileTypeMask.All:
+                                    valid_entry = true;
+                                    break;
+                                case FileTypeMask.FilesOnly:
+                                    valid_entry = !dir_info.GetAttributes().HasFlagSet(FileAttributes.Directory);
+                                    break;
+                                case FileTypeMask.DirectoriesOnly:
+                                    valid_entry = dir_info.GetAttributes().HasFlagSet(FileAttributes.Directory);
+                                    break;
+                            }
+
+                            if (valid_entry)
+                            {
+                                var entry = dir_info.ToEntry(dir_buffer);
+                                if (include_placeholders || (entry.FileName != "." && entry.FileName != ".."))
+                                {
+                                    yield return entry;
+                                }
+                            }
+
+                            int nextofs = dir_info.GetNextOffset();
+
+                            if (nextofs == 0)
+                            {
+                                break;
+                            }
+                            dir_buffer = dir_buffer.GetStructAtOffset<T>(nextofs);
+                        }
+                        while (true);
+
+                        result.Reset();
+                        status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero,
+                            result.IoStatusBuffer, buffer, buffer.Length, info_class, false, mask, false));
                     }
 
                     if (status != NtStatus.STATUS_NO_MORE_FILES && status != NtStatus.STATUS_NO_SUCH_FILE)
@@ -2098,7 +2186,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Query a directory for files.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>The list of directory entries.</returns>
         public IEnumerable<FileDirectoryEntry> QueryDirectoryInfo()
         {
             return QueryDirectoryInfo(null, FileTypeMask.All);
@@ -2109,69 +2197,54 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="file_mask">A file name mask (such as *.txt). Can be null.</param>
         /// <param name="type_mask">Indicate what entries to return.</param>
-        /// <returns></returns>
+        /// <param name="include_flags">Specify what additional data to include in the directory entries.</param>
+        /// <returns>The list of directory entries. You might need to cast the directories to the appropriate types if using include flags.</returns>
+        public IEnumerable<FileDirectoryEntry> QueryDirectoryInfo(string file_mask, FileTypeMask type_mask, DirectoryEntryIncludeFlags include_flags)
+        {
+            bool placeholders = include_flags.HasFlagSet(DirectoryEntryIncludeFlags.Placeholders);
+            include_flags &= ~DirectoryEntryIncludeFlags.Placeholders;
+
+            switch (include_flags)
+            {
+                case DirectoryEntryIncludeFlags.Default:
+                    return QueryDirectoryInfo<FileDirectoryInformation, FileDirectoryEntry>(FileInformationClass.FileDirectoryInformation,
+                    file_mask, type_mask, placeholders);
+                case DirectoryEntryIncludeFlags.FileId:
+                    return QueryDirectoryInfo<FileIdFullDirectoryInformation, FileIdDirectoryEntry>(FileInformationClass.FileIdFullDirectoryInformation,
+                        file_mask, type_mask, placeholders);
+                case DirectoryEntryIncludeFlags.ShortName:
+                    return QueryDirectoryInfo<FileBothDirectoryInformation, FileBothDirectoryEntry>(FileInformationClass.FileBothDirectoryInformation,
+                        file_mask, type_mask, placeholders);
+                case DirectoryEntryIncludeFlags.FileId | DirectoryEntryIncludeFlags.ShortName:
+                    return QueryDirectoryInfo<FileIdBothDirectoryInformation, FileIdBothDirectoryEntry>(FileInformationClass.FileIdBothDirectoryInformation,
+                        file_mask, type_mask, placeholders);
+                default:
+                    throw new ArgumentException("Invalid include flags", nameof(include_flags));
+            }
+        }
+
+        /// <summary>
+        /// Query a directory for files.
+        /// </summary>
+        /// <param name="file_mask">A file name mask (such as *.txt). Can be null.</param>
+        /// <param name="type_mask">Indicate what entries to return.</param>
+        /// <returns>The list of directory entries.</returns>
         public IEnumerable<FileDirectoryEntry> QueryDirectoryInfo(string file_mask, FileTypeMask type_mask)
         {
-            UnicodeString mask = new UnicodeString(string.IsNullOrEmpty(file_mask) ? "*" : file_mask);
-            // 32k seems to be a reasonable size, too big and some volumes will fail with STATUS_INVALID_PARAMETER.
-            using (SafeHGlobalBuffer buffer = new SafeHGlobalBuffer(32 * 1024))
-            {
-                using (NtAsyncResult result = new NtAsyncResult(this))
-                {
-                    NtStatus status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle,
-                        IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer, buffer, buffer.Length,
-                        FileInformationClass.FileDirectoryInformation, false, mask, true));
+            return QueryDirectoryInfo(file_mask, type_mask, DirectoryEntryIncludeFlags.Default);
+        }
 
-                    while (status.IsSuccess())
-                    {
-                        var dir_buffer = buffer.GetStructAtOffset<FileDirectoryInformation>(0);
-                        do
-                        {
-                            FileDirectoryInformation dir_info = dir_buffer.Result;
-                            bool valid_entry = false;
-                            switch (type_mask)
-                            {
-                                case FileTypeMask.All:
-                                    valid_entry = true;
-                                    break;
-                                case FileTypeMask.FilesOnly:
-                                    valid_entry = (dir_info.FileAttributes & FileAttributes.Directory) == 0;
-                                    break;
-                                case FileTypeMask.DirectoriesOnly:
-                                    valid_entry = (dir_info.FileAttributes & FileAttributes.Directory) == FileAttributes.Directory;
-                                    break;
-                            }
-
-                            string file_name = dir_buffer.Data.ReadUnicodeString(dir_info.FileNameLength / 2);
-                            if (file_name == "." || file_name == "..")
-                            {
-                                valid_entry = false;
-                            }
-
-                            if (valid_entry)
-                            {
-                                yield return new FileDirectoryEntry(dir_info, dir_buffer.Data.ReadUnicodeString(dir_info.FileNameLength / 2));
-                            }
-
-                            if (dir_info.NextEntryOffset == 0)
-                            {
-                                break;
-                            }
-                            dir_buffer = dir_buffer.GetStructAtOffset<FileDirectoryInformation>(dir_info.NextEntryOffset);
-                        }
-                        while (true);
-
-                        result.Reset();
-                        status = result.CompleteCall(NtSystemCalls.NtQueryDirectoryFile(Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero,
-                            result.IoStatusBuffer, buffer, buffer.Length, FileInformationClass.FileDirectoryInformation, false, mask, false));
-                    }
-
-                    if (status != NtStatus.STATUS_NO_MORE_FILES && status != NtStatus.STATUS_NO_SUCH_FILE)
-                    {
-                        status.ToNtException();
-                    }
-                }
-            }
+        /// <summary>
+        /// Query a directory for files with file ID.
+        /// </summary>
+        /// <param name="file_mask">A file name mask (such as *.txt). Can be null.</param>
+        /// <param name="type_mask">Indicate what entries to return.</param>
+        /// <param name="with_placeholders">Return placeholder parent and current directory entries.</param>
+        /// <returns>The list of directory entries.</returns>
+        public IEnumerable<FileIdDirectoryEntry> QueryFileIdDirectoryInfo(string file_mask, FileTypeMask type_mask, bool with_placeholders)
+        {
+            return QueryDirectoryInfo<FileIdFullDirectoryInformation, FileIdDirectoryEntry>(FileInformationClass.FileDirectoryInformation,
+                file_mask, type_mask, with_placeholders);
         }
 
         /// <summary>
@@ -2183,12 +2256,10 @@ namespace NtApiDotNet
         /// <returns>The length of bytes read into the buffer.</returns>
         public NtResult<int> Read(SafeBuffer buffer, long? position, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(NtSystemCalls.NtReadFile(Handle, result.EventHandle, IntPtr.Zero,
-                    IntPtr.Zero, result.IoStatusBuffer, buffer, buffer.GetLength(), position.ToLargeInteger(), IntPtr.Zero))
-                    .CreateResult(throw_on_error, () => result.Information32);
-            }
+            return RunFileCallSync(r => NtSystemCalls.NtReadFile(Handle, r.EventHandle, IntPtr.Zero,
+                    IntPtr.Zero, r.IoStatusBuffer, buffer, 
+                    buffer.GetLength(), position.ToLargeInteger(), IntPtr.Zero), throw_on_error)
+                    .Map(r => r.Information32);
         }
 
         /// <summary>
@@ -2250,12 +2321,9 @@ namespace NtApiDotNet
         {
             FileSegmentElement[] segments = PageListToSegments(pages);
 
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(NtSystemCalls.NtReadFileScatter(Handle, result.EventHandle, IntPtr.Zero,
-                    IntPtr.Zero, result.IoStatusBuffer, segments, length, new LargeInteger(position), IntPtr.Zero))
-                    .CreateResult(throw_on_error, () => result.Information32);
-            }
+            return RunFileCallSync(r => NtSystemCalls.NtReadFileScatter(Handle, r.EventHandle, IntPtr.Zero,
+                    IntPtr.Zero, r.IoStatusBuffer, segments, length, new LargeInteger(position), IntPtr.Zero),
+                    throw_on_error).Map(s => s.Information32);
         }
 
         /// <summary>
@@ -2469,12 +2537,9 @@ namespace NtApiDotNet
         /// <returns>The number of bytes written.</returns>
         public NtResult<int> Write(SafeBuffer data, long? position, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(NtSystemCalls.NtWriteFile(Handle, result.EventHandle, IntPtr.Zero,
-                    IntPtr.Zero, result.IoStatusBuffer, data, data.GetLength(), position.ToLargeInteger(), IntPtr.Zero))
-                    .CreateResult(throw_on_error, () => result.Information32);
-            }
+            return RunFileCallSync(r => NtSystemCalls.NtWriteFile(Handle, r.EventHandle, IntPtr.Zero,
+                    IntPtr.Zero, r.IoStatusBuffer, data, data.GetLength(), position.ToLargeInteger(), IntPtr.Zero),
+                    throw_on_error).Map(s => s.Information32);
         }
 
         /// <summary>
@@ -2535,12 +2600,9 @@ namespace NtApiDotNet
         public NtResult<int> WriteGather(IEnumerable<long> pages, int length, long position, bool throw_on_error)
         {
             var segments = PageListToSegments(pages);
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(NtSystemCalls.NtWriteFileGather(Handle, result.EventHandle, IntPtr.Zero,
-                    IntPtr.Zero, result.IoStatusBuffer, segments, length, new LargeInteger(position), IntPtr.Zero))
-                    .CreateResult(throw_on_error, () => result.Information32);
-            }
+            return RunFileCallSync(r => NtSystemCalls.NtWriteFileGather(Handle, r.EventHandle, IntPtr.Zero,
+                    IntPtr.Zero, r.IoStatusBuffer, segments, length, new LargeInteger(position), IntPtr.Zero),
+                    throw_on_error).Map(s => s.Information32);
         }
 
         /// <summary>
@@ -2622,12 +2684,9 @@ namespace NtApiDotNet
         /// <returns>The NT status code.</returns>
         public NtStatus Lock(long offset, long size, bool fail_immediately, bool exclusive, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
-            {
-                return result.CompleteCall(NtSystemCalls.NtLockFile(Handle, result.EventHandle, IntPtr.Zero,
-                    IntPtr.Zero, result.IoStatusBuffer, new LargeInteger(offset),
-                    new LargeInteger(size), 0, fail_immediately, exclusive)).ToNtException(throw_on_error);
-            }
+            return RunFileCallSync(r => NtSystemCalls.NtLockFile(Handle, r.EventHandle, IntPtr.Zero,
+                    IntPtr.Zero, r.IoStatusBuffer, new LargeInteger(offset),
+                    new LargeInteger(size), 0, fail_immediately, exclusive), throw_on_error).Status;
         }
 
         /// <summary>
@@ -3730,6 +3789,51 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get full change notifications asynchronously. Will pick ex version if available and revert to old format if not.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The list of changes.</returns>
+        public Task<NtResult<IEnumerable<DirectoryChangeNotification>>> GetChangeNotificationFullAsync(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, CancellationToken token, bool throw_on_error)
+        {
+            if (NtObjectUtils.SupportedVersion >= SupportedVersion.Windows10_RS3)
+            {
+                return GetChangeNotificationExAsync(completion_filter, watch_subtree, token, 
+                    throw_on_error).MapAsync(s => s.Cast<DirectoryChangeNotification>());
+            }
+            return GetChangeNotificationAsync(completion_filter, watch_subtree, token, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get full change notifications asynchronously. Will pick ex version if available and revert to old format if not.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <param name="token">Cancellation token.</param>
+        /// <returns>The list of changes.</returns>
+        public async Task<IEnumerable<DirectoryChangeNotification>> GetChangeNotificationFullAsync(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, CancellationToken token)
+        {
+            var result = await GetChangeNotificationFullAsync(completion_filter, watch_subtree, token, true);
+            return result.Result;
+        }
+
+        /// <summary>
+        /// Get full change notifications asynchronously. Will pick ex version if available and revert to old format if not.
+        /// </summary>
+        /// <param name="completion_filter">The filter of events to watch for.</param>
+        /// <param name="watch_subtree">True to watch all sub directories.</param>
+        /// <returns>The list of changes.</returns>
+        public Task<IEnumerable<DirectoryChangeNotification>> GetChangeNotificationFullAsync(
+            DirectoryChangeNotifyFilter completion_filter, bool watch_subtree)
+        {
+            return GetChangeNotificationFullAsync(completion_filter, watch_subtree, CancellationToken.None);
+        }
+
+        /// <summary>
         /// Get change notifications.
         /// </summary>
         /// <param name="completion_filter">The filter of events to watch for.</param>
@@ -3741,16 +3845,12 @@ namespace NtApiDotNet
             DirectoryChangeNotifyFilter completion_filter, bool watch_subtree,
             NtWaitTimeout timeout, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
+            using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
             {
-                using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
-                {
-                    return result.CompleteCall(NtSystemCalls.NtNotifyChangeDirectoryFile(
-                        Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
-                        buffer, buffer.Length, completion_filter, watch_subtree), timeout)
-                        .CreateResult(throw_on_error,
-                        s => s == NtStatus.STATUS_SUCCESS ? ReadNotifications(buffer, result.IoStatusBuffer.Result) : new DirectoryChangeNotification[0]);
-                }
+                return RunFileCallSync(r => NtSystemCalls.NtNotifyChangeDirectoryFile(
+                        Handle, r.EventHandle, IntPtr.Zero, IntPtr.Zero, r.IoStatusBuffer,
+                        buffer, buffer.Length, completion_filter, watch_subtree), timeout, throw_on_error)
+                    .Map((t, s) => t == NtStatus.STATUS_SUCCESS ? ReadNotifications(buffer, s) : new DirectoryChangeNotification[0]);
             }
         }
 
@@ -3864,16 +3964,13 @@ namespace NtApiDotNet
         public NtResult<IEnumerable<DirectoryChangeNotificationExtended>> GetChangeNotificationEx(
             DirectoryChangeNotifyFilter completion_filter, bool watch_subtree, NtWaitTimeout timeout, bool throw_on_error)
         {
-            using (NtAsyncResult result = new NtAsyncResult(this))
+            using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
             {
-                using (var buffer = new SafeHGlobalBuffer(ChangeNotificationBufferSize))
-                {
-                    return result.CompleteCall(NtSystemCalls.NtNotifyChangeDirectoryFileEx(
-                        Handle, result.EventHandle, IntPtr.Zero, IntPtr.Zero, result.IoStatusBuffer,
-                        buffer, buffer.Length, completion_filter, watch_subtree, 
-                        DirectoryNotifyInformationClass.DirectoryNotifyExtendedInformation), timeout)
-                        .CreateResult(throw_on_error, s => s == NtStatus.STATUS_SUCCESS ? ReadExtendedNotifications(buffer, result.IoStatusBuffer.Result) : new DirectoryChangeNotificationExtended[0]);
-                }
+                return RunFileCallSync(r => NtSystemCalls.NtNotifyChangeDirectoryFileEx(
+                        Handle, r.EventHandle, IntPtr.Zero, IntPtr.Zero, r.IoStatusBuffer,
+                        buffer, buffer.Length, completion_filter, watch_subtree,
+                        DirectoryNotifyInformationClass.DirectoryNotifyExtendedInformation), timeout, throw_on_error)
+                    .Map(s => s.Status == NtStatus.STATUS_SUCCESS ? ReadExtendedNotifications(buffer, s) : new DirectoryChangeNotificationExtended[0]);
             }
         }
 
@@ -3975,7 +4072,7 @@ namespace NtApiDotNet
         /// <param name="watch_subtree">True to watch all sub directories.</param>
         /// <returns>The list of changes.</returns>
         [SupportedVersion(SupportedVersion.Windows10_RS3)]
-        public Task<IEnumerable<DirectoryChangeNotificationExtended>> GetChangeNotificationAsyncEx(
+        public Task<IEnumerable<DirectoryChangeNotificationExtended>> GetChangeNotificationExAsync(
             DirectoryChangeNotifyFilter completion_filter, bool watch_subtree)
         {
             return GetChangeNotificationExAsync(completion_filter, watch_subtree, CancellationToken.None);
@@ -4767,11 +4864,26 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the associated short filename
         /// </summary>
+        [Obsolete("Use ShortName")]
         public string FileShortName
+        {
+            get => ShortName;
+            set => ShortName = value;
+        }
+
+        /// <summary>
+        /// Get the associated short filename
+        /// </summary>
+        public string ShortName
         {
             get => TryGetName(FileInformationClass.FileAlternateNameInformation);
             set => SetName(FileInformationClass.FileShortNameInformation, value);
         }
+
+        /// <summary>
+        /// Get the normalized name.
+        /// </summary>
+        public string NormalizedName => Path.GetFileName(NormalizedFileName);
 
         /// <summary>
         /// Get the name of the file.
