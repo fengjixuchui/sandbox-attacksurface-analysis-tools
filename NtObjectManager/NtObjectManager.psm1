@@ -954,13 +954,17 @@ Specify the protection level when creating a protected process.
 .PARAMETER DebugObject
 Specify a debug object to run the process under. You need to also specify DebugProcess or DebugOnlyThisProcess flags as well.
 .PARAMETER NoTokenFallback
-Specify to not fallback to using CreateProcessWithLogon if CreateProcessAsUser fails.
+Specify to not fallback to using CreateProcessWithToken if CreateProcessAsUser fails.
 .PARAMETER AppContainerProfile
 Specify an app container profile to use.
 .PARAMETER ExtendedFlags
  Specify extended creation flags.
- .PARAMETER JobList
+.PARAMETER JobList
  Specify list of jobs to assign the process to.
+.PARAMETER Credential
+Specify user credentials for CreateProcessWithLogon.
+.PARAMETER LogonFlags
+Specify logon flags for CreateProcessWithLogon.
 .INPUTS
 None
 .OUTPUTS
@@ -993,7 +997,9 @@ function New-Win32ProcessConfig {
         [NtApiDotNet.Win32.AppContainerProfile]$AppContainerProfile,
         [NtApiDotNet.Win32.ProcessExtendedFlags]$ExtendedFlags = 0,
         [NtApiDotNet.ChildProcessMitigationFlags]$ChildProcessMitigations = 0,
-        [NtApiDotNet.NtJob[]]$JobList
+        [NtApiDotNet.NtJob[]]$JobList,
+        [NtApiDotNet.Win32.Security.Authentication.UserCredentials]$Credential,
+        [NtApiDotNet.Win32.CreateProcessLogonFlags]$LogonFlags = 0
     )
     $config = New-Object NtApiDotNet.Win32.Win32ProcessConfig
     $config.CommandLine = $CommandLine
@@ -1027,12 +1033,15 @@ function New-Win32ProcessConfig {
     $config.NoTokenFallback = $NoTokenFallback
     if ($AppContainerProfile -ne $null) {
         $config.AppContainerSid = $AppContainerProfile.Sid
+        $config.Capabilities.AddRange($AppContainerProfile.Capabilities)
     }
     $config.ExtendedFlags = $ExtendedFlags
     $config.ChildProcessMitigations = $ChildProcessMitigations
     if ($null -ne $JobList) {
         $config.JobList.AddRange($JobList)
     }
+    $config.Credentials = $Credential
+    $config.LogonFlags = $LogonFlags
     return $config
 }
 
@@ -1089,6 +1098,12 @@ Specify the configuration for the new process.
 Specify to wait for the process to exit.
 .PARAMETER WaitTimeout
 Specify the timeout to wait for the process to exit. Defaults to infinite.
+.PARAMETER Credential
+Specify user credentials for CreateProcessWithLogon.
+.PARAMETER LogonFlags
+Specify logon flags for CreateProcessWithLogon.
+.PARAMETER Close
+Specify to close the process and thread handles and not return anything.
 .INPUTS
 None
 .OUTPUTS
@@ -1143,10 +1158,15 @@ function New-Win32Process {
         [NtApiDotNet.ChildProcessMitigationFlags]$ChildProcessMitigations = 0,
         [Parameter(ParameterSetName = "FromArgs")]
         [NtApiDotNet.NtJob[]]$JobList,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.Security.Authentication.UserCredentials]$Credential,
+        [Parameter(ParameterSetName = "FromArgs")]
+        [NtApiDotNet.Win32.CreateProcessLogonFlags]$LogonFlags = 0,
         [Parameter(Mandatory = $true, Position = 0, ParameterSetName = "FromConfig")]
         [NtApiDotNet.Win32.Win32ProcessConfig]$Config,
         [switch]$Wait,
-        [NtApiDotNet.NtWaitTimeout]$WaitTimeout = [NtApiDotNet.NtWaitTimeout]::Infinite
+        [NtApiDotNet.NtWaitTimeout]$WaitTimeout = [NtApiDotNet.NtWaitTimeout]::Infinite,
+        [switch]$Close
     )
 
     if ($null -eq $Config) {
@@ -1157,14 +1177,18 @@ function New-Win32Process {
             -InheritHandles:$InheritHandles -InheritProcessHandle:$InheritProcessHandle -InheritThreadHandle:$InheritThreadHandle `
             -MitigationOptions $MitigationOptions -Token $Token -ProtectionLevel $ProtectionLevel -NoTokenFallback:$NoTokenFallback `
             -DebugObject $DebugObject -AppContainerProfile $AppContainerProfile -ExtendedFlags $ExtendedFlags `
-            -ChildProcessMitigations $ChildProcessMitigations -JobList $JobList
+            -ChildProcessMitigations $ChildProcessMitigations -JobList $JobList -Credential $Credential -LogonFlags $LogonFlags
     }
 
     $p = [NtApiDotNet.Win32.Win32Process]::CreateProcess($config)
     if ($Wait) {
         $p.Process.Wait($WaitTimeout)
     }
-    $p | Write-Output
+    if ($Close) {
+        $p.Dispose()
+    } else {
+        $p | Write-Output
+    }
 }
 
 <#
@@ -1857,15 +1881,18 @@ function Format-NtToken {
     if ($Information) {
         "TOKEN INFORMATION"
         "-----------------"
-        "Type       : {0}" -f $token.TokenType
+        "Type          : {0}" -f $token.TokenType
         if ($token.TokenType -eq "Impersonation") {
-            "Imp Level  : {0}" -f $token.ImpersonationLevel
+            "Imp Level     : {0}" -f $token.ImpersonationLevel
         }
-        "ID         : {0}" -f $token.Id
-        "Auth ID    : {0}" -f $token.AuthenticationId
-        "Origin ID  : {0}" -f $token.Origin
-        "Modified ID: {0}" -f $token.ModifiedId
-        "Session ID : {0}" -f $token.SessionId
+        "ID            : {0}" -f $token.Id
+        "Auth ID       : {0}" -f $token.AuthenticationId
+        "Origin ID     : {0}" -f $token.Origin
+        "Modified ID   : {0}" -f $token.ModifiedId
+        "Session ID    : {0}" -f $token.SessionId
+        "Elevated      : {0}" -f $token.Elevated
+        "Elevation Type: {0}" -f $token.ElevationType
+        "Flags         : {0}" -f $token.Flags
     }
 }
 
@@ -1907,6 +1934,8 @@ Show the default DACL in full rather than a summary.
 Show basic token information, User, Group, Privilege and Integrity.
 .PARAMETER MandatoryPolicy
 Show mandatory integrity policy.
+.PARAMETER Thread
+Specify a thread to use when capturing the effective token.
 .OUTPUTS
 Text data
 .EXAMPLE
@@ -1956,10 +1985,11 @@ function Show-NtTokenEffective {
         [parameter(ParameterSetName = "Complex")]
         [switch]$FullDefaultDacl,
         [parameter(ParameterSetName = "Complex")]
-        [switch]$MandatoryPolicy
+        [switch]$MandatoryPolicy,
+        [NtApiDotNet.NtThread]$Thread
     )
 
-    Use-NtObject($token = Get-NtToken -Effective) {
+    Use-NtObject($token = Get-NtToken -Effective -Thread $Thread) {
         if ($PsCmdlet.ParameterSetName -eq "UserOnly") {
             Format-NtToken -Token $token
         }
@@ -3470,7 +3500,7 @@ function Get-EmbeddedAuthenticodeSignature {
         $content_type = [System.Security.Cryptography.X509Certificates.X509ContentType]::Unknown
         try {
             $path = Resolve-Path $FullName
-            $content_type = [System.Security.Cryptography.X509Certificates.X509Certificate2]::GetCertContentType($Path)
+            $content_type = [System.Security.Cryptography.X509Certificates.X509Certificate2]::GetCertContentType($path)
         }
         catch {
             Write-Error $_
@@ -3480,7 +3510,7 @@ function Get-EmbeddedAuthenticodeSignature {
             return
         }
 
-        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($Path)
+        $cert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($path)
         $ppl = $false
         $pp = $false
         $tcb = $false
@@ -3496,12 +3526,14 @@ function Get-EmbeddedAuthenticodeSignature {
                 "1.3.6.1.4.1.311.10.3.24" { $pp = $true }
                 "1.3.6.1.4.1.311.10.3.23" { $tcb = $true }
                 "1.3.6.1.4.1.311.10.3.6" { $system = $true }
-                "1.3.6.1.4.1.311.76.11.1" { $elam = $true }
+                "1.3.6.1.4.1.311.61.4.1" { $elam = $true }
                 "1.3.6.1.4.1.311.76.5.1" { $dynamic = $true }
                 "1.3.6.1.4.311.76.3.1" { $store = $true }
                 "1.3.6.1.4.1.311.10.3.37" { $ium = $true }
             }
         }
+
+        $page_hash = [NtApiDotNet.Win32.Security.Authenticode.AuthenticodeUtils]::ContainsPageHash($path)
 
         $props = @{
             Path                  = $Path;
@@ -3514,7 +3546,21 @@ function Get-EmbeddedAuthenticodeSignature {
             Elam                  = $elam;
             Store                 = $store;
             IsolatedUserMode      = $ium;
+            HasPageHash           = $page_hash;
         }
+
+        if ($elam) {
+            $certs = [NtApiDotNet.Win32.Security.Authenticode.AuthenticodeUtils]::GetElamInformation($path, $false)
+            if ($certs.IsSuccess)
+            {
+                $props["ElamCerts"] = $certs.Result
+            }
+        }
+
+        if ($ium) {
+            $props["TrustletPolicy"] = [NtApiDotNet.NtProcessTrustletConfig]::CreateFromFile($Path)
+        }
+
         $obj = New-Object –TypeName PSObject –Prop $props
         Write-Output $obj
     }
@@ -4139,6 +4185,56 @@ function Get-NtCachedSigningLevel {
             $f.GetCachedSigningLevelFromEa();
         }
         else {
+            $f.GetCachedSigningLevel()
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Set the cached signing level for a file.
+.DESCRIPTION
+This cmdlet sets the cached signing level for a specified file.
+.PARAMETER Path
+The file to set the cached signing level on.
+.PARAMETER Win32Path
+Specify to treat Path as a Win32 path.
+.PARAMETER Flags
+Specify the flags for the cache operation.
+.PARAMETER SigningLevel
+Specify the signing level for the cache operation.
+.PARAMETER AdditionalFiles
+Specify the additional files for the cache operation.
+.PARAMETER CatalogPath
+Specify the catalog path for the cache operation.
+.PARAMETER PassThru
+Specify to return the cached signing level.
+INPUTS
+None
+.OUTPUTS
+NtApiDotNet.CachedSigningLevel
+.EXAMPLE
+Set-NtCachedSigningLevel \??\c:\path\to\file.dll
+Set the cached signing level to \??\c:\path\to\file.dll
+.EXAMPLE
+Set-NtCachedSigningLevel c:\path\to\file.dll -Win32Path
+Set the cached signing level to \??\c:\path\to\file.dll
+#>
+function Set-NtCachedSigningLevel {
+    Param(
+        [parameter(Position = 0, Mandatory)]
+        [string]$Path,
+        [switch]$Win32Path,
+        [int]$Flags = 4,
+        [NtApiDotNet.SigningLevel]$SigningLevel = 0,
+        [NtApiDotnet.NtFile[]]$AdditionalFiles,
+        [string]$CatalogPath,
+        [switch]$PassThru
+    )
+
+    Use-NtObject($f = Get-NtFile $Path -Win32Path:$Win32Path -Access ReadData -ShareMode Read, Delete) {
+        $f.SetCachedSigningLevel($Flags, $SigningLevel, $AdditionalFiles, $CatalogPath)
+        if ($PassThru) {
             $f.GetCachedSigningLevel()
         }
     }
@@ -5104,6 +5200,8 @@ The file to oplock on.
 The oplock level to start.
 .PARAMETER LeaseLevel
 The oplock lease level to start.
+.PARAMETER Flags
+Flags for the oplock lease.
 .PARAMETER Async
 Specify to return an asynchronous task which can be waited on with Wait-AsyncTaskResult.
 .INPUTS
@@ -5131,6 +5229,8 @@ function Start-NtFileOplock {
         [NtApiDotNet.OplockRequestLevel]$Level,
         [parameter(Mandatory, ParameterSetName = "OplockLease")]
         [NtApiDotNet.OplockLevelCache]$LeaseLevel,
+        [parameter(ParameterSetName = "OplockLease")]
+        [NtApiDotNet.RequestOplockInputFlag]$Flags = "Request",
         [switch]$Async
     )
 
@@ -5151,14 +5251,59 @@ function Start-NtFileOplock {
         }
         "OplockLease" {
             if ($Async) {
-                $File.RequestOplockLeaseAsync($LeaseLevel)
+                $File.RequestOplockLeaseAsync($LeaseLevel, $Flags)
             } else {
-                $File.RequestOplockLease($LeaseLevel)
+                $File.RequestOplockLease($LeaseLevel, $Flags)
             }
         }
     }
 
     $result | Write-Output
+}
+
+<#
+.SYNOPSIS
+Acknowledges a file oplock break.
+.DESCRIPTION
+This cmdlet acknowledges a file oplock break with a specific level.
+.PARAMETER File
+The file to acknowledge the break on.
+.PARAMETER Level
+The oplock acknowledge level.
+.PARAMETER Lease
+Acknowledge a lease oplock and reduce level to None.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Confirm-NtFileOplock $file -Level Acknowledge
+Acknowledge an oplock break.
+.EXAMPLE
+Confirm-NtFileOplock $file -LeaseLevel Read
+Acknowledge to a read oplock.
+#>
+function Confirm-NtFileOplock {
+    [CmdletBinding(DefaultParameterSetName = "OplockLevel")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 1, ParameterSetName = "OplockLevel")]
+        [NtApiDotNet.OplockAcknowledgeLevel]$Level,
+        [parameter(Mandatory, Position = 1, ParameterSetName = "OplockLease")]
+        [switch]$Lease,
+        [parameter(ParameterSetName = "OplockLease")]
+        [switch]$CompleteOnClose
+    )
+
+    switch ($PSCmdlet.ParameterSetName) {
+        "OplockLevel" {
+            $File.AcknowledgeOplock($Level)
+        }
+        "OplockLease" {
+            $File.AcknowledgeOplockLease($CompleteOnClose)
+        }
+    }
 }
 
 <#
@@ -5339,6 +5484,8 @@ Get an appcontainer profile for a specified package name.
 This cmdlet gets an appcontainer profile for a specified package name.
 .PARAMETER Name
 Specify appcontainer name to use for the profile.
+.PARAMETER OpenAlways
+Specify to open the profile even if it doesn't exist.
 .INPUTS
 None
 .OUTPUTS
@@ -5355,17 +5502,25 @@ function Get-AppContainerProfile {
     Param(
         [parameter(ParameterSetName = "All")]
         [switch]$AllUsers,
-        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName", ValueFromPipelineByPropertyName, ValueFromPipeline)]
-        [string]$Name
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName")]
+        [string]$Name,
+        [parameter(ParameterSetName = "FromName")]
+        [switch]$OpenAlways
     )
 
-    PROCESS {
-        switch ($PSCmdlet.ParameterSetName) {
-            "All" {
-                Get-AppxPackage | Select-Object @{Name = "Name"; Expression = { "$($_.Name)_$($_.PublisherId)" } } | Get-AppContainerProfile
-            }
-            "FromName" {
-                [NtApiDotNet.Win32.AppContainerProfile]::Open($Name) | Write-Output
+    switch ($PSCmdlet.ParameterSetName) {
+        "All" {
+            [NtApiDotNet.Win32.AppContainerProfile]::GetAppContainerProfiles() | Write-Output
+        }
+        "FromName" {
+            if ($OpenAlways) {
+                $prof = [NtApiDotNet.Win32.AppContainerProfile]::OpenExisting($Name, $false)
+                if (!$prof.IsSuccess) {
+                    $prof = [NtApiDotNet.Win32.AppContainerProfile]::Open($Name)
+                }
+                $prof | Write-Output
+            } else {
+                [NtApiDotNet.Win32.AppContainerProfile]::OpenExisting($Name) | Write-Output
             }
         }
     }
@@ -5407,6 +5562,7 @@ function New-AppContainerProfile {
         [parameter(Position = 2, ParameterSetName = "FromName")]
         [string]$Description = "Description",
         [parameter(ParameterSetName = "FromName")]
+        [parameter(ParameterSetName = "FromTemp")]
         [NtApiDotNet.Sid[]]$Capabilities,
         [parameter(ParameterSetName = "FromName")]
         [switch]$DeleteOnClose,
@@ -5423,10 +5579,50 @@ function New-AppContainerProfile {
             }
         }
         "FromTemp" {
-            [NtApiDotNet.Win32.AppContainerProfile]::CreateTemporary() | Write-Output
+            [NtApiDotNet.Win32.AppContainerProfile]::CreateTemporary($Capabilities) | Write-Output
         }
     }
 }
+
+<#
+.SYNOPSIS
+Delete an appcontainer profile.
+.DESCRIPTION
+This cmdlet deletes an appcontainer profile for a specified package name or from its profile.
+.PARAMETER Name
+Specify appcontainer name to delete.
+.PARAMETER Profile
+Specify appcontainer profile to delete.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Remove-AppContainerProfile -Name "profile_to_remove"
+Delete an appcontainer profiles by name.
+.EXAMPLE
+Remove-AppContainerProfile -Profile $prof
+Delete an appcontainer profiles from an existing profile.
+#>
+function Remove-AppContainerProfile {
+    [CmdletBinding(DefaultParameterSetName = "FromName")]
+    param(
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromProfile")]
+        [NtApiDotNet.Win32.AppContainerProfile]$Profile,
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromName")]
+        [string]$Name
+    )
+
+    switch ($PSCmdlet.ParameterSetName) {
+        "FromProfile" {
+            $Profile.Delete()
+        }
+        "FromName" {
+            [NtApiDotNet.Win32.AppContainerProfile]::Delete($Name)
+        }
+    }
+}
+
 
 <#
 .SYNOPSIS
@@ -5844,7 +6040,7 @@ Close handle 0x1234 in process the current process.
 function Close-NtObject {
     [CmdletBinding(DefaultParameterSetName = "FromProcess")]
     Param(
-        [parameter(Mandatory, Position = 0, ParameterSetName = "FromObject")]
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromObject", ValueFromPipeline)]
         [NtApiDotNet.NtObject]$Object,
         [parameter(Mandatory, Position = 0, ParameterSetName = "FromProcess")]
         [NtApiDotNet.NtProcess]$Process,
@@ -10215,12 +10411,12 @@ Specify optional context buffer.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.Filter.FilterCommunicationPort
+NtApiDotNet.Win32.Filter.FilterConnectionPort
 .EXAMPLE
-Get-FilterCommunicationPort -Path "\FilterDriver"
+Get-FilterConnectionPort -Path "\FilterDriver"
 Open the filter communication port named \FilterDriver.
 #>
-function Get-FilterCommunicationPort {
+function Get-FilterConnectionPort {
     [CmdletBinding()]
     Param(
         [parameter(Mandatory, Position = 0)]
@@ -10229,7 +10425,38 @@ function Get-FilterCommunicationPort {
         [byte[]]$Context = $null
     )
 
-    [NtApiDotNet.Win32.Filter.FilterCommunicationPort]::Open($Path, $SyncHandle, $Context) | Write-Output
+    [NtApiDotNet.Win32.Filter.FilterConnectionPort]::Open($Path, $SyncHandle, $Context) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Sends a message to a filter connection port.
+.DESCRIPTION
+This cmdlet sends and receives a message on a filter connection port.
+.PARAMETER Port
+Specify the port to send on.
+.PARAMETER Input
+Optional input data.
+.PARAMETER MaximumOutput
+Specify maximum output data.
+.INPUTS
+None
+.OUTPUTS
+byte[]
+.EXAMPLE
+Send-FilterConnectionPort -Port $port -Input @(1, 2, 3, 4) -MaximumOutput 100
+Send a 4 byte message and receive at most 100 bytes.
+#>
+function Send-FilterConnectionPort {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Filter.FilterConnectionPort]$Port,
+        [byte[]]$Input = $null,
+        [int]$MaximumOutput = 0
+    )
+
+    $Port.SendMessage($Input, $MaximumOutput) | Write-Output -NoEnumerate
 }
 
 <#
@@ -10334,126 +10561,6 @@ function Get-FilterDriverVolumeInstance {
 
 <#
 .SYNOPSIS
-Get the attributes for a file.
-.DESCRIPTION
-This cmdlet gets the attributes from a file.
-.PARAMETER File
-The file to get the attributes from.
-.INPUTS
-None
-.OUTPUTS
-NtApiDotNet.FileAttributes
-.EXAMPLE
-Get-NtFileAttribute -File $f
-Get the file attributes for the file.
-#>
-function Get-NtFileAttribute {
-    [CmdletBinding(DefaultParameterSetName = "FromFile")]
-    Param(
-        [parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
-        [NtApiDotNet.NtFile]$File
-    )
-
-    switch($PSCmdlet.ParameterSetName) {
-        "FromFile" {
-            $File.FileAttributes | Write-Output
-        }
-    }
-}
-
-<#
-.SYNOPSIS
-Set the attributes for a file.
-.DESCRIPTION
-This cmdlet sets the attributes on a file.
-.PARAMETER File
-The file to set the attributes on.
-.PARAMETER FileAttribute
-The attributes to set.
-.PARAMETER PassThru
-Return the newly set attribute value.
-.INPUTS
-None
-.OUTPUTS
-NtApiDotNet.FileAttributes
-.EXAMPLE
-Get-NtFileAttribute -File $f
-Get the file attributes for the file.
-#>
-function Set-NtFileAttribute {
-    [CmdletBinding(DefaultParameterSetName = "FromFile")]
-    Param(
-        [parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
-        [NtApiDotNet.NtFile]$File,
-        [parameter(Mandatory, Position = 1, ParameterSetName = "FromFile")]
-        [NtApiDotNet.FileAttributes]$FileAttribute,
-        [switch]$PassThru
-    )
-
-    switch($PSCmdlet.ParameterSetName) {
-        "FromFile" {
-            $File.FileAttributes = $FileAttribute
-            if ($PassThru) {
-                $File.FileAttributes | Write-Output
-            }
-        }
-    }
-}
-
-<#
-.SYNOPSIS
-Get the list of processes which are sharing this file.
-.DESCRIPTION
-This cmdlet gets the list of processes which are sharing this file.
-.PARAMETER File
-The file to get the listing of sharing processes.
-.PARAMETER Path
-The path to the file to get the list of sharing processes.
-.PARAMETER Win32Path
-Specify to Path as a Win32 path.
-.INPUTS
-None
-.OUTPUTS
-NtApiDotNet.NtProcessInformation
-.EXAMPLE
-Get-NtFileShareProcess -File $f
-Get the sharing processes for the file.
-.EXAMPLE
-Get-NtFileShareProcess -Path "\??\C:\windows\system32\kernel32.dll"
-Get the sharing processes for kernel32.dll.
-.EXAMPLE
-Get-NtFileShareProcess -Path "C:\windows\system32\kernel32.dll" -Win32Path
-Get the sharing processes for kernel32.dll.
-#>
-function Get-NtFileShareProcess {
-    [CmdletBinding(DefaultParameterSetName="FromPath")]
-    Param(
-        [parameter(Mandatory, Position = 0, ParameterSetName="FromFile")]
-        [NtApiDotNet.NtFile]$File,
-        [parameter(Mandatory, Position = 0, ParameterSetName="FromPath")]
-        [string]$Path,
-        [switch]$Win32Path
-    )
-
-    try {
-        $pids = switch($PSCmdlet.ParameterSetName) {
-            "FromFile" {
-                $File.GetUsingProcessIds() | Write-Output
-            }
-            "FromPath" {
-                Use-NtObject($f = Get-NtFile -Path $Path -Win32Path:$Win32Path -Access ReadAttributes) {
-                    $f.GetUsingProcessIds() | Write-Output
-                }
-            }
-        }
-        Get-NtProcess -InfoOnly | Where-Object {$_.ProcessId -in $pids} | Write-Output
-    } catch {
-        Write-Error $_
-    }
-}
-
-<#
-.SYNOPSIS
 Get the device setup classes.
 .DESCRIPTION
 This cmdlet gets device setup classes, either all installed or from a GUID/Name.
@@ -10550,6 +10657,8 @@ Get all device instances. The default is to only get present instances.
 Get all device nodes as a tree.
 .PARAMETER InstanceId
 Get device from instance ID.
+.PARAMETER LinkName
+Specify a symbolic link name to resolve the device node.
 .INPUTS
 None
 .OUTPUTS
@@ -10566,6 +10675,12 @@ Get the device instances class for the specified setup class GUID.
 .EXAMPLE
 Get-NtDeviceNode -Tree
 Get all device instances in a tree structure.
+.EXAMPLE
+Get-NtDeviceNode -PDOName \Device\HarddiskVolume3
+Get the device node with a specified PDO.
+.EXAMPLE
+Get-NtDeviceNode -LinkName \??\C: 
+Get the device node with a specified symbolic link.
 #>
 function Get-NtDeviceNode {
     [CmdletBinding(DefaultParameterSetName = "All")]
@@ -10580,7 +10695,9 @@ function Get-NtDeviceNode {
         [parameter(Mandatory, ParameterSetName = "FromInstanceId")]
         [string]$InstanceId,
         [parameter(Mandatory, ParameterSetName = "FromPDOName")]
-        [string]$PDOName
+        [string]$PDOName,
+        [parameter(ParameterSetName = "FromLinkName")]
+        [string]$LinkName
     )
 
     PROCESS {
@@ -10599,6 +10716,14 @@ function Get-NtDeviceNode {
             }
             "FromPDOName" {
                 Get-NtDeviceNode | Where-Object PDOName -eq $PDOName
+            }
+            "FromLinkName" {
+                try { 
+                    $PDOName = Get-NtSymbolicLinkTarget -Path $LinkName -Resolve
+                    Get-NtDeviceNode | Where-Object PDOName -eq $PDOName
+                } catch {
+                    Write-Error $_
+                }
             }
         }
     }
@@ -10744,25 +10869,27 @@ Summarize the device stack as a single line.
 .INPUTS
 None
 .OUTPUTS
-string[]
+NtApiDotNet.Win32.Device.DeviceStackEntry[]
 .EXAMPLE
 Get-NtDeviceNodeStack -Node $dev
 Get device stack for device node.
 #>
 function Get-NtDeviceNodeStack {
-    [CmdletBinding(DefaultParameterSetName = "All")]
+    [CmdletBinding(DefaultParameterSetName = "FromNode")]
     Param(
-        [parameter(Mandatory, ParameterSetName = "FromNode", Position = 0)]
+        [parameter(Mandatory, ParameterSetName = "FromNode", Position = 0, ValueFromPipeline)]
         [NtApiDotNet.Win32.Device.DeviceNode]$Node,
         [switch]$Summary
     )
 
-    switch($PSCmdlet.ParameterSetName) {
-        "FromNode" {
-            if ($Summary) {
-                [string]::Join(", ", $Node.DeviceStack) | Write-Output
-            } else {
-                $Node.DeviceStack | Write-Output
+    PROCESS {
+        switch($PSCmdlet.ParameterSetName) {
+            "FromNode" {
+                if ($Summary) {
+                    [string]::Join(", ", $Node.DeviceStack) | Write-Output
+                } else {
+                    $Node.DeviceStack | Write-Output
+                }
             }
         }
     }
@@ -10815,9 +10942,9 @@ function Get-NtDeviceInterfaceInstance {
 
 <#
 .SYNOPSIS
-Enumerate file entries for a file.
+Enumerate file entries for a file directory.
 .DESCRIPTION
-This cmdlet writes enumerates directory entries from a file.
+This cmdlet enumerates directory entries from a file directory.
 .PARAMETER File
 Specify the file directory to enumerate.
 .PARAMETER Pattern
@@ -10834,6 +10961,12 @@ Include placeholder directories in output.
 Include file ID in the entries.
 .PARAMETER ShortName
 Include the short name in the output.
+.PARAMETER Path
+Path to open the directory first.
+.PARAMETER Win32Path
+Open a win32 path.
+.PARAMETER CaseSensitive
+Open the file case sensitively, also does case sensitive pattern matching.
 .INPUTS
 None
 .OUTPUTS
@@ -10844,6 +10977,12 @@ NtApiDotNet.NtFileObjectId[]
 .EXAMPLE
 Get-NtFileItem -File $f
 Enumerate all file items.
+.EXAMPLE
+Get-NtFileItem -Path \??\c:\windows
+Enumerate all file items in c:\windows.
+.EXAMPLE
+Get-NtFileItem -Path c:\windows -Win32Path
+Enumerate all file items in c:\windows.
 .EXAMPLE
 Get-NtFileItem -File $f -Pattern *.txt
 Enumerate all files with a TXT extension.
@@ -10869,18 +11008,31 @@ Enumerate files with short name.
 function Get-NtFileItem {
     [CmdletBinding(DefaultParameterSetName = "Default")]
     Param(
-        [parameter(Mandatory, Position = 0)]
+        [parameter(Mandatory, Position = 0, ParameterSetName="Default")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromReparsePoint")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromObjectID")]
         [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromPath")]
+        [string]$Path,
+        [parameter(ParameterSetName="FromPath")]
+        [switch]$Win32Path,
         [parameter(ParameterSetName="Default")]
+        [parameter(ParameterSetName="FromPath")]
         [string]$Pattern = "*",
         [parameter(ParameterSetName="Default")]
+        [parameter(ParameterSetName="FromPath")]
         [NtApiDotNet.FileTypeMask]$FileType = "All",
         [parameter(ParameterSetName="Default")]
+        [parameter(ParameterSetName="FromPath")]
         [switch]$FileId,
         [parameter(ParameterSetName="Default")]
+        [parameter(ParameterSetName="FromPath")]
         [switch]$ShortName,
         [parameter(ParameterSetName="Default")]
+        [parameter(ParameterSetName="FromPath")]
         [switch]$IncludePlaceholder,
+        [parameter(ParameterSetName="FromPath")]
+        [switch]$CaseSensitive,
         [parameter(ParameterSetName="FromReparsePoint")]
         [switch]$ReparsePoint,
         [parameter(ParameterSetName="FromObjectID")]
@@ -10902,6 +11054,19 @@ function Get-NtFileItem {
                 $flags += ", Placeholders"
             }
             $File.QueryDirectoryInfo($Pattern, $FileType, $flags) | Write-Output
+        }
+        "FromPath" {
+            $attr = "CaseInsensitive"
+            if ($CaseSensitive) {
+                $attr = 0
+            }
+            Use-NtObject($file = Get-NtFile -Path $Path -Win32Path:$Win32Path `
+                -DirectoryAccess ListDirectory -ShareMode Read -Options DirectoryFile -AttributeFlags $attr) {
+                if ($file -ne $null) {
+                    Get-NtFileItem -File $file -Pattern $Pattern -FileType $FileType -FileId:$FileId `
+                        -ShortName:$ShortName -IncludePlaceholder:$IncludePlaceholder | Write-Output
+                }
+            }
         }
         "FromReparsePoint" {
             $File.QueryReparsePoints() | Write-Output
@@ -11080,42 +11245,6 @@ function Unlock-NtFile {
 
 <#
 .SYNOPSIS
-Get linknames to a file.
-.DESCRIPTION
-This cmdlet gets a list of link names to an open file.
-.PARAMETER File
-Specify the file to query.
-.PARAMETER Win32Path
-Specify to return Win32 paths.
-.INPUTS
-None
-.OUTPUTS
-string[]
-.EXAMPLE
-Get-NtFileLink -File $f
-Get all links to the file.
-.EXAMPLE
-Get-NtFileLink -File $f -Win32Path
-Get all links to the file as win32 paths.
-#>
-function Get-NtFileLink {
-    Param(
-        [parameter(Mandatory, Position = 0)]
-        [NtApiDotNet.NtFile]$File,
-        [switch]$Win32Path
-    )
-
-    $ret = $File.GetHardLinks()
-    if ($Win32Path) {
-        $ret | Select-Object -ExpandProperty Win32Path | Write-Output
-    } else {
-        $ret | Select-Object -ExpandProperty FullPath | Write-Output
-    }
-}
-
-
-<#
-.SYNOPSIS
 Sets the disposition on a file.
 .DESCRIPTION
 This cmdlet sets the disposition on a file such as deleting the file.
@@ -11243,9 +11372,9 @@ Allow extended characters.
 .INPUTS
 None
 .OUTPUTS
-string generated name.
+string
 .EXAMPLE
-Get-NtFile8dot3Path 0123456789.config
+Get-NtFile8dot3Path -Name 0123456789.config 
 Generate a 8dot3 name from a full name.
 #>
 function Get-NtFile8dot3Name {
@@ -11255,4 +11384,835 @@ function Get-NtFile8dot3Name {
         [switch]$ExtendedCharacters
     )
     [NtApiDotNet.NtFileUtils]::Generate8dot3Name($Name, $ExtendedCharacters) | Write-Output
+}
+
+<#
+.SYNOPSIS
+Tests if a driver is in the device stack of a file.
+.DESCRIPTION
+This cmdlet checks if a driver is in the device stack of a file.
+.PARAMETER File
+The file to check. Works with files or direct device opens.
+.PARAMETER DriverPath
+The object manager path to the driver object. e.g. \Device\volume or just volume.
+.INPUTS
+None
+.OUTPUTS
+Bool
+.EXAMPLE
+Test-NtFileDriverPath -File $f -DriverPath "Ntfs"
+Tests if the Ntfs driver is in the path.
+#>
+function Test-NtFileDriverPath {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtFile]$File,
+        [parameter(Mandatory = $true, Position = 1)]
+        [string]$DriverPath
+    )
+    $File.DriverInPath($DriverPath)
+}
+
+<#
+.SYNOPSIS
+Get list of mount points.
+.DESCRIPTION
+This cmdlet queries the mount point manager for a list of mount points.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.IO.MountPointManager.MountPoint[]
+.EXAMPLE
+Get-NtMountPoint
+Get list of mount points.
+#>
+function Get-NtMountPoint {
+    [NtApiDotNet.IO.MountPointManager.MountPointManagerUtils]::QueryMountPoints() | Write-Output
+}
+
+<#
+.SYNOPSIS
+Create a new reparse tag buffer.
+.DESCRIPTION
+This cmdlet creates a new reparse tag buffer.
+.PARAMETER Tag
+Specify the reparse tag.
+.PARAMETER Guid
+Specify the GUID for a generic reparse buffer.
+.PARAMETER Data
+Specify data for the reparse buffer.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.OpaqueReparseBuffer
+NtApiDotNet.GenericReparseBuffer
+.EXAMPLE
+New-NtFileReparseBuffer -Tag AF_UNIX -Data @(1, 2, 3, 4)
+Create a new opaque reparse buffer.
+.EXAMPLE
+New-NtFileReparseBuffer -GenericTag 100 -Data @(1, 2, 3, 4) -Guid '8b049aa1-e380-4808-aeb4-dffd9d01c0de'
+Create a new opaque reparse buffer.
+#>
+function New-NtFileReparseBuffer {
+    [CmdletBinding(DefaultParameterSetName = "OpaqueBuffer")]
+    Param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="OpaqueBuffer")]
+        [NtApiDotNet.ReparseTag]$Tag,
+        [parameter(Mandatory, Position = 0, ParameterSetName="GenericBuffer")]
+        [uint32]$GenericTag,
+        [parameter(Mandatory, ParameterSetName="GenericBuffer")]
+        [guid]$Guid,
+        [parameter(Mandatory, Position = 1, ParameterSetName="OpaqueBuffer")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="GenericBuffer")]
+        [AllowEmptyCollection()]
+        [byte[]]$Data
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "OpaqueBuffer" {
+            [NtApiDotnet.OpaqueReparseBuffer]::new($Tag, $Data) | Write-Output
+        }
+        "GenericBuffer" {
+            [NtApiDotNet.GenericReparseBuffer]::new($GenericTag, $Guid, $Data) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Query the quota on a volume.
+.DESCRIPTION
+This cmdlet queries the quote entries on a volume.
+.PARAMETER Volume
+Specify the name of the volume, e.g. C: or \Device\HarddiskVolumeX
+.PARAMETER Sid
+Specify a list of sids to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.FileQuotaEntry[]
+.EXAMPLE
+Get-NtFileQuota -Volume C:
+Query the quota for the C: volume.
+#>
+function Get-NtFileQuota {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$Volume,
+        [NtApiDotNet.Sid[]]$Sid
+    )
+    try {
+        if (!$Volume.StartsWith("\")) {
+            $Volume = "\??\" + $Volume
+        }
+        Use-NtObject($vol = Get-NtFile -Path $Volume `
+            -Access Execute -Share Read, Write) {
+            $vol.QueryQuota($Sid) | Write-Output
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Sets the quota on a volume.
+.DESCRIPTION
+This cmdlet sets the quote entries on a volume.
+.PARAMETER Volume
+Specify the name of the volume, e.g. C: or \Device\HarddiskVolumeX
+.PARAMETER Sid
+Specify the SID to set.
+.PARAMETER Limit
+Specify the quota limit.
+.PARAMETER Threshold
+Specify the quota threshold.
+.PARAMETER Quota
+Specify a list of quota entries.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtFileQuota -Volume C: -Sid "S-1-1-0" -Limit (10*1024*1024) -Threshold (8*1024*1024)
+Set quota for the Everyone group with a limit of 10MiB and threshold of 8MiB.
+.EXAMPLE
+Set-NtFileQuota -Volume C: -Quota $qs
+Set quota for a list of quota entries.
+#>
+function Set-NtFileQuota {
+    [CmdletBinding(DefaultParameterSetName="FromSid")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$Volume,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSid")]
+        [NtApiDotNet.Sid]$Sid,
+        [parameter(Mandatory, Position = 2, ParameterSetName="FromSid")]
+        [int64]$Limit,
+        [parameter(Mandatory, Position = 3, ParameterSetName="FromSid")]
+        [int64]$Threshold,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromEntry")]
+        [NtApiDotNet.FileQuotaEntry[]]$Quota
+    )
+    try {
+        if (!$Volume.StartsWith("\")) {
+            $Volume = "\??\" + $Volume
+        }
+        Use-NtObject($vol = Get-NtFile -Path $Volume `
+            -Access WriteData -Share Read, Write) {
+            if ($PSCmdlet.ParameterSetName -eq "FromSid") {
+                $vol.SetQuota($Sid, $Threshold, $Limit)
+            } else {
+                $vol.SetQuota($Quota)
+            }
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Read the USN journal for a volume.
+.DESCRIPTION
+This cmdlet reads the USN journal reocrds for a volume.
+.PARAMETER Volume
+Specify the volume to read from.
+.PARAMETER StartUsn
+Specify the first USN to read from.
+.PARAMETER EndUsn
+Specify the last USN to read, exclusive.
+.PARAMETER ReasonMask
+Specify a mask of reason codes to return.
+.PARAMETER Unprivileged
+Specify to use unprivileged reading. This doesn't return filenames you don't have access to.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.IO.UsnJournal.UsnJournalRecord[]
+.EXAMPLE
+Read-NtFileUsnJournal -Volume C:
+Read the USN journal for the C: volume.
+#>
+function Read-NtFileUsnJournal {
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$Volume,
+        [uint64]$StartUsn = 0,
+        [uint64]$EndUsn = [uint64]::MaxValue,
+        [NtApiDotNet.IO.UsnJournal.UsnJournalReasonFlags]$ReasonMask = "All",
+        [switch]$Unprivileged
+    )
+    try {
+        if (!$Volume.StartsWith("\")) {
+            $Volume = "\??\" + $Volume
+        }
+
+        $Access = "ReadData"
+
+        if ($Unprivileged) {
+            $Volume += "\"
+            $Access = "Synchronize"
+        }
+
+        Use-NtObject($vol = Get-NtFile -Path $Volume `
+            -Access $Access -Share Read, Write) {
+            if ($Unprivileged) {
+                [NtApiDotNet.IO.UsnJournal.UsnJournalUtils]::ReadJournalUnprivileged($vol, $StartUsn, $EndUsn, $ReasonMask) | Write-Output
+            } else {
+                [NtApiDotNet.IO.UsnJournal.UsnJournalUtils]::ReadJournal($vol, $StartUsn, $EndUsn, $ReasonMask) | Write-Output
+            }
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Start an application model application.
+.DESCRIPTION
+This cmdlet starts an application model application from it's application model ID.
+.PARAMETER AppModelId
+Specify the application model ID.
+.PARAMETER Argument
+Specify the argument for the application.
+.PARAMETER PassThru
+Specify to pass through a process object for the application.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.NtProcess
+.EXAMPLE
+Start-AppModelApplication -AppModelId "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+Start the Windows calculator.
+#>
+function Start-AppModelApplication {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$AppModelId,
+        [parameter(Position = 1)]
+        [string]$Argument = "",
+        [switch]$PassThru
+    )
+    try {
+        $app_id = [NtApiDotNet.Win32.AppModel.AppModelUtils]::ActivateApplication($AppModelId, $Argument)
+        if ($PassThru) {
+            Get-NtProcess -ProcessId $app_id
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Query the context for a thread.
+.DESCRIPTION
+This cmdlet queries the context for a thread.
+.PARAMETER Thread
+Specify the thread to get the context for.
+.PARAMETER ContextFlags
+Specify the parts of the context to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.IContext
+.EXAMPLE
+Get-NtThreadContext -Thread $thread
+Query the thread's context for all state.
+#>
+function Get-NtThreadContext {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtThread]$Thread,
+        [NtApiDotNet.ContextFlags]$ContextFlags = "All"
+    )
+    $Thread.GetContext($ContextFlags)
+}
+
+<#
+.SYNOPSIS
+Set the context for a thread.
+.DESCRIPTION
+This cmdlet sets the context for a thread.
+.PARAMETER Thread
+Specify the thread to set the context for.
+.PARAMETER Context
+Specify the context to set. You must configure the ContextFlags to determine what parts to set.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtThreadContext -Thread $thread -Context $context
+Sets the thread's context.
+#>
+function Set-NtThreadContext {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtThread]$Thread,
+        [parameter(Mandatory, Position = 1)]
+        [NtApiDotNet.IContext]$Context
+    )
+    $Thread.SetContext($Context)
+}
+
+<#
+.SYNOPSIS
+Query an app model policy for the a process.
+.DESCRIPTION
+This cmdlet queries the app model policy for a process.
+.PARAMETER Process
+Specify the process to get the app model policy for.
+.PARAMETER Policy
+Specify a specific policy to query.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.AppModelPolicy_PolicyValue
+.EXAMPLE
+Get-AppModelApplicationPolicy -Process $proc
+Query all app model policies.
+#>
+function Get-AppModelApplicationPolicy {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtProcess]$Process,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromPolicy")]
+        [NtApiDotNet.AppModelPolicy_Type[]]$Policy
+    )
+
+    try {
+        Use-NtObject($token = Get-NtToken -Process $proc) {
+            switch($PSCmdlet.ParameterSetName) {
+                "All" {
+                    $token.AppModelPolicyDictionary | Write-Output
+                }
+                "FromPolicy" {
+                    foreach($pol in $Policy) {
+                        $token.GetAppModelPolicy($pol) | Write-Output
+                    }
+                }
+            }
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Checks if the process is in a Job or a specific Job.
+.DESCRIPTION
+This cmdlet checks if a process is in any Job or a specific Job.
+.PARAMETER Process
+Specify the process to check.
+.PARAMETER Job
+Specify a Job object to check. If not specified then will check for any Job.
+.PARAMETER Current
+Specify to check the current process.
+.INPUTS
+None
+.OUTPUTS
+Bool
+.EXAMPLE
+Test-NtProcessJob -Process $proc
+Test if the process is a job.
+.EXAMPLE
+Test-NtProcessJob -Process $proc -Job $job
+Test if the process is in a specific job.
+.EXAMPLE
+Test-NtProcessJob -Current
+Test if the current process is a job.
+.EXAMPLE
+Test-NtProcessJob -Current -Job $job
+Test if the current process is in a specific job.
+#>
+function Test-NtProcessJob {
+    [CmdletBinding(DefaultParameterSetName="FromProcess")]
+    param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromProcess")]
+        [NtApiDotNet.NtProcess]$Process,
+        [parameter(Position = 1)]
+        [NtApiDotNet.NtJob]$Job,
+        [parameter(Mandatory, ParameterSetName="FromCurrent")]
+        [switch]$Current
+    )
+    if ($Current) {
+        $Process = Get-NtProcess -Current
+    }
+    $Process.IsInJob($Job)
+}
+
+function Check-FullTrust {
+    param([xml]$Manifest)
+    if ($Manifest -eq $null) {
+        return $false
+    }
+    $nsmgr = [System.Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+    $nsmgr.AddNamespace("rescap", "http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities")
+    $Manifest.SelectSingleNode("//rescap:Capability[@Name='runFullTrust']", $nsmgr) -ne $null
+}
+
+function Get-AppExtensions {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [xml]$Manifest
+    )
+    PROCESS {
+        if ($Manifest -eq $null) {
+            return
+        }
+        $nsmgr = [System.Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+        $nsmgr.AddNamespace("desktop", "http://schemas.microsoft.com/appx/manifest/desktop/windows10")
+        $nodes = $Manifest.SelectNodes("//desktop:Extension[@Category='windows.fullTrustProcess']", $nsmgr)
+        foreach($node in $nodes) {
+            Write-Output $node.GetAttribute("Executable")
+        }
+    }
+}
+
+function Get-FullTrustApplications {
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory, ValueFromPipelineByPropertyName)]
+        [xml]$Manifest,
+        [parameter(Mandatory)]
+        [string]$PackageFamilyName
+    )
+    PROCESS {
+        if ($Manifest -eq $null) {
+            return
+        }
+        $nsmgr = [System.Xml.XmlNamespaceManager]::new($Manifest.NameTable)
+        $nsmgr.AddNamespace("app", "http://schemas.microsoft.com/appx/manifest/foundation/windows10")
+        $nodes = $Manifest.SelectNodes("//app:Application[@EntryPoint='Windows.FullTrustApplication']", $nsmgr)
+        foreach($node in $nodes) {
+            $id = $node.GetAttribute("Id")
+            $props = @{
+                ApplicationUserModelId="$PackageFamilyName!$id";
+                Executable=$node.GetAttribute("Executable");
+            }
+
+            Write-Output $(New-Object psobject -Property $props)
+        }
+    }
+}
+
+function Read-DesktopAppxManifest {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory, ValueFromPipeline)]
+        $Package,
+        [switch]$AllUsers
+    )
+    PROCESS {
+        $Manifest = Get-AppxPackageManifest $Package
+        if (-not $(Check-FullTrust $Manifest)) {
+            return
+        }
+        $install_location = $Package.InstallLocation
+        $profile_dir = ""
+        if (-not $AllUsers) {
+            $profile_dir = "$env:LOCALAPPDATA\Packages\$($Package.PackageFamilyName)"
+        }
+
+        $has_registry = (Test-Path "$install_location\registry.dat") -or `
+            (Test-Path "$install_location\user.dat") -or `
+            (Test-Path "$install_location\userclasses.dat")
+
+        $vfs_files = @{}
+        $vfs_root = "$install_location\VFS"
+        if (Test-Path $vfs_root) {
+            foreach($f in (Get-ChildItem $vfs_root)) {
+                $name = $f.Name
+                $vfs_files[$name] = Get-ChildItem -Recurse "$vfs_root\$name"
+            }
+        }
+
+        $props = @{
+            Name=$Package.Name;
+            Architecture=$Package.Architecture;
+            Version=$Package.Version;
+            Publisher=$Package.Publisher;
+            PackageFamilyName=$Package.PackageFamilyName;
+            InstallLocation=$install_location;
+            Manifest=Get-AppxPackageManifest $Package;
+            Applications=Get-FullTrustApplications $Manifest $Package.PackageFamilyName;
+            Extensions=Get-AppExtensions $Manifest;
+            VFSFiles=$vfs_files;
+            HasRegistry=$has_registry;
+            ProfileDir=$profile_dir;
+        }
+
+        New-Object psobject -Property $props
+    }
+}
+
+<#
+.SYNOPSIS
+Get a list AppX packages with Desktop Bridge components.
+.DESCRIPTION
+This cmdlet gets a list of installed AppX packages which are either directly full trust applications or 
+have an extension which can be used to run full trust applications.
+.PARAMETER AllUsers
+Specify getting information for all users, needs admin privileges.
+.INPUTS
+None
+.OUTPUTS
+Package results.
+.EXAMPLE
+Get-AppxDesktopBridge
+Get all desktop bridge AppX packages for current user.
+.EXAMPLE
+Get-AppxDesktopBridge -AllUsers
+Get all desktop bridge AppX packages for all users.
+#>
+function Get-AppxDesktopBridge {
+    param([switch]$AllUsers)
+    Get-AppxPackage -AllUsers:$AllUsers -PackageTypeFilter Main | Read-DesktopAppxManifest -AllUsers:$AllUsers
+}
+
+<#
+.SYNOPSIS
+Terminates a job object.
+.DESCRIPTION
+This cmdlet terminates a job object and all it's processes.
+.PARAMETER Job
+Specify a Job object to terminate.
+.PARAMETER Status
+Specify the NT status code to terminate with.
+.INPUTS
+None
+.OUTPUTS
+Bool
+.EXAMPLE
+Stop-NtJob -Job $job
+Terminate a job with STATUS_SUCCESS code.
+.EXAMPLE
+Stop-NtJob -Job $job -Status STATUS_ACCESS_DENIED
+Terminate a job with STATUS_ACCESS_DENIED code.
+#>
+function Stop-NtJob {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtJob]$Job,
+        [parameter(Position = 1)]
+        [NtApiDotNet.NtStatus]$Status = 0
+    )
+    $Job.Terminate($Status)
+}
+
+<#
+.SYNOPSIS
+Gets a work-on-behalf ticket for a thread.
+.DESCRIPTION
+This cmdlet gets the work-on-behalf ticket for a thread. 
+.PARAMETER Thread
+Specify a thread to get the ticket from.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.WorkOnBehalfTicket
+.EXAMPLE
+Get-NtThreadWorkOnBehalfTicket
+Get the work-on-behalf ticket for the current thread.
+.EXAMPLE
+Get-NtThreadWorkOnBehalfTicket -Thread $thread
+Get the work-on-behalf ticket for a thread.
+#>
+function Get-NtThreadWorkOnBehalfTicket {
+    param(
+        [parameter(Position = 0)]
+        [NtApiDotNet.NtThread]$Thread
+    )
+    if ($Thread -eq $null) {
+        [NtApiDotNet.NtThread]::WorkOnBehalfTicket
+    } else {
+        $Thread.GetWorkOnBehalfTicket()
+    }
+}
+
+<#
+.SYNOPSIS
+Set a work-on-behalf ticket on the current thread.
+.DESCRIPTION
+This cmdlet gets the work-on-behalf ticket for a thread. 
+.PARAMETER Ticket
+Specify the ticket to set.
+.PARAMETER ThreadId
+Specify the thread ID to set.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Set-NtThreadWorkOnBehalfTicket -Ticket $ticket
+Set the work-on-behalf ticket for the current thread.
+#>
+function Set-NtThreadWorkOnBehalfTicket {
+    [CmdletBinding(DefaultParameterSetName = "FromTicket")]
+    param(
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromTicket")]
+        [NtApiDotNet.WorkOnBehalfTicket]$Ticket,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromThreadId")]
+        [alias("tid")]
+        [int]$ThreadId
+    )
+    if ($PSCmdlet.ParameterSetName -eq 'FromThreadId') {
+        [NtApiDotNet.NtThread]::SetWorkOnBehalfTicket($ThreadId)
+    } else {
+        [NtApiDotNet.NtThread]::WorkOnBehalfTicket = $Ticket
+    }
+}
+
+<#
+.SYNOPSIS
+Clear the work-on-behalf ticket on the current thread.
+.DESCRIPTION
+This cmdlet clears the work-on-behalf ticket for a thread. 
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Clear-NtThreadWorkOnBehalfTicket
+Clear the work-on-behalf ticket for the current thread.
+#>
+function Clear-NtThreadWorkOnBehalfTicket {
+    $ticket = [NtApiDotNet.WorkOnBehalfTicket]::new(0)
+    [NtApiDotNet.NtThread]::WorkOnBehalfTicket = $ticket
+}
+
+<#
+.SYNOPSIS
+Gets the container ID for the current thread.
+.DESCRIPTION
+This cmdlet gets the container ID for the current thread thread.
+.INPUTS
+None
+.OUTPUTS
+Guid
+.EXAMPLE
+Get-NtThreadContainerId
+Get the container ID for the current thread.
+#>
+function Get-NtThreadContainerId {
+    [NtApiDotNet.NtThread]::Current.ContainerId
+}
+
+<#
+.SYNOPSIS
+Attaches a container to impersonate the current thread.
+.DESCRIPTION
+This cmdlet attaches a container for impersonation on the current thread.
+.PARAMETER Job
+The job silo to set as the thread's container.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.ThreadImpersonationContext
+.EXAMPLE
+$imp = Set-NtThreadContainer -Job $job
+Sets the container for the current thread.
+#>
+function Set-NtThreadContainer {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.NtJob]$Job
+    )
+    [NtApiDotNet.NtThread]::AttachContainer($Job)
+}
+
+<#
+.SYNOPSIS
+Compares two signing levels to see which is higher.
+.DESCRIPTION
+This cmdlet compares two signing levels to see which is higher.
+.PARAMETER
+.INPUTS
+None
+.OUTPUTS
+Bool
+.EXAMPLE
+Compare-NtSigningLevel -Left Windows -Right WindowsTCB
+Compare two signing levels, returns True if the left level is greater or equal to right.
+#>
+function Compare-NtSigningLevel {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.SigningLevel]$Left,
+        [parameter(Mandatory, Position = 1)]
+        [NtApiDotNet.SigningLevel]$Right
+    )
+    [NtApiDotNet.NtSecurity]::CompareSigningLevel($Left, $Right)
+}
+
+<#
+.SYNOPSIS
+Get a range of system information values.
+.DESCRIPTION
+This cmdlet gets a range of system information values.
+.PARAMETER IsolatedUserMode
+Return isolated usermode flags.
+.INPUTS
+None
+.OUTPUTS
+Depends on parameters.
+.EXAMPLE
+Get-NtSystemInformation -IsolatedUserMode
+Get isolated user mode information.
+#>
+function Get-NtSystemInformation {
+    param(
+        [Parameter(Mandatory, ParameterSetName="IsolatedUserMode")]
+        [switch]$IsolatedUserMode,
+        [Parameter(Mandatory, ParameterSetName="ProcessInformation")]
+        [switch]$ProcessInformation
+    )
+    if ($IsolatedUserMode) {
+        [NtApiDotNet.NtSystemInfo]::IsolatedUserModeFlags
+    } elseif ($ProcessInformation) {
+        [NtApiDotNet.NtSystemInfo]::ProcessorInformation
+    }
+}
+
+<#
+.SYNOPSIS
+Gets the signing level for an image file.
+.DESCRIPTION
+This cmdlet gets the signing level for an image file.
+.PARAMETER Path
+Specify the path to the image file.
+.PARAMETER Win32Path
+Specify that the path is a Win32 path.
+.PARAMETER DontResolve
+Specify to not try and resolve the signing level.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SigningLevel
+#>
+function Get-NtSigningLevel {
+    [CmdletBinding(DefaultParameterSetName="FromPath")]
+    param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromPath")]
+        [string]$Path,
+        [Parameter(ParameterSetName="FromPath")]
+        [switch]$Win32Path,
+        [switch]$DontResolve
+    )
+
+    try {
+        if ($Win32Path) {
+            $Path = Get-NtFilePath -Path $Path
+        }
+
+        Use-NtObject($sect = New-NtSectionImage -Path $Path) {
+            Use-NtObject($map = $sect.MapRead()) {
+                if ($map.ImageSigningLevel -ne "Unchecked" -or $DontResolve) {
+                    return $map.ImageSigningLevel
+                }
+
+                $script = { 
+                    Set-NtProcessMitigationPolicy -Signature AuditMicrosoftSignedOnly
+                    [NtObjectManager.Utils.PSUtils]::GetSigningLevel($input) | Out-Null
+                }
+
+                $job = Start-Job -ScriptBlock $script -InputObject $Path
+                Wait-Job $job | Out-Null
+
+                return $map.ImageSigningLevel
+            }
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Gets a certificate object.
+.DESCRIPTION
+This cmdlet gets a certificate object from a file.
+.PARAMETER Path
+Specify the path to the certificate or file.
+.INPUTS
+None
+.OUTPUTS
+System.Security.Cryptography.X509Certificates.X509Certificate2
+#>
+function Get-X509Certificate {
+    param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName="FromPath")]
+        [string]$Path
+    )
+
+    $Path = Resolve-Path -Path $Path
+    if ($null -ne $Path) {
+        [Security.Cryptography.X509Certificates.X509Certificate2]::new($Path)
+    }
 }

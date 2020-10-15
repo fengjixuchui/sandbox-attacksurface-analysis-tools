@@ -87,6 +87,70 @@ namespace NtApiDotNet
             }
         }
 
+        private NtStatus SetX86Context(IContext context, bool throw_on_error)
+        {
+            if (context is ContextX86 x86_context)
+            {
+                using (var buffer = x86_context.ToBuffer())
+                {
+                    return NtSystemCalls.NtSetContextThread(Handle, buffer).ToNtException(throw_on_error);
+                }
+            }
+            throw new ArgumentException("Must specify a ContextX86 instance for a x86 process.");
+        }
+
+        private NtStatus SetAmd64Context(IContext context, bool throw_on_error)
+        {
+            if (context is ContextAmd64 amd64_context)
+            {
+                using (var buffer = amd64_context.ToBuffer())
+                {
+                    return NtSystemCalls.NtSetContextThread(Handle, buffer).ToNtException(throw_on_error);
+                }
+            }
+            throw new ArgumentException("Must specify a ContextAmd64 instance for a x64 process.");
+        }
+
+        private static NtResult<WorkOnBehalfTicket> GetTicket(int thread_id, bool throw_on_error)
+        {
+            var xor_key = GetWorkOnBehalfTicketXor(throw_on_error);
+            if (!xor_key.IsSuccess)
+                return xor_key.Cast<WorkOnBehalfTicket>();
+
+            var create_time = GetThreadCreateTime(thread_id, throw_on_error);
+            if (!create_time.IsSuccess)
+                return create_time.Cast<WorkOnBehalfTicket>();
+
+            return new WorkOnBehalfTicket(thread_id, create_time.Result, xor_key.Result).CreateResult();
+        }
+
+        private static NtResult<long> GetThreadCreateTime(int thread_id, bool throw_on_error)
+        {
+            using (var thread = Open(thread_id, ThreadAccessRights.QueryLimitedInformation, false))
+            {
+                if (thread.IsSuccess)
+                {
+                    var times = thread.Result.Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes, default, false);
+                    if (times.IsSuccess)
+                    {
+                        return times.Result.CreateTime.QuadPart.CreateResult();
+                    }
+                }
+            }
+
+            var threads = NtSystemInfo.GetThreadInformationExtended(throw_on_error);
+            if (!threads.IsSuccess)
+            {
+                return threads.Cast<long>();
+            }
+            var th = threads.Result.FirstOrDefault(t => t.ThreadId == thread_id);
+            if (th == null)
+            {
+                return NtStatus.STATUS_NOT_FOUND.CreateResultFromError<long>(throw_on_error);
+            }
+            return th.CreateTime.CreateResult();
+        }
+
         #endregion
 
         #region Constructors
@@ -380,18 +444,18 @@ namespace NtApiDotNet
         /// <param name="ticket">The ticket to set.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The status code from the set.</returns>
-        public static NtStatus SetWorkOnBehalfThread(ulong ticket, bool throw_on_error)
+        public static NtStatus SetWorkOnBehalfTicket(ulong ticket, bool throw_on_error)
         {
-            return SetWorkOnBehalfThread(new WorkOnBehalfTicket(ticket), throw_on_error);
+            return SetWorkOnBehalfTicket(new WorkOnBehalfTicket(ticket), throw_on_error);
         }
 
         /// <summary>
         /// Set the work on behalf ticket.
         /// </summary>
         /// <param name="ticket">The ticket to set.</param>
-        public static void SetWorkOnBehalfThread(ulong ticket)
+        public static void SetWorkOnBehalfTicket(ulong ticket)
         {
-            SetWorkOnBehalfThread(ticket, true);
+            SetWorkOnBehalfTicket(ticket, true);
         }
 
         /// <summary>
@@ -400,7 +464,7 @@ namespace NtApiDotNet
         /// <param name="ticket">The ticket to set.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The status code from the set.</returns>
-        public static NtStatus SetWorkOnBehalfThread(WorkOnBehalfTicket ticket, bool throw_on_error)
+        public static NtStatus SetWorkOnBehalfTicket(WorkOnBehalfTicket ticket, bool throw_on_error)
         {
             return Current.Set(ThreadInformationClass.ThreadWorkOnBehalfTicket, new RtlWorkOnBehalfTicket() { WorkOnBehalfTicket = ticket.Ticket }, throw_on_error);
         }
@@ -409,9 +473,33 @@ namespace NtApiDotNet
         /// Set the work on behalf ticket.
         /// </summary>
         /// <param name="ticket">The ticket to set.</param>
-        public static void SetWorkOnBehalfThread(WorkOnBehalfTicket ticket)
+        public static void SetWorkOnBehalfTicket(WorkOnBehalfTicket ticket)
         {
-            SetWorkOnBehalfThread(ticket, true);
+            SetWorkOnBehalfTicket(ticket, true);
+        }
+
+        /// <summary>
+        /// Set the work on behalf ticket.
+        /// </summary>
+        /// <param name="thread_id">The thread ID.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status.</returns>
+        public static NtStatus SetWorkOnBehalfTicket(int thread_id, bool throw_on_error)
+        {
+            var ticket = GetTicket(thread_id, throw_on_error);
+            if (!ticket.IsSuccess)
+                return ticket.Status;
+
+            return SetWorkOnBehalfTicket(ticket.Result, throw_on_error);
+        }
+
+        /// <summary>
+        /// Set the work on behalf ticket.
+        /// </summary>
+        /// <param name="thread_id">The thread ID.</param>
+        public static void SetWorkOnBehalfTicket(int thread_id)
+        {
+            SetWorkOnBehalfTicket(thread_id, true);
         }
 
         /// <summary>
@@ -432,6 +520,73 @@ namespace NtApiDotNet
             TestAlert(true);
         }
 
+        /// <summary>
+        /// Attach a silo container to the current thread.
+        /// </summary>
+        /// <param name="silo">The silo to attach.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The thread impersonation context.</returns>
+        public static NtResult<ThreadImpersonationContext> AttachContainer(NtJob silo, bool throw_on_error)
+        {
+            if (silo is null)
+            {
+                throw new ArgumentNullException(nameof(silo));
+            }
+
+            return Current.Set(ThreadInformationClass.ThreadAttachContainer, silo.Handle.DangerousGetHandle(),
+                false).CreateResult(throw_on_error, () => new ThreadImpersonationContext(true));
+        }
+
+        /// <summary>
+        /// Attach a silo container to the current thread.
+        /// </summary>
+        /// <param name="silo">The silo to attach.</param>
+        /// <returns>The thread impersonation context.</returns>
+        public static ThreadImpersonationContext AttachContainer(NtJob silo)
+        {
+            return AttachContainer(silo, true).Result;
+        }
+
+        /// <summary>
+        /// Detach container from the current thread.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus DetachContainer(bool throw_on_error)
+        {
+            return Current.Set(ThreadInformationClass.ThreadAttachContainer, IntPtr.Zero,
+                throw_on_error);
+        }
+
+        /// <summary>
+        /// Detach container from the current thread.
+        /// </summary>
+        public static void DetachContainer()
+        {
+            DetachContainer(true);
+        }
+
+        /// <summary>
+        /// Get XOR key for the work-on-behalf ticket.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The XOR key.</returns>
+        public static NtResult<ulong> GetWorkOnBehalfTicketXor(bool throw_on_error)
+        {
+            var result = Current.Query<RtlWorkOnBehalfTicketEx>(ThreadInformationClass.ThreadWorkOnBehalfTicket, default, throw_on_error);
+            if (!result.IsSuccess)
+                return result.Cast<ulong>();
+
+            var ticket = result.Result.Ticket;
+            uint tid = (uint)Current.ThreadId;
+            var time = Current.Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes, default, throw_on_error);
+            if (!time.IsSuccess)
+                return time.Cast<ulong>();
+            ticket.ThreadId ^= tid;
+            ticket.ThreadCreationTimeLow ^= time.Result.CreateTime.LowPart;
+            return ticket.WorkOnBehalfTicket.CreateResult();
+        }
+
         #endregion
 
         #region Static Properties
@@ -449,25 +604,14 @@ namespace NtApiDotNet
         /// </summary>
         public static WorkOnBehalfTicket WorkOnBehalfTicket
         {
-            get => new WorkOnBehalfTicket(Current.Query<RtlWorkOnBehalfTicketEx>(ThreadInformationClass.ThreadWorkOnBehalfTicket));
-            set => SetWorkOnBehalfThread(value);
+            get => Current.GetWorkOnBehalfTicket();
+            set => SetWorkOnBehalfTicket(value);
         }
 
         /// <summary>
         /// Get the work on behalf ticket xor key.
         /// </summary>
-        public static ulong WorkOnBehalfTicketXor
-        {
-            get
-            {
-                var ticket = Current.Query<RtlWorkOnBehalfTicketEx>(ThreadInformationClass.ThreadWorkOnBehalfTicket).Ticket;
-                uint tid = (uint)Current.ThreadId;
-                uint time = Current.Query<KernelUserTimes>(ThreadInformationClass.ThreadTimes).CreateTime.LowPart;
-                ticket.ThreadId ^= tid;
-                ticket.ThreadCreationTimeLow ^= time;
-                return ticket.WorkOnBehalfTicket;
-            }
-        }
+        public static ulong WorkOnBehalfTicketXor => GetWorkOnBehalfTicketXor(true).Result;
 
         #endregion
 
@@ -775,6 +919,8 @@ namespace NtApiDotNet
         [SupportedVersion(SupportedVersion.Windows10_RS5)]
         public NtStatus QueueSpecialUserApc(ApcCallback apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2, bool throw_on_error)
         {
+            if (ProcessId != NtProcess.Current.ProcessId)
+                throw new ArgumentException("Thread must be in current process to queue a delegate.");
             return QueueSpecialUserApc(Marshal.GetFunctionPointerForDelegate(apc_routine), normal_context, system_argument1, system_argument2, throw_on_error);
         }
 
@@ -833,6 +979,8 @@ namespace NtApiDotNet
         public NtStatus QueueUserApc(ApcCallback apc_routine, IntPtr normal_context,
             IntPtr system_argument1, IntPtr system_argument2, bool throw_on_error)
         {
+            if (ProcessId != NtProcess.Current.ProcessId)
+                throw new ArgumentException("Thread must be in current process to queue a delegate.");
             return QueueUserApc(Marshal.GetFunctionPointerForDelegate(apc_routine),
                 normal_context, system_argument1, system_argument2, throw_on_error);
         }
@@ -849,7 +997,7 @@ namespace NtApiDotNet
         /// garbage collected.</remarks>
         public void QueueUserApc(ApcCallback apc_routine, IntPtr normal_context, IntPtr system_argument1, IntPtr system_argument2)
         {
-            QueueUserApc(apc_routine, normal_context, system_argument1, system_argument2);
+            QueueUserApc(apc_routine, normal_context, system_argument1, system_argument2, true);
         }
 
         /// <summary>
@@ -898,6 +1046,35 @@ namespace NtApiDotNet
         public IContext GetContext(ContextFlags flags)
         {
             return GetContext(flags, true).Result;
+        }
+
+        /// <summary>
+        /// Set the thread's context.
+        /// </summary>
+        /// <param name="context">The thread context to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetContext(IContext context, bool throw_on_error)
+        {
+            var processor = NtSystemInfo.ProcessorInformation.ProcessorArchitecture;
+            if (processor == ProcessorAchitecture.AMD64 && Environment.Is64BitProcess)
+            {
+                return SetAmd64Context(context, throw_on_error);
+            }
+            else if (processor == ProcessorAchitecture.Intel)
+            {
+                return SetX86Context(context, throw_on_error);
+            }
+            throw new InvalidOperationException($"SetContext doesn't support {processor} architecture");
+        }
+
+        /// <summary>
+        /// Set the thread's context.
+        /// </summary>
+        /// <param name="context">The thread context to set.</param>
+        public void SetContext(IContext context)
+        {
+            SetContext(context, true);
         }
 
         /// <summary>
@@ -968,6 +1145,43 @@ namespace NtApiDotNet
             {
                 return process.ReadMemory<PartialTeb>(TebBaseAddress.ToInt64());
             }
+        }
+
+        /// <summary>
+        /// Get the work on behalf ticket for a thread.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The work on behalf ticket.</returns>
+        public NtResult<WorkOnBehalfTicket> GetWorkOnBehalfTicket(bool throw_on_error)
+        {
+            if (Handle.DangerousGetHandle() == new IntPtr(-2))
+            {
+                return Query<RtlWorkOnBehalfTicketEx>(ThreadInformationClass.ThreadWorkOnBehalfTicket,
+                    default, throw_on_error).Map(t => new WorkOnBehalfTicket(t));
+            }
+            else
+            {
+                return GetTicket(ThreadId, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Get the work on behalf ticket for a thread.
+        /// </summary>
+        /// <returns>The work on behalf ticket.</returns>
+        public WorkOnBehalfTicket GetWorkOnBehalfTicket()
+        {
+            return GetWorkOnBehalfTicket(true).Result;
+        }
+
+        /// <summary>
+        /// Get the effective container ID for the thread.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The effective container ID.</returns>
+        public NtResult<Guid> GetContainerId(bool throw_on_error)
+        {
+            return Query<Guid>(ThreadInformationClass.ThreadContainerId, default, throw_on_error);
         }
 
         /// <summary>
@@ -1238,6 +1452,12 @@ namespace NtApiDotNet
         /// Get thread exit status.
         /// </summary>
         public NtStatus ExitNtStatus => (NtStatus)ExitStatus;
+
+        /// <summary>
+        /// Get the effective container ID.
+        /// </summary>
+        /// <remarks>Should be called on the current thread psuedo handle.</remarks>
+        public Guid ContainerId => GetContainerId(true).Result;
         #endregion
     }
 }

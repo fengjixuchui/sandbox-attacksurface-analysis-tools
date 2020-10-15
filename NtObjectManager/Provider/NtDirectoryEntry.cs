@@ -35,6 +35,18 @@ namespace NtObjectManager.Provider
             _symlink_target = key.GetSymbolicLinkTarget(false).GetResultOrDefault(string.Empty);
         }
 
+        private void PopulateDeviceData(NtFile file)
+        {
+            try
+            {
+                _device_type = file.DeviceType;
+                _characteristics = file.Characteristics;
+            }
+            catch (NtException)
+            {
+            }
+        }
+
         private protected void PopulateData()
         {
             if (!_data_populated)
@@ -65,6 +77,10 @@ namespace NtObjectManager.Provider
                             {
                                 PopulateKeyData(key);
                             }
+                            else if (obj is NtFile file)
+                            {
+                                PopulateDeviceData(file);
+                            }
 
                             _maximum_granted_access = obj.GrantedAccessMask.ToSpecificAccess(obj.NtType.AccessRightsType);
                         }
@@ -90,6 +106,11 @@ namespace NtObjectManager.Provider
         /// Indicates if this entry is a directory.
         /// </summary>
         public bool IsDirectory { get; }
+
+        /// <summary>
+        /// Indicates if this entry is a Device.
+        /// </summary>
+        public bool IsDevice { get; }
 
         /// <summary>
         /// Indicates if this entry is a symbolic link.
@@ -147,6 +168,41 @@ namespace NtObjectManager.Provider
             }
         }
 
+        private FileDeviceType? _device_type;
+        private FileDeviceCharacteristics? _characteristics;
+
+        /// <summary>
+        /// The device type.
+        /// </summary>
+        public FileDeviceType DeviceType
+        {
+            get
+            {
+                if (_device_type == null)
+                {
+                    _device_type = FileDeviceType.UNKNOWN;
+                    PopulateData();
+                }
+                return _device_type.Value;
+            }
+        }
+
+        /// <summary>
+        /// The device characteristics.
+        /// </summary>
+        public FileDeviceCharacteristics Characteristics
+        {
+            get
+            {
+                if (_characteristics == null)
+                {
+                    _characteristics = FileDeviceCharacteristics.None;
+                    PopulateData();
+                }
+                return _characteristics.Value;
+            }
+        }
+
         /// <summary>
         /// Try and open the directory entry and return an actual NtObject handle.
         /// </summary>
@@ -160,6 +216,13 @@ namespace NtObjectManager.Provider
             {
                 flags |= AttributeFlags.OpenLink;
             }
+
+            if (_root.FullPath == @"\" && RelativePath.StartsWith(@"??\"))
+            {
+                return NtObject.OpenWithType(TypeName, @"\" + RelativePath, null,
+                    flags, GenericAccessRights.MaximumAllowed, null, throw_on_error);
+            }
+
             return NtObject.OpenWithType(TypeName, RelativePath, _root,
                 flags, GenericAccessRights.MaximumAllowed, null, throw_on_error);
         }
@@ -181,15 +244,22 @@ namespace NtObjectManager.Provider
             TypeName = typename;
             RelativePath = relative_path;
             _root = root;
+            _is_symlink = false;
 
             switch (typename.ToLower())
             {
                 case "directory":
+                    IsDirectory = true;
+                    break;
                 case "key":
                     IsDirectory = true;
+                    _is_symlink = null;
                     break;
                 case "symboliclink":
                     _is_symlink = true;
+                    break;
+                case "device":
+                    IsDevice = true;
                     break;
             }
 

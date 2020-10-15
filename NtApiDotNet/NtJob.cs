@@ -159,16 +159,44 @@ namespace NtApiDotNet
         /// Create and initialize a Silo,
         /// </summary>
         /// <param name="root_dir_flags">Flags for root directory.</param>
+        /// <param name="desired_access">Desired access for the job.</param>
+        /// <param name="object_attributes">Object attributes.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The Job object.</returns>
+        public static NtResult<NtJob> CreateSilo(ObjectAttributes object_attributes, 
+            JobAccessRights desired_access, SiloObjectRootDirectoryControlFlags root_dir_flags, bool throw_on_error)
+        {
+            using (var job = Create(object_attributes, desired_access | JobAccessRights.SetAttributes, throw_on_error))
+            {
+                if (!job.IsSuccess)
+                    return job;
+
+                return job.Result.InitializeSilo(root_dir_flags, false).CreateResult(throw_on_error, () => job.Result.Duplicate());
+            }
+        }
+
+        /// <summary>
+        /// Create and initialize a Silo,
+        /// </summary>
+        /// <param name="root_dir_flags">Flags for root directory.</param>
+        /// <param name="desired_access">Desired access for the job.</param>
+        /// <param name="object_attributes">Object attributes.</param>
+        /// <returns>The Job object.</returns>
+        public static NtJob CreateSilo(ObjectAttributes object_attributes,
+            JobAccessRights desired_access, SiloObjectRootDirectoryControlFlags root_dir_flags)
+        {
+            return CreateSilo(object_attributes, desired_access, root_dir_flags, true).Result;
+        }
+
+        /// <summary>
+        /// Create and initialize a Silo,
+        /// </summary>
+        /// <param name="root_dir_flags">Flags for root directory.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The Job object.</returns>
         public static NtResult<NtJob> CreateSilo(SiloObjectRootDirectoryControlFlags root_dir_flags, bool throw_on_error)
         {
-            using (var job = Create(null, JobAccessRights.MaximumAllowed, throw_on_error))
-            {
-                if (!job.IsSuccess)
-                    return job;
-                return job.Result.InitializeSilo(root_dir_flags, false).CreateResult(throw_on_error, () => job.Result.Duplicate());
-            }
+            return CreateSilo(null, JobAccessRights.MaximumAllowed, root_dir_flags, throw_on_error);
         }
 
         /// <summary>
@@ -189,10 +217,15 @@ namespace NtApiDotNet
         /// <param name="system_root">Path to the system root.</param>
         /// <param name="delete_event">Event to signal when silo deleted.</param>
         /// <param name="downlevel_container">True if a downlevel container.</param>
+        /// <param name="desired_access">Desired access for the job.</param>
+        /// <param name="object_attributes">Object attributes.</param>
         /// <returns>The Job object.</returns>
-        public static NtResult<NtJob> CreateServerSilo(SiloObjectRootDirectoryControlFlags root_dir_flags, string system_root, NtEvent delete_event, bool downlevel_container, bool throw_on_error)
+        public static NtResult<NtJob> CreateServerSilo(ObjectAttributes object_attributes,
+            JobAccessRights desired_access, SiloObjectRootDirectoryControlFlags root_dir_flags, 
+            string system_root, NtEvent delete_event, bool downlevel_container, 
+            bool throw_on_error)
         {
-            using (var job = CreateSilo(root_dir_flags, throw_on_error))
+            using (var job = CreateSilo(object_attributes, desired_access, root_dir_flags, throw_on_error))
             {
                 if (!job.IsSuccess)
                     return job;
@@ -235,8 +268,42 @@ namespace NtApiDotNet
         /// <param name="system_root">Path to the system root.</param>
         /// <param name="delete_event">Event to signal when silo deleted.</param>
         /// <param name="downlevel_container">True if a downlevel container.</param>
+        /// <param name="desired_access">Desired access for the job.</param>
+        /// <param name="object_attributes">Object attributes.</param>
         /// <returns>The Job object.</returns>
-        public static NtJob CreateServerSilo(SiloObjectRootDirectoryControlFlags root_dir_flags, string system_root, NtEvent delete_event, bool downlevel_container)
+        public static NtJob CreateServerSilo(ObjectAttributes object_attributes,
+            JobAccessRights desired_access, SiloObjectRootDirectoryControlFlags root_dir_flags,
+            string system_root, NtEvent delete_event, bool downlevel_container)
+        {
+            return CreateServerSilo(object_attributes, desired_access, root_dir_flags,
+                system_root, delete_event, downlevel_container, true).Result;
+        }
+
+        /// <summary>
+        /// Create and initialize a Server Silo,
+        /// </summary>
+        /// <param name="root_dir_flags">Flags for root directory.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <param name="system_root">Path to the system root.</param>
+        /// <param name="delete_event">Event to signal when silo deleted.</param>
+        /// <param name="downlevel_container">True if a downlevel container.</param>
+        /// <returns>The Job object.</returns>
+        public static NtResult<NtJob> CreateServerSilo(SiloObjectRootDirectoryControlFlags root_dir_flags, string system_root, 
+            NtEvent delete_event, bool downlevel_container, bool throw_on_error)
+        {
+            return CreateServerSilo(null, JobAccessRights.MaximumAllowed, root_dir_flags, system_root, 
+                delete_event, downlevel_container, throw_on_error);
+        }
+
+            /// <summary>
+            /// Create and initialize a Server Silo,
+            /// </summary>
+            /// <param name="root_dir_flags">Flags for root directory.</param>
+            /// <param name="system_root">Path to the system root.</param>
+            /// <param name="delete_event">Event to signal when silo deleted.</param>
+            /// <param name="downlevel_container">True if a downlevel container.</param>
+            /// <returns>The Job object.</returns>
+            public static NtJob CreateServerSilo(SiloObjectRootDirectoryControlFlags root_dir_flags, string system_root, NtEvent delete_event, bool downlevel_container)
         {
             return CreateServerSilo(root_dir_flags, system_root, delete_event, downlevel_container, true).Result;
         }
@@ -602,7 +669,7 @@ namespace NtApiDotNet
             }
 
             return SetExtendedLimitInformation(i => {
-                i.BasicLimitInformation.PerProcessUserTimeLimit = new LargeIntegerStruct() { QuadPart = process_time_limit };
+                i.BasicLimitInformation.PerProcessUserTimeLimit = new LargeIntegerStruct() { QuadPart = Math.Abs(process_time_limit) };
                 i.BasicLimitInformation.LimitFlags |= JobObjectLimitFlags.ProcessTime;
                 return i;
             }, throw_on_error);
@@ -655,7 +722,7 @@ namespace NtApiDotNet
             }
 
             return SetExtendedLimitInformation(i => {
-                i.BasicLimitInformation.PerJobUserTimeLimit = new LargeIntegerStruct() { QuadPart = job_time_limit };
+                i.BasicLimitInformation.PerJobUserTimeLimit = new LargeIntegerStruct() { QuadPart = Math.Abs(job_time_limit) };
                 i.BasicLimitInformation.LimitFlags |= JobObjectLimitFlags.JobTime;
                 return i;
             }, throw_on_error);
@@ -799,6 +866,26 @@ namespace NtApiDotNet
             => Query<SiloUserSharedData>(JobObjectInformationClass.JobObjectServerSiloUserSharedData, default, throw_on_error);
 
         /// <summary>
+        /// Get whether this job object can be impersonated.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>True if the job object can be impersonated.</returns>
+        public NtResult<bool> QueryThreadImpersonation(bool throw_on_error)
+        {
+            return Query<byte>(JobObjectInformationClass.JobObjectThreadImpersonationInformation, 0, throw_on_error).Map(b => b != 0 ? true : false);
+        }
+
+        /// <summary>
+        /// Enable thread impersonation on this job object.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus EnableThreadImpersonation(bool throw_on_error)
+        {
+            return Set(JobObjectInformationClass.JobObjectThreadImpersonationInformation, (byte)1, throw_on_error);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -870,7 +957,17 @@ namespace NtApiDotNet
         /// <summary>
         /// Get or set the active process limit.
         /// </summary>
+        [Obsolete("Use ActiveProcess")]
         public int ActiveProcessLimit
+        {
+            get => ActiveProcess;
+            set => ActiveProcess = value;
+        }
+
+        /// <summary>
+        /// Get or set the active process limit.
+        /// </summary>
+        public int ActiveProcess
         {
             get => GetExtendedLimitInfo().BasicLimitInformation.ActiveProcessLimit;
             set => SetActiveProcessLimit(value, true);
@@ -891,7 +988,7 @@ namespace NtApiDotNet
         public long MaximumWorkingSetSize
         {
             get => GetExtendedLimitInfo().BasicLimitInformation.MaximumWorkingSetSize.ToInt64();
-            set => SetWorkingSetSize(MinimumWorkingSetSize, value, true);
+            set => SetWorkingSetSize(MinimumWorkingSetSize, value);
         }
 
         /// <summary>
@@ -900,7 +997,7 @@ namespace NtApiDotNet
         public long ProcessTime
         {
             get => GetExtendedLimitInfo().BasicLimitInformation.PerProcessUserTimeLimit.QuadPart;
-            set => SetProcessTimeLimit(value, true);
+            set => SetProcessTimeLimit(value);
         }
 
         /// <summary>
@@ -909,7 +1006,7 @@ namespace NtApiDotNet
         public long JobTime
         {
             get => GetExtendedLimitInfo().BasicLimitInformation.PerJobUserTimeLimit.QuadPart;
-            set => SetJobTimeLimit(value, true);
+            set => SetJobTimeLimit(value);
         }
 
         /// <summary>
@@ -1030,6 +1127,25 @@ namespace NtApiDotNet
         /// Get Silo user shared data.
         /// </summary>
         public SiloUserSharedData SiloUserSharedData => Query<SiloUserSharedData>(JobObjectInformationClass.JobObjectServerSiloUserSharedData);
+
+        /// <summary>
+        /// Get or set the thread impersonation status.
+        /// </summary>
+        public bool ThreadImpersonation
+        {
+            get => QueryThreadImpersonation(true).Result;
+            set
+            {
+                if (!value)
+                    throw new ArgumentException("Can't disable thread impersonation.");
+                EnableThreadImpersonation(true);
+            }
+        }
+
+        /// <summary>
+        /// Get whether this Job object is a silo.
+        /// </summary>
+        public bool Silo => Query<SiloObjectBasicInformation>(JobObjectInformationClass.JobObjectSiloBasicInformation, default, false).Status.IsSuccess();
 
         #endregion
 

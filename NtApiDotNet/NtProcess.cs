@@ -167,6 +167,11 @@ namespace NtApiDotNet
                     dispose.Add(ProcessAttribute.ParentProcess(config.ParentProcess.Handle));
                 }
 
+                if (config.DebugObject != null)
+                {
+                    dispose.Add(ProcessAttribute.DebugPort(config.DebugObject.Handle));
+                }
+
                 if (config.ChildProcessMitigations != ChildProcessMitigationFlags.None)
                 {
                     dispose.Add(ProcessAttribute.ChildProcess(config.ChildProcessMitigations));
@@ -184,7 +189,8 @@ namespace NtApiDotNet
 
                 if (config.Secure)
                 {
-                    var trustlet_config = config.TrustletConfig ?? NtProcessTrustletConfig.CreateFromFile(image_path);
+                    string win32_path = $@"\\?\GLOBALROOT\{image_path}";
+                    var trustlet_config = config.TrustletConfig ?? NtProcessTrustletConfig.CreateFromFile(win32_path);
                     dispose.Add(ProcessAttribute.SecureProcess(trustlet_config));
                 }
 
@@ -1656,6 +1662,19 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get the integrity level for the process.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The integerity level.</returns>
+        public NtResult<TokenIntegrityLevel> GetIntegrityLevel(bool throw_on_error)
+        {
+            using (var token = OpenToken(TokenAccessRights.Query, throw_on_error))
+            {
+                return token.Map(t => t.IntegrityLevel);
+            }
+        }
+
+        /// <summary>
         /// Set process fault flags.
         /// </summary>
         /// <param name="flags">The flags to set.</param>
@@ -1795,11 +1814,12 @@ namespace NtApiDotNet
         /// <returns>The list of job objects.</returns>
         public IEnumerable<NtJob> GetAccessibleJobObjects()
         {
+            HashSet<ulong> jobs = new HashSet<ulong>();
             if (!IsInJob())
                 yield break;
             foreach (var h in NtSystemInfo.GetHandles())
             {
-                if (h.ObjectType == "Job")
+                if (h.ObjectType == "Job" && jobs.Add(h.Object))
                 {
                     using (var result = h.GetObject(false).Cast<NtJob>())
                     {
@@ -1967,6 +1987,29 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get the process command line.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The process command line.</returns>
+        public NtResult<string> GetCommandLine(bool throw_on_error)
+        {
+            using (var result = QueryBuffer(ProcessInformationClass.ProcessCommandLineInformation, new UnicodeStringOut(), false))
+            {
+                return result.Map(b => b.Result.ToString());
+            }
+        }
+
+        /// <summary>
+        /// Get the IO counters for the process.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The IO counters.</returns>
+        public NtResult<IoCounters> GetIoCounters(bool throw_on_error)
+        {
+            return Query<IoCounters>(ProcessInformationClass.ProcessIoCounters, default, throw_on_error);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -2066,8 +2109,11 @@ namespace NtApiDotNet
         {
             get
             {
-                using (var result = QueryBuffer(ProcessInformationClass.ProcessCommandLineInformation, new UnicodeStringOut(), false))
+                using (var result = GetCommandLine(false))
                 {
+                    if (result.IsSuccess)
+                        return result.Result;
+
                     // This will fail if process is being torn down, just return an empty string.
                     if (result.Status == NtStatus.STATUS_PROCESS_IS_TERMINATING
                         || result.Status == NtStatus.STATUS_PARTIAL_COPY
@@ -2076,7 +2122,7 @@ namespace NtApiDotNet
                         return string.Empty;
                     }
 
-                    return result.GetResultOrThrow().Result.ToString();
+                    throw new NtException(result.Status);
                 }
             }
         }
@@ -2084,7 +2130,7 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the command line as parsed arguments.
         /// </summary>
-        public string[] CommandLineArguments => Win32Utils.ParseCommandLine(CommandLine);
+        public string[] CommandLineArguments => Win32Utils.ParseCommandLine(GetCommandLine(false).GetResultOrDefault(string.Empty));
 
         /// <summary>
         /// Get process DEP status
@@ -2181,6 +2227,11 @@ namespace NtApiDotNet
         /// Get the process user.
         /// </summary>
         public Sid User => GetUser();
+
+        /// <summary>
+        /// Get the integrity level of the process.
+        /// </summary>
+        public TokenIntegrityLevel IntegrityLevel => GetIntegrityLevel(true).Result;
 
         /// <summary>
         /// Get process mitigations
@@ -2298,12 +2349,17 @@ namespace NtApiDotNet
         /// <summary>
         /// Gets whether the process is currently deleting.
         /// </summary>
-        public bool IsDeleting => ExtendedFlags.HasFlag(ProcessExtendedBasicInformationFlags.IsProcessDeleting);
+        public bool IsDeleting => ExtendedFlags.HasFlagSet(ProcessExtendedBasicInformationFlags.IsProcessDeleting);
 
         /// <summary>
         /// Gets whether the process is secure.
         /// </summary>
-        public bool Secure => ExtendedFlags.HasFlag(ProcessExtendedBasicInformationFlags.IsSecureProcess);
+        public bool Secure => ExtendedFlags.HasFlagSet(ProcessExtendedBasicInformationFlags.IsSecureProcess);
+
+        /// <summary>
+        /// Gets whether the process is protected.
+        /// </summary>
+        public bool Protected => ExtendedFlags.HasFlagSet(ProcessExtendedBasicInformationFlags.IsProtectedProcess);
 
         /// <summary>
         /// Get process protection information.
@@ -2397,6 +2453,11 @@ namespace NtApiDotNet
         /// Get the time spent in user mode.
         /// </summary>
         public double UserTimeSeconds => new TimeSpan(UserTime).TotalSeconds;
+
+        /// <summary>
+        /// Get the process IO counters.
+        /// </summary>
+        public IoCounters IoCounters => GetIoCounters(true).Result;
 
         #endregion
 

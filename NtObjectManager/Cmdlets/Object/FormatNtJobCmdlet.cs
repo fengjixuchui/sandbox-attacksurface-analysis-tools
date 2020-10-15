@@ -15,6 +15,7 @@
 using NtApiDotNet;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Management.Automation;
 
 namespace NtObjectManager.Cmdlets.Object
@@ -54,7 +55,7 @@ namespace NtObjectManager.Cmdlets.Object
         /// <summary>
         /// <para type="description">Specify the process to format job information.</para>
         /// </summary>
-        [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromJob")]
+        [Parameter(Mandatory = true, Position = 0, ParameterSetName = "FromJob", ValueFromPipeline = true)]
         public NtJob[] Job { get; set; }
 
         /// <summary>
@@ -66,16 +67,34 @@ namespace NtObjectManager.Cmdlets.Object
         private void FormatJobBasicLimits(NtJob job)
         {
             WriteObject("[Basic Limits]");
-            WriteObject($"Limit Flags: {job.LimitFlags}");
+            WriteObject($"Limit Flags         : {job.LimitFlags}");
             if (job.LimitFlags.HasFlag(JobObjectLimitFlags.ActiveProcess))
             {
-                WriteObject($"Active Process Limit: {job.ActiveProcessLimit}");
+                WriteObject($"Active Process Limit: {job.ActiveProcess}");
             }
             if (job.LimitFlags.HasFlag(JobObjectLimitFlags.ProcessMemory))
             {
                 WriteObject($"Process Memory Limit: {job.ProcessMemory}");
             }
+            if (job.LimitFlags.HasFlag(JobObjectLimitFlags.ProcessTime))
+            {
+                WriteObject($"Process Time Limit  : {FormatTime(job.ProcessTime)}");
+            }
+            if (job.LimitFlags.HasFlag(JobObjectLimitFlags.JobMemory))
+            {
+                WriteObject($"Job Memory Limit    : {job.JobMemory}");
+            }
+            if (job.LimitFlags.HasFlag(JobObjectLimitFlags.JobTime))
+            {
+                WriteObject($"Job Time Limit      : {FormatTime(job.JobTime)}");
+            }
             WriteObject(string.Empty);
+        }
+
+        private static string FormatTime(long time)
+        {
+            double time_curr_ms = Math.Abs(time) / 10000.0;
+            return $"{time_curr_ms / 1000}s";
         }
 
         private void FormatProcess(int pid)
@@ -96,7 +115,7 @@ namespace NtObjectManager.Cmdlets.Object
         private void FormatProcessList(NtJob job)
         {
             var pids = job.GetProcessIdList(false);
-            if (pids.IsSuccess)
+            if (pids.IsSuccess && pids.Result.Any())
             {
                 WriteObject("[Process List]");
                 foreach (var pid in pids.Result)
@@ -134,6 +153,17 @@ namespace NtObjectManager.Cmdlets.Object
             WriteObject($"Silo ID       : {basic_info.Result.SiloId}");
             WriteObject($"Silo Parent ID: {basic_info.Result.SiloParentId}");
             WriteObject($"Process Count : {basic_info.Result.NumberOfProcesses}");
+            string root_dir = job.QuerySiloRootDirectory(false).GetResultOrDefault(string.Empty);
+            if (root_dir.Length > 0)
+            {
+                WriteObject($"Root Directory: {root_dir}");
+            }
+            WriteObject($"Container ID  : {job.ContainerId}");
+            if (job.ContainerTelemetryId != Guid.Empty)
+            {
+                WriteObject($"Telemetry ID  : {job.ContainerTelemetryId}");
+            }
+            WriteObject($"Impersonation : {(job.ThreadImpersonation ? "Enabled" : "Disabled")}");
             WriteObject(string.Empty);
             if (!basic_info.Result.IsInServerSilo)
                 return;

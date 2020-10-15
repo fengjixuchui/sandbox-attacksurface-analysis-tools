@@ -15,6 +15,7 @@
 using NtApiDotNet.Ndr;
 using NtApiDotNet.Win32.Debugger;
 using NtApiDotNet.Win32.SafeHandles;
+using NtApiDotNet.Win32.Security.Native;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -562,6 +563,23 @@ namespace NtApiDotNet.Win32
           IntPtr CallbackContext
         );
 
+    internal enum WinCertType : ushort
+    {
+        WIN_CERT_TYPE_X509 = 1,
+        WIN_CERT_TYPE_PKCS_SIGNED_DATA = 2,
+        WIN_CERT_TYPE_RESERVED_1 = 3,
+        WIN_CERT_TYPE_TS_STACK_SIGNED = 4,
+        WIN_CERT_TYPE_ANY = 255,
+    }
+
+    [StructLayout(LayoutKind.Sequential), DataStart("bCertificate")]
+    internal struct WIN_CERTIFICATE
+    {
+        public int dwLength;
+        public ushort wRevision;
+        public WinCertType wCertificateType;   // WIN_CERT_TYPE_xxx
+        public byte bCertificate;
+    }
     internal static class Win32NativeMethods
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -686,6 +704,25 @@ namespace NtApiDotNet.Win32
           IntPtr Base,
           int Rva,
           IntPtr LastRvaSection
+        );
+
+        [DllImport("imagehlp.dll", SetLastError = true)]
+        internal static extern bool ImageEnumerateCertificates(
+            SafeKernelObjectHandle FileHandle,
+            WinCertType TypeFilter,
+            out int CertificateCount,
+            int[] Indices,
+            int IndexCount
+        );
+
+        internal const ushort CERT_SECTION_TYPE_ANY = 255;
+
+        [DllImport("imagehlp.dll", SetLastError = true)]
+        internal static extern bool ImageGetCertificateData(
+          SafeKernelObjectHandle FileHandle,
+          int CertificateIndex,
+          SafeBuffer Certificate,
+          ref int RequiredLength
         );
 
         internal const int GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS = 0x00000004;
@@ -863,6 +900,9 @@ namespace NtApiDotNet.Win32
         [DllImport("kernel32.dll", SetLastError = true, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)]
         internal static extern IntPtr FindResource(SafeLoadLibraryHandle hModule, IntPtr lpName, IntPtr lpType);
 
+        [DllImport("kernel32.dll", SetLastError = true, CallingConvention = CallingConvention.StdCall, CharSet = CharSet.Unicode)]
+        internal static extern IntPtr FindResource(SafeLoadLibraryHandle hModule, string lpName, string lpType);
+
         [DllImport("Advapi32.dll", SetLastError = true)]
         internal static extern bool CloseServiceHandle(IntPtr hSCObject);
 
@@ -1000,6 +1040,20 @@ namespace NtApiDotNet.Win32
           ref STARTUPINFO lpStartupInfo,
           out PROCESS_INFORMATION lpProcessInformation);
 
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern bool CreateProcessWithLogonW(
+          string lpUsername,
+          string lpDomain,
+          SecureStringMarshal lpPassword,
+          CreateProcessLogonFlags dwLogonFlags,
+          string lpApplicationName,
+          string lpCommandLine,
+          CreateProcessFlags dwCreationFlags,
+          [In] byte[] lpEnvironment,
+          string lpCurrentDirectory,
+          ref STARTUPINFO lpStartupInfo,
+          out PROCESS_INFORMATION lpProcessInformation);
+
         [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
         internal static extern NtStatus CreateAppContainerProfile(
           string pszAppContainerName,
@@ -1008,6 +1062,12 @@ namespace NtApiDotNet.Win32
           SidAndAttributes[] pCapabilities,
           int dwCapabilityCount,
           out SafeSidBufferHandle ppSidAppContainerSid
+        );
+
+        [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus GetAppContainerRegistryLocation(
+          KeyAccessRights desiredAccess,
+          out SafeKernelObjectHandle phAppContainerKey
         );
 
         [DllImport("userenv.dll", CharSet = CharSet.Unicode)]
@@ -1040,6 +1100,40 @@ namespace NtApiDotNet.Win32
             string packageFullName,
             ref int pathLength,
             StringBuilder path
+        );
+
+        [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetPackagePathByFullName(
+            string packageFullName,
+            ref int pathLength,
+            StringBuilder path
+        );
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetPackageFullNameFromToken(
+          SafeKernelObjectHandle token,
+          ref int packageFullNameLength,
+          StringBuilder packageFullName
+        );
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error OpenPackageInfoByFullName(
+            string packageFullName,
+            int reserved,
+            out IntPtr packageInfoReference
+        );
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error ClosePackageInfo(
+          IntPtr packageInfoReference
+        );
+
+        [DllImport("kernelbase.dll", CharSet = CharSet.Unicode)]
+        internal static extern Win32Error GetPackageApplicationIds(
+          IntPtr packageInfoReference,
+          ref int bufferLength,
+          [Out] SafeBuffer buffer,
+          out int count
         );
 
         [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]

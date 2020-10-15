@@ -14,6 +14,8 @@
 
 using NtApiDotNet;
 using NtApiDotNet.Utilities.Text;
+using NtApiDotNet.Win32;
+using NtApiDotNet.Win32.Security.Native;
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -163,6 +165,12 @@ namespace NtObjectManager.Utils
             return s.Contains("*") || s.Contains("?");
         }
 
+        private static string Combine(string path1, string path2)
+        {
+            path1 = path1.TrimEnd('\\', '/');
+            return path1 + @"\" + path2;
+        }
+
         private static string ResolveRelativePath(SessionState state, string path, RtlPathType path_type)
         {
             var current_path = state.Path.CurrentFileSystemLocation;
@@ -174,13 +182,13 @@ namespace NtObjectManager.Utils
             switch (path_type)
             {
                 case RtlPathType.Relative:
-                    return Path.Combine(current_path.Path, path);
+                    return Combine(current_path.Path, path);
                 case RtlPathType.Rooted:
                     return $"{current_path.Drive.Name}:{path}";
                 case RtlPathType.DriveRelative:
                     if (path.Substring(0, 1).Equals(current_path.Drive.Name, StringComparison.OrdinalIgnoreCase))
                     {
-                        return Path.Combine(current_path.Path, path.Substring(2));
+                        return Combine(current_path.Path, path.Substring(2));
                     }
                     break;
             }
@@ -196,6 +204,11 @@ namespace NtObjectManager.Utils
         /// <returns>The resolved Win32 path.</returns>
         public static string ResolveWin32Path(SessionState state, string path)
         {
+            return ResolveWin32Path(state, path, true);
+        }
+
+        internal static string ResolveWin32Path(SessionState state, string path, bool convert_to_nt_path)
+        {
             var path_type = NtFileUtils.GetDosPathType(path);
             if (path_type == RtlPathType.Rooted && path.StartsWith(@"\??"))
             {
@@ -210,7 +223,7 @@ namespace NtObjectManager.Utils
                     break;
             }
 
-            return NtFileUtils.DosFileNameToNt(path);
+            return convert_to_nt_path ? NtFileUtils.DosFileNameToNt(path) : Path.GetFullPath(path);
         }
 
         internal static string ResolvePath(SessionState state, string path, bool win32_path)
@@ -266,6 +279,73 @@ namespace NtObjectManager.Utils
                 ret.Add(new KeyValuePair<string, int>(name.ToString(), (int)name));
             }
             return ret.AsReadOnly();
+        }
+
+        private static NtToken GetSystemToken()
+        {
+            NtToken.EnableDebugPrivilege(); 
+            using (var ps = NtProcess.GetProcesses(ProcessAccessRights.QueryLimitedInformation).ToDisposableList())
+            {
+                Sid local_system = KnownSids.LocalSystem;
+                foreach (var p in ps)
+                {
+                    using (var result = NtToken.OpenProcessToken(p, TokenAccessRights.Query | TokenAccessRights.Duplicate, false))
+                    {
+                        if (!result.IsSuccess)
+                            continue;
+                        var token = result.Result;
+                        if (token.User.Sid == local_system
+                            && !token.Filtered
+                            && token.GetPrivilege(TokenPrivilegeValue.SeTcbPrivilege) != null
+                            && token.IntegrityLevel == TokenIntegrityLevel.System)
+                        {
+                            using (var imp_token = token.DuplicateToken(SecurityImpersonationLevel.Impersonation))
+                            {
+                                if (imp_token.SetPrivilege(TokenPrivilegeValue.SeTcbPrivilege, PrivilegeAttributes.Enabled))
+                                {
+                                    using (imp_token.Impersonate())
+                                    {
+                                        return LogonUtils.Logon("SYSTEM", "NT AUTHORITY", null, 
+                                            SecurityLogonType.Service, Logon32Provider.Default, false).GetResultOrDefault();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        private static Lazy<NtToken> _system_token = new Lazy<NtToken>(GetSystemToken);
+
+        internal static ThreadImpersonationContext ImpersonateSystem()
+        {
+            using (var token = _system_token.Value?.DuplicateToken(SecurityImpersonationLevel.Impersonation))
+            {
+                if (token == null)
+                    throw new ArgumentException("Can't impersonate system token.");
+                return token.Impersonate();
+            }
+        }
+
+        /// <summary>
+        /// Get the signing level for an image file.
+        /// </summary>
+        /// <param name="path">The path to the image file.</param>
+        /// <returns>The signing level.</returns>
+        public static SigningLevel GetSigningLevel(string path)
+        {
+            using (var file = NtFile.Open(path, null, FileAccessRights.Execute, FileShareMode.Read | FileShareMode.Delete, FileOpenOptions.NonDirectoryFile))
+            {
+                using (var sect = NtSection.CreateImageSection(file))
+                {
+                    using (var map = sect.MapRead())
+                    {
+                        return map.ImageSigningLevel;
+                    }
+                }
+            }
         }
     }
 }

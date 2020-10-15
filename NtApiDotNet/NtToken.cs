@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet.Token;
+using NtApiDotNet.Win32;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -1440,6 +1441,11 @@ namespace NtApiDotNet
         public bool WriteRestricted => Restricted && Flags.HasFlagSet(TokenFlags.WriteRestricted);
 
         /// <summary>
+        /// Get whether token is filtered.
+        /// </summary>
+        public bool Filtered => Flags.HasFlagSet(TokenFlags.IsFiltered);
+
+        /// <summary>
         /// Get whether token is not low.
         /// </summary>
         public bool NotLow => Flags.HasFlagSet(TokenFlags.NotLow);
@@ -1762,7 +1768,13 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the list of policies for this App.
         /// </summary>
-        public IEnumerable<AppModelPolicy_PolicyValue> AppModelPolicies
+        [Obsolete("Use AppModelPolicyDictionary instead.")]
+        public IEnumerable<AppModelPolicy_PolicyValue> AppModelPolicies => AppModelPolicyDictionary.Values;
+
+        /// <summary>
+        /// Get the list of policies for this App in a table.
+        /// </summary>
+        public Dictionary<AppModelPolicy_Type, AppModelPolicy_PolicyValue> AppModelPolicyDictionary
         {
             get
             {
@@ -1772,10 +1784,11 @@ namespace NtApiDotNet
                 if (!NtRtl.RtlQueryPackageClaims(Handle, null, null, null, null, null,
                     pkg_claim, attributes_present_obj).IsSuccess())
                 {
-                    return Enumerable.Empty<AppModelPolicy_PolicyValue>();
+                    return new Dictionary<AppModelPolicy_Type, AppModelPolicy_PolicyValue>();
                 }
 
-                return Enum.GetValues(typeof(AppModelPolicy_Type)).Cast<AppModelPolicy_Type>().Select(p => GetAppPolicy(p, attributes_present_obj.Value, pkg_claim.Flags));
+                return Enum.GetValues(typeof(AppModelPolicy_Type)).Cast<AppModelPolicy_Type>().ToDictionary(k => k, 
+                    k => GetAppPolicy(k, attributes_present_obj.Value, pkg_claim.Flags));
             }
         }
 
@@ -1796,6 +1809,11 @@ namespace NtApiDotNet
                 }
             }
         }
+
+        /// <summary>
+        /// Get the token's package identity.
+        /// </summary>
+        public PackageIdentity PackageIdentity => PackageIdentity.CreateFromToken(this, false, false).GetResultOrDefault();
 
         /// <summary>
         /// Get or set the token audit policy.

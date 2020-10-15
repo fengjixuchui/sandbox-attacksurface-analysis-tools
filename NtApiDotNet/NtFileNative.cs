@@ -306,14 +306,14 @@ namespace NtApiDotNet
         [DllImport("ntdll.dll")]
         public static extern NtStatus NtQueryQuotaInformationFile(
           SafeKernelObjectHandle FileHandle,
-          IoStatus IoStatusBlock,
+          [In, Out] IoStatus IoStatusBlock,
           SafeBuffer Buffer,
           int Length,
           [MarshalAs(UnmanagedType.U1)]
           bool ReturnSingleEntry,
           SafeBuffer SidList,
           int SidListLength,
-          SafeBuffer StartSid,
+          SafeSidBufferHandle StartSid,
           [MarshalAs(UnmanagedType.U1)]
           bool RestartScan
         );
@@ -1222,13 +1222,13 @@ namespace NtApiDotNet
         public FileDeviceCharacteristics Characteristics;
     }
 
-    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode), DataStart("DriverName")]
+    [StructLayout(LayoutKind.Sequential), DataStart("DriverName")]
     public struct FileFsDriverPathInformation
     {
         [MarshalAs(UnmanagedType.U1)]
         public bool DriverInPath;
         public int DriverNameLength;
-        public char DriverName;
+        public short DriverName;
     }
 
     [StructLayout(LayoutKind.Sequential)]
@@ -1497,6 +1497,10 @@ namespace NtApiDotNet
         /// Length of the file.
         /// </summary>
         public long EndOfFile { get; }
+        /// <summary>
+        /// Length of the file, alias of EndOfFile.
+        /// </summary>
+        public long FileSize => EndOfFile;
         /// <summary>
         /// Allocation size.
         /// </summary>
@@ -2189,10 +2193,27 @@ namespace NtApiDotNet
     public sealed class FileQuotaEntry
     {
         public Sid Sid { get; }
+        public string User => Sid.Name;
         public DateTime ChangeTime { get; }
-        public long QuotaUsed { get; }
-        public long QuotaThreshold { get; }
-        public long QuotaLimit { get; }
+        public long QuotaUsed { get; set; }
+        public long QuotaThreshold { get; set; }
+        public long QuotaLimit { get; set; }
+        public double QuotaPercent
+        {
+            get
+            {
+                if (QuotaThreshold <= 0)
+                    return 0.0;
+                return 100.0 * (QuotaUsed / (double)QuotaLimit);
+            }
+        }
+
+        public FileQuotaEntry(Sid sid, long quota_threshold, long quota_limit)
+        {
+            Sid = sid;
+            QuotaThreshold = quota_threshold;
+            QuotaLimit = quota_limit;
+        }
 
         internal FileQuotaEntry(SafeStructureInOutBuffer<FileQuotaInformation> buffer)
         {
@@ -2203,6 +2224,19 @@ namespace NtApiDotNet
             QuotaUsed = info.QuotaUsed.QuadPart;
             QuotaThreshold = info.QuotaThreshold.QuadPart;
             QuotaLimit = info.QuotaLimit.QuadPart;
+        }
+
+        internal FileQuotaInformation ToInfo(int next_offset)
+        {
+            return new FileQuotaInformation()
+            {
+                NextEntryOffset = next_offset,
+                SidLength = Sid.ToArray().Length,
+                ChangeTime = new LargeIntegerStruct(),
+                QuotaUsed = new LargeIntegerStruct(),
+                QuotaThreshold = new LargeIntegerStruct() { QuadPart = QuotaThreshold },
+                QuotaLimit = new LargeIntegerStruct() { QuadPart = QuotaLimit }
+            };
         }
     }
 

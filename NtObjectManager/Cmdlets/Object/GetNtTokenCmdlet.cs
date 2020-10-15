@@ -23,6 +23,7 @@ using System.Runtime.InteropServices;
 using NtApiDotNet.Win32.Security.Authentication;
 using NtApiDotNet.Win32.Security.Authentication.Kerberos;
 using NtApiDotNet.Win32.Security.Native;
+using NtObjectManager.Utils;
 
 namespace NtObjectManager.Cmdlets.Object
 {
@@ -273,6 +274,14 @@ namespace NtObjectManager.Cmdlets.Object
         /// </summary>
         [Parameter(ParameterSetName = "Logon")]
         public Logon32Provider LogonProvider { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify to use SeTcbPrivilege for the logon. This might require finding a token to steal.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "Logon")]
+        [Parameter(ParameterSetName = "Service")]
+        [Parameter(ParameterSetName = "S4U")]
+        public SwitchParameter WithTcb { get; set; }
 
         /// <summary>
         /// <para type="description">Get an Services for User (S4U) logon token.</para>
@@ -598,32 +607,53 @@ namespace NtObjectManager.Cmdlets.Object
             }
         }
 
+        private ThreadImpersonationContext GetTcbPrivilege()
+        {
+            if (!WithTcb)
+                return null;
+            if (NtToken.EnableEffectivePrivilege(TokenPrivilegeValue.SeTcbPrivilege))
+            {
+                return null;
+            }
+
+            return PSUtils.ImpersonateSystem();
+        }
+
         private NtToken GetLogonToken(TokenAccessRights desired_access)
         {
-            return GetLogonToken(desired_access, User, Domain, GetPassword(), LogonType);
+            using (GetTcbPrivilege())
+            {
+                return GetLogonToken(desired_access, User, Domain, GetPassword(), LogonType);
+            }
         }
 
         private NtToken GetS4UToken(TokenAccessRights desired_access)
         {
-            using (NtToken token = LogonUtils.LsaLogonS4U(User, Domain, LogonType, AuthenticationPackage.NEGOSSP_NAME))
+            using (GetTcbPrivilege())
             {
-                if (desired_access == TokenAccessRights.MaximumAllowed)
+                using (NtToken token = LogonUtils.LsaLogonS4U(User, Domain, LogonType, AuthenticationPackage.NEGOSSP_NAME))
                 {
-                    return token.Duplicate();
+                    if (desired_access == TokenAccessRights.MaximumAllowed)
+                    {
+                        return token.Duplicate();
+                    }
+                    return token.Duplicate(desired_access);
                 }
-                return token.Duplicate(desired_access);
             }
         }
 
         private NtToken GetTicketToken(TokenAccessRights desired_access)
         {
-            using (NtToken token = LogonUtils.LsaLogonTicket(LogonType, Ticket, KerbCred))
+            using (GetTcbPrivilege())
             {
-                if (desired_access == TokenAccessRights.MaximumAllowed)
+                using (NtToken token = LogonUtils.LsaLogonTicket(LogonType, Ticket, KerbCred))
                 {
-                    return token.Duplicate();
+                    if (desired_access == TokenAccessRights.MaximumAllowed)
+                    {
+                        return token.Duplicate();
+                    }
+                    return token.Duplicate(desired_access);
                 }
-                return token.Duplicate(desired_access);
             }
         }
 
@@ -711,7 +741,10 @@ namespace NtObjectManager.Cmdlets.Object
                     user = "IUsr";
                     break;
             }
-            return GetLogonToken(desired_access, user, "NT AUTHORITY", null, SecurityLogonType.Service);
+            using (GetTcbPrivilege())
+            {
+                return GetLogonToken(desired_access, user, "NT AUTHORITY", null, SecurityLogonType.Service);
+            }
         }
 
         private NtToken GetSessionToken(TokenAccessRights desired_access, int session_id)

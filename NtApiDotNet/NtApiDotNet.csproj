@@ -43,6 +43,7 @@
     <Reference Include="System.Data" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Numerics" />
+    <Reference Include="System.Security" />
     <Reference Include="System.Windows.Forms" />
     <Reference Include="System.XML" />
   </ItemGroup>
@@ -59,6 +60,15 @@
     <Compile Include="BufferUtils.cs" />
     <Compile Include="CachedEnumerable.cs" />
     <Compile Include="ClaimSecurityAttribute.cs" />
+    <Compile Include="IO\MountPointManager\MountPointManagerStructs.cs" />
+    <Compile Include="IO\MountPointManager\MountPoint.cs" />
+    <Compile Include="IO\MountPointManager\MountPointManagerUtils.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalData.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalNativeStructures.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalSourceInfoFlags.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalRecord.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalReasonFlags.cs" />
+    <Compile Include="IO\UsnJournal\UsnJournalUtils.cs" />
     <Compile Include="KnownSids.cs" />
     <Compile Include="NtDesktopNative.cs" />
     <Compile Include="NtFileObjectId.cs" />
@@ -295,6 +305,9 @@
     <Compile Include="UserGroup.cs" />
     <Compile Include="Utilities\Text\BinaryEncoding.cs" />
     <Compile Include="Win32\AppContainerProfile.cs" />
+    <Compile Include="Win32\AppModel\AppModelNativeMethods.cs" />
+    <Compile Include="Win32\AppModel\AppModelUtils.cs" />
+    <Compile Include="Win32\AppModel\IApplicationActivationManager.cs" />
     <Compile Include="Win32\ConsoleSession.cs" />
     <Compile Include="Win32\Debugger\ArrayTypeInformation.cs" />
     <Compile Include="Win32\Debugger\BaseTypeInformation.cs" />
@@ -319,6 +332,7 @@
     <Compile Include="Win32\Debugger\TypeInformationCache.cs" />
     <Compile Include="Win32\Debugger\UdtKind.cs" />
     <Compile Include="Win32\Debugger\UserDefinedTypeInformation.cs" />
+    <Compile Include="Win32\Device\DeviceBusTypeGuids.cs" />
     <Compile Include="Win32\Device\DeviceInterfaceClassGuids.cs" />
     <Compile Include="Win32\Device\DeviceInterfaceInstance.cs" />
     <Compile Include="Win32\Device\DeviceNode.cs" />
@@ -340,8 +354,8 @@
     <Compile Include="Win32\EventTracing.cs" />
     <Compile Include="Win32\ExecutableManifest.cs" />
     <Compile Include="Win32\Debugger\ISymbolTypeResolver.cs" />
-    <Compile Include="Win32\Filter\FilterCommunicationPort.cs" />
-    <Compile Include="Win32\Filter\FilterCommunicationPortMessage.cs" />
+    <Compile Include="Win32\Filter\FilterConnectionPort.cs" />
+    <Compile Include="Win32\Filter\FilterConnectionPortMessage.cs" />
     <Compile Include="Win32\Filter\FilterDriver.cs" />
     <Compile Include="Win32\Filter\FilterInstance.cs" />
     <Compile Include="Win32\Filter\FilterManagerNativeMethods.cs" />
@@ -402,6 +416,9 @@
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateResponseAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Ntlm\NtlmAuthenticateAuthenticationTokenV2.cs" />
+    <Compile Include="Win32\Security\Authenticode\AuthenticodeCertificate.cs" />
+    <Compile Include="Win32\Security\Authenticode\AuthenticodeUtils.cs" />
+    <Compile Include="Win32\Security\Authenticode\ElamInformation.cs" />
     <Compile Include="Win32\Security\Native\KERB_TICKET_LOGON.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContextStructs.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContext_SessionKey.cs" />

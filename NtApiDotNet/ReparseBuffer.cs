@@ -129,9 +129,6 @@ namespace NtApiDotNet
             int data_length = reader.ReadUInt16();
             // Reserved
             reader.ReadUInt16();
-
-            ReparseBuffer buffer = null;
-
             long remaining_length = reader.RemainingLength();
             long expected_length = data_length;
             if (!NtFileUtils.IsReparseTagMicrosoft(tag))
@@ -145,6 +142,8 @@ namespace NtApiDotNet
                 return new OpaqueReparseBuffer(tag, reader.ReadToEnd());
             }
 
+
+            ReparseBuffer buffer;
             switch (tag)
             {
                 case ReparseTag.MOUNT_POINT:
@@ -190,15 +189,14 @@ namespace NtApiDotNet
             int data_length = reader.ReadUInt16();
             // Reserved
             reader.ReadUInt16();
-
-            ReparseBuffer buffer = null;
-
             if (data_length != reader.RemainingLength())
             {
                 // Possibly corrupted. Return an opaque buffer with all the data until the end.
                 return new OpaqueReparseBuffer(tag, reader.ReadToEnd());
             }
 
+
+            ReparseBuffer buffer;
             switch (tag)
             {
                 case ReparseTag.MOUNT_POINT:
@@ -248,6 +246,10 @@ namespace NtApiDotNet
             }
             writer.Write((ushort)buffer.Length);
             writer.Write((ushort)0);
+            if (this is GenericReparseBuffer generic)
+            {
+                writer.Write(generic.Guid.ToByteArray());
+            }
             writer.Write(buffer);
             return stm.ToArray();
         }
@@ -304,6 +306,18 @@ namespace NtApiDotNet
         /// <param name="tag">The reparse tag.</param>
         /// <param name="guid">The reparse GUID</param>
         /// <param name="data">Additional reparse data.</param>
+        public GenericReparseBuffer(uint tag, Guid guid, byte[] data) : base((ReparseTag)tag)
+        {
+            Data = (byte[])data.Clone();
+            Guid = guid;
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="tag">The reparse tag.</param>
+        /// <param name="guid">The reparse GUID</param>
+        /// <param name="data">Additional reparse data.</param>
         public GenericReparseBuffer(ReparseTag tag, Guid guid, byte[] data) : base(tag)
         {
             Data = (byte[])data.Clone();
@@ -332,7 +346,6 @@ namespace NtApiDotNet
         {
             MemoryStream stm = new MemoryStream();
             BinaryWriter writer = new BinaryWriter(stm);
-            writer.Write(Guid.ToByteArray());
             writer.Write(Data);
             return stm.ToArray();
         }
@@ -650,27 +663,6 @@ namespace NtApiDotNet
             set => throw new NotImplementedException();
         }
 
-        private static string ReadNulTerminated(BinaryReader reader)
-        {
-            StringBuilder builder = new StringBuilder();
-
-            while (true)
-            {
-                char c = reader.ReadChar();
-                if (c == 0)
-                {
-                    break;
-                }
-                builder.Append(c);
-            }
-            return builder.ToString();
-        }
-
-        private static void WriteNulTerminated(BinaryWriter writer, string str)
-        {
-            writer.Write(Encoding.Unicode.GetBytes(str + "\0"));
-        }
-
         /// <summary>
         /// Constructor.
         /// </summary>
@@ -702,10 +694,10 @@ namespace NtApiDotNet
             MemoryStream stm = new MemoryStream();
             BinaryWriter writer = new BinaryWriter(stm, Encoding.Unicode);
             writer.Write(Version);
-            WriteNulTerminated(writer, PackageName);
-            WriteNulTerminated(writer, EntryPoint);
-            WriteNulTerminated(writer, Target);
-            WriteNulTerminated(writer, ((int)AppType).ToString());
+            writer.WriteNulTerminated(PackageName);
+            writer.WriteNulTerminated(EntryPoint);
+            writer.WriteNulTerminated(Target);
+            writer.WriteNulTerminated(((int)AppType).ToString());
             return stm.ToArray();
         }
 
@@ -717,10 +709,10 @@ namespace NtApiDotNet
         protected override void ParseBuffer(int data_length, BinaryReader reader)
         {
             Version = reader.ReadInt32();
-            PackageName = ReadNulTerminated(reader);
-            EntryPoint = ReadNulTerminated(reader);
-            Target = ReadNulTerminated(reader);
-            AppType = (ExecutionAliasAppType)int.Parse(ReadNulTerminated(reader));
+            PackageName = reader.ReadNulTerminated();
+            EntryPoint = reader.ReadNulTerminated();
+            Target = reader.ReadNulTerminated();
+            AppType = (ExecutionAliasAppType)int.Parse(reader.ReadNulTerminated());
         }
     }
 }

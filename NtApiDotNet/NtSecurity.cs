@@ -1294,7 +1294,7 @@ namespace NtApiDotNet
         {
             IntPtr[] handles = source_files?.Select(f => f.DangerousGetHandle()).ToArray();
             int handles_count = handles == null ? 0 : handles.Length;
-            if (catalog_path != null)
+            if (!string.IsNullOrEmpty(catalog_path))
             {
                 CachedSigningLevelInformation info = new CachedSigningLevelInformation(catalog_path);
                 return NtSystemCalls.NtSetCachedSigningLevel2(flags, signing_level, handles, 
@@ -1315,7 +1315,7 @@ namespace NtApiDotNet
         /// <returns>True if the current level is above or equal to the signing level.</returns>
         public static bool CompareSigningLevel(SigningLevel current_level, SigningLevel signing_level)
         {
-            return NtSystemCalls.NtCompareSigningLevel(current_level, signing_level).IsSuccess();
+            return NtSystemCalls.NtCompareSigningLevels(current_level, signing_level).IsSuccess();
         }
 
         /// <summary>

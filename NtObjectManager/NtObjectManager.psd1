@@ -92,14 +92,20 @@ FunctionsToExport = 'Get-AccessibleAlpcPort', 'Set-NtTokenPrivilege',
           'Unprotect-AuthToken', 'Get-KerberosTicket', 'Get-NdrComplexType', 'Get-NtProcessUser',
           'Get-NtProcessEnvironment', 'Split-Win32CommandLine', 'Send-NtWindowMessage', 'Get-NtKeyHive',
           'Backup-NtKey', 'Restore-NtKey', 'Enable-NtTokenVirtualization', 'Disable-NtTokenVirtualization',
-          'Read-NtFile', 'Write-NtFile', 'Get-FilterCommunicationPort', 'Get-FilterDriver', 
+          'Read-NtFile', 'Write-NtFile', 'Get-FilterConnectionPort', 'Get-FilterDriver', 
           'Get-FilterDriverInstance', 'Get-FilterDriverVolume', 'Get-FilterDriverVolumeInstance',
-          'Get-NtFileAttribute', 'Set-NtFileAttribute', 'Get-NtFileShareProcess',
           'Add-NtEaBuffer', 'Remove-NtFileEa', 'Get-NtDeviceSetupClass', 'Get-NtDeviceNode',
           'Get-NtDeviceInterfaceClass', 'Get-NtDeviceProperty', 'Get-NtDeviceNodeChild',
           'Get-NtDeviceInterfaceInstance', 'Get-NtDeviceNodeParent', 'Get-NtDeviceNodeStack',
-          'Get-NtFileItem', 'Get-NtFileChange', 'Lock-NtFile', 'Unlock-NtFile', 'Get-NtFileLink',
-          'Get-NtFileDisposition', 'Set-NtFileDisposition', 'Wait-AsyncTaskResult', 'Get-NtFile8dot3Name'
+          'Get-NtFileItem', 'Get-NtFileChange', 'Lock-NtFile', 'Unlock-NtFile',
+          'Get-NtFileDisposition', 'Set-NtFileDisposition', 'Wait-AsyncTaskResult', 'Get-NtFile8dot3Name',
+          'Send-FilterConnectionPort', 'Test-NtFileDriverPath', 'Get-NtMountPoint', 'New-NtFileReparseBuffer',
+          'Get-NtFileQuota', 'Set-NtFileQuota', 'Read-NtFileUsnJournal', 'Confirm-NtFileOplock',
+          'Start-AppModelApplication', 'Get-NtThreadContext', 'Set-NtThreadContext', 'Remove-AppContainerProfile',
+          'Get-AppModelApplicationPolicy', 'Test-NtProcessJob', 'Get-AppxDesktopBridge', 'Stop-NtJob',
+          'Get-NtThreadWorkOnBehalfTicket', 'Set-NtThreadWorkOnBehalfTicket', 'Get-NtThreadContainerId',
+          'Set-NtThreadContainer', 'Clear-NtThreadWorkOnBehalfTicket', 'Compare-NtSigningLevel',
+          'Get-NtSystemInformation', 'Get-NtSigningLevel', 'Get-X509Certificate', 'Set-NtCachedSigningLevel'
 
 # Cmdlets to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no cmdlets to export.
 CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile', 
@@ -128,7 +134,7 @@ CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile
                'Remove-NtDebugProcess', 'Copy-NtObject', 'New-NtResourceManager',
                'Get-NtResourceManager', 'Get-NtTransactionGuid', 'Get-NtEnlistment',
                'New-NtEnlistment', 'Get-RpcServerName', 'Set-RpcServerName',
-               'Set-NtFileHardlink', 'Test-NetworkAccess', 'Get-AccessibleScheduledTask',
+               'New-NtFileHardlink', 'Test-NetworkAccess', 'Get-AccessibleScheduledTask',
                'Compare-RpcServer', 'Select-RpcServer', 'Add-NtTokenSecurityAttribute',
                'Remove-NtTokenSecurityAttribute', 'Get-AccessibleEventTrace',
                'Test-NtTokenImpersonation', 'Get-AccessibleToken', 'Set-NtProcessJob', 
@@ -146,7 +152,10 @@ CmdletsToExport = 'Add-NtKeyHive', 'Get-NtDirectory', 'Get-NtEvent', 'Get-NtFile
                'Add-AuthZSid', 'Remove-AuthZSid', 'Set-NtToken', 'Get-NtTokenDefaultDacl',
                'Set-NtTokenDefaultDacl', 'Get-NtKeySymbolicLinkTarget', 'New-NtKeySymbolicLink',
                'Rename-NtFile', 'Get-NtFileVolumeInformation', 'Set-NtFileVolumeInformation',
-               'Send-NtFileControl'
+               'Send-NtFileControl', 'Get-NtFileAttribute', 'Set-NtFileAttribute', 'Get-NtFileShareProcess',
+               'Get-NtFileCompression', 'Set-NtFileCompression',  'Get-NtFileLink', 'Get-NtFileStream',
+               'Get-NtFileObjectId', 'Get-NtFileId', 'Set-NtFileObjectId', 'Remove-NtFileObjectId',
+               'Get-NtFileFinalPath', 'Add-NtThreadApc', 'New-NtThread'
 
 # Aliases to export from this module, for best performance, do not use wildcards and do not delete the entry, use an empty array if there are no aliases to export.
 AliasesToExport = 'Get-NtEaBuffer', 'Set-NtEaBuffer'

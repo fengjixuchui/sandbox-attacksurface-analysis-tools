@@ -505,6 +505,111 @@ namespace NtApiDotNet
             }
         }
 
+        private static SafeHGlobalBuffer ConvertSidList(IEnumerable<Sid> sid_list, DisposableList list)
+        {
+            if (sid_list == null || !sid_list.Any())
+            {
+                return SafeHGlobalBuffer.Null;
+            }
+
+            int struct_size = Marshal.SizeOf(typeof(FileGetQuotaInformation)) - 4;
+            List<byte[]> sids = sid_list.Select(s => s.ToArray()).ToList();
+            int total_size = sids.Sum(b => b.Length + struct_size);
+
+            var buffer = list.AddResource(new SafeHGlobalBuffer(total_size));
+            int offset = 0;
+
+            for (int i = 0; i < sids.Count; ++i)
+            {
+                var curr = buffer.GetStructAtOffset<FileGetQuotaInformation>(offset);
+                byte[] sid = sids[i];
+
+                int next_offset = i < sids.Count - 1 ? struct_size + sid.Length : 0;
+                curr.Result = new FileGetQuotaInformation() { NextEntryOffset = next_offset, SidLength = sid.Length };
+                curr.Data.WriteBytes(sid);
+                offset += next_offset;
+            }
+
+            return buffer;
+        }
+
+        private static SafeHGlobalBuffer ConvertQuotaEntries(FileQuotaEntry[] quota_entries, DisposableList list)
+        {
+            int struct_size = Marshal.SizeOf(typeof(FileQuotaInformation)) - 4;
+            List<byte[]> sids = quota_entries.Select(q => q.Sid.ToArray()).ToList();
+            int total_size = sids.Sum(b => b.Length + struct_size);
+
+            var buffer = list.AddResource(new SafeHGlobalBuffer(total_size));
+            int offset = 0;
+
+            for (int i = 0; i < sids.Count; ++i)
+            {
+                var curr = buffer.GetStructAtOffset<FileQuotaInformation>(offset);
+                byte[] sid = sids[i];
+
+                int next_offset = i < sids.Count - 1 ? struct_size + sid.Length : 0;
+                curr.Result = quota_entries[i].ToInfo(next_offset);
+                curr.Data.WriteBytes(sid);
+                offset += next_offset;
+            }
+
+            return buffer;
+        }
+
+        private IEnumerable<FileQuotaEntry> QueryQuota(IEnumerable<Sid> sid_list, Sid start_sid)
+        {
+            using (var list = new DisposableList())
+            {
+                var buffer = list.AddResource(new SafeStructureInOutBuffer<FileQuotaInformation>(32 * 1024, false));
+                SafeHGlobalBuffer sid_list_buffer = ConvertSidList(sid_list, list);
+                SafeSidBufferHandle start_sid_buffer = SafeSidBufferHandle.Null;
+                if (start_sid != null)
+                {
+                    start_sid_buffer = start_sid.ToSafeBuffer();
+                }
+
+                IoStatus io_status = new IoStatus();
+                NtStatus status = NtSystemCalls.NtQueryQuotaInformationFile(Handle,
+                        io_status, buffer, buffer.Length, false, sid_list_buffer, sid_list_buffer.Length,
+                        start_sid_buffer, true);
+                while(status.IsSuccess())
+                {
+                    int offset = 0;
+                    while (true)
+                    {
+                        var next_buffer = buffer.GetStructAtOffset<FileQuotaInformation>(offset);
+                        var result = next_buffer.Result;
+
+                        yield return new FileQuotaEntry(next_buffer);
+
+                        if (result.NextEntryOffset == 0)
+                            break;
+                        offset += result.NextEntryOffset;
+                    }
+
+                    if (start_sid != null)
+                    {
+                        break;
+                    }
+
+                    // If a SID list then this will just repeat.
+                    if (sid_list?.Any() ?? false)
+                    {
+                        break;
+                    }
+
+                    status = NtSystemCalls.NtQueryQuotaInformationFile(Handle,
+                        io_status, buffer, buffer.Length, false, sid_list_buffer, sid_list_buffer.Length,
+                        start_sid_buffer, false);
+                }
+
+                if (status != NtStatus.STATUS_NO_MORE_ENTRIES)
+                {
+                    status.ToNtException();
+                }
+            }
+        }
+
         #endregion
 
         #region Static Methods
@@ -2915,48 +3020,21 @@ namespace NtApiDotNet
         /// Acknowledge an oplock break.
         /// </summary>
         /// <param name="level">The acknowledgment level.</param>
-        /// <returns>The NT status code.</returns>
         public void AcknowledgeOplock(OplockAcknowledgeLevel level)
         {
             AcknowledgeOplock(level, true);
         }
 
         /// <summary>
-        /// Oplock the file with a specific level and flags.
-        /// </summary>
-        /// <param name="requested_oplock_level">The oplock level.</param>
-        /// <param name="flags">The flags for the oplock.</param>
-        /// <returns>The result of the oplock request.</returns>
-        [Obsolete("Use RequestOplockLease and AcknowledgeOplockLease")]
-        public RequestOplockOutputBuffer RequestOplock(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags)
-        {
-            if (flags != RequestOplockInputFlag.Request)
-            {
-                throw new ArgumentException("Can only use Request as a valid flag", nameof(flags));
-            }
-
-            return RequestOplockLease(requested_oplock_level, true).Result;
-        }
-
-        /// <summary>
-        /// Oplock the file with a specific lease level and flags.
-        /// </summary>
-        /// <param name="requested_oplock_level">The oplock lease level.</param>
-        /// <returns>The result of the oplock request.</returns>
-        public RequestOplockOutputBuffer RequestOplockLease(OplockLevelCache requested_oplock_level)
-        {
-            return RequestOplockLease(requested_oplock_level, true).Result;
-        }
-
-        /// <summary>
         /// Oplock the file with a specific level.
         /// </summary>
         /// <param name="requested_oplock_level">The oplock cache level.</param>
+        /// <param name="flags">Specify additional flags for the request.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The result of the oplock request.</returns>
-        public NtResult<RequestOplockOutputBuffer> RequestOplockLease(OplockLevelCache requested_oplock_level, bool throw_on_error)
+        public NtResult<RequestOplockOutputBuffer> RequestOplockLease(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags, bool throw_on_error)
         {
-            using (var input_buffer = new RequestOplockInputBuffer(requested_oplock_level, RequestOplockInputFlag.Request).ToBuffer())
+            using (var input_buffer = new RequestOplockInputBuffer(requested_oplock_level, flags).ToBuffer())
             {
                 using (var output_buffer = new SafeStructureInOutBuffer<RequestOplockOutputBuffer>())
                 {
@@ -2975,16 +3053,28 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Oplock the file with a specific level.
+        /// </summary>
+        /// <param name="requested_oplock_level">The oplock cache level.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The result of the oplock request.</returns>
+        public NtResult<RequestOplockOutputBuffer> RequestOplockLease(OplockLevelCache requested_oplock_level, bool throw_on_error)
+        {
+            return RequestOplockLease(requested_oplock_level, RequestOplockInputFlag.Request, throw_on_error);
+        }
+
+        /// <summary>
         /// Oplock the file with a specific level and flags.
         /// </summary>
         /// <param name="requested_oplock_level">The oplock level.</param>
         /// <param name="token">Cancellation token to cancel async operation.</param>
+        /// <param name="flags">Specify additional flags for the request.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
         /// <returns>The request of the oplock request.</returns>
-        public async Task<NtResult<RequestOplockOutputBuffer>> RequestOplockAsync(OplockLevelCache requested_oplock_level,
-            CancellationToken token, bool throw_on_error)
+        public async Task<NtResult<RequestOplockOutputBuffer>> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level,
+            RequestOplockInputFlag flags, CancellationToken token, bool throw_on_error)
         {
-            using (var input_buffer = new RequestOplockInputBuffer(requested_oplock_level, RequestOplockInputFlag.Request).ToBuffer())
+            using (var input_buffer = new RequestOplockInputBuffer(requested_oplock_level, flags).ToBuffer())
             {
                 using (var output_buffer = new SafeStructureInOutBuffer<RequestOplockOutputBuffer>())
                 {
@@ -3007,18 +3097,46 @@ namespace NtApiDotNet
         /// Oplock the file with a specific level and flags.
         /// </summary>
         /// <param name="requested_oplock_level">The oplock level.</param>
-        /// <param name="flags">The flags for the oplock.</param>
+        /// <param name="token">Cancellation token to cancel async operation.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The request of the oplock request.</returns>
+        public Task<NtResult<RequestOplockOutputBuffer>> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level,
+             CancellationToken token, bool throw_on_error)
+        {
+            return RequestOplockLeaseAsync(requested_oplock_level, RequestOplockInputFlag.Request, token, throw_on_error);
+        }
+
+        /// <summary>
+        /// Oplock the file with a specific lease level and flags.
+        /// </summary>
+        /// <param name="requested_oplock_level">The oplock lease level.</param>
+        /// <param name="flags">Specify additional flags for the request.</param>
+        /// <returns>The result of the oplock request.</returns>
+        public RequestOplockOutputBuffer RequestOplockLease(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags)
+        {
+            return RequestOplockLease(requested_oplock_level, flags, true).Result;
+        }
+
+        /// <summary>
+        /// Oplock the file with a specific lease level and flags.
+        /// </summary>
+        /// <param name="requested_oplock_level">The oplock lease level.</param>
+        /// <returns>The result of the oplock request.</returns>
+        public RequestOplockOutputBuffer RequestOplockLease(OplockLevelCache requested_oplock_level)
+        {
+            return RequestOplockLease(requested_oplock_level, RequestOplockInputFlag.Request);
+        }
+
+        /// <summary>
+        /// Oplock the file with a specific level and flags.
+        /// </summary>
+        /// <param name="requested_oplock_level">The oplock level.</param>
+        /// <param name="flags">Specify additional flags for the request.</param>
         /// <param name="token">Cancellation token to cancel async operation.</param>
         /// <returns>The request of the oplock request.</returns>
-        [Obsolete("Use RequestOplockLeaseAsync and AcknowledgeOplockLease")]
-        public Task<RequestOplockOutputBuffer> RequestOplockAsync(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags, CancellationToken token)
+        public Task<RequestOplockOutputBuffer> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags, CancellationToken token)
         {
-            if (flags != RequestOplockInputFlag.Request)
-            {
-                throw new ArgumentException("Can only use Request as a valid flag", nameof(flags));
-            }
-
-            return RequestOplockAsync(requested_oplock_level, token, true).UnwrapNtResultAsync();
+            return RequestOplockLeaseAsync(requested_oplock_level, flags, token, true).UnwrapNtResultAsync();
         }
 
         /// <summary>
@@ -3029,7 +3147,7 @@ namespace NtApiDotNet
         /// <returns>The request of the oplock request.</returns>
         public Task<RequestOplockOutputBuffer> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level, CancellationToken token)
         {
-            return RequestOplockAsync(requested_oplock_level, token, true).UnwrapNtResultAsync();
+            return RequestOplockLeaseAsync(requested_oplock_level, RequestOplockInputFlag.Request, token);
         }
 
         /// <summary>
@@ -3040,19 +3158,7 @@ namespace NtApiDotNet
         /// <returns>The request of the oplock request.</returns>
         public Task<NtResult<RequestOplockOutputBuffer>> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level, bool throw_on_error)
         {
-            return RequestOplockAsync(requested_oplock_level, CancellationToken.None, throw_on_error);
-        }
-
-        /// <summary>
-        /// Oplock the file with a specific level and flags.
-        /// </summary>
-        /// <param name="requested_oplock_level">The oplock level.</param>
-        /// <param name="flags">The flags for the oplock.</param>
-        /// <returns>The response of the oplock request.</returns>
-        [Obsolete("Use RequestOplockLeaseAsync and AcknowledgeOplockLease")]
-        public Task<RequestOplockOutputBuffer> RequestOplockAsync(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags)
-        {
-            return RequestOplockAsync(requested_oplock_level, flags, CancellationToken.None);
+            return RequestOplockLeaseAsync(requested_oplock_level, RequestOplockInputFlag.Request, CancellationToken.None, throw_on_error);
         }
 
         /// <summary>
@@ -3066,24 +3172,41 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Oplock the file with a specific level and flags.
+        /// </summary>
+        /// <param name="requested_oplock_level">The oplock level.</param>
+        /// <param name="flags">Specify additional flags for the request.</param>
+        /// <returns>The response of the oplock request.</returns>
+        public Task<RequestOplockOutputBuffer> RequestOplockLeaseAsync(OplockLevelCache requested_oplock_level, RequestOplockInputFlag flags)
+        {
+            return RequestOplockLeaseAsync(requested_oplock_level, flags, CancellationToken.None, true).UnwrapNtResultAsync();
+        }
+
+        /// <summary>
         /// Acknowledge a lease oplock started with RequestOplockLease.
         /// </summary>
-        /// <param name="acknowledge_oplock_level">The acknowledgement level.</param>
         /// <param name="complete_on_close">True to complete acknowledgement on close.</param>
         /// <param name="throw_on_error">True to throw on error.</param>
-        /// <returns>The NT status code. Acknowledging an oplock returns STATUS_PENDING on success.</returns>
-        public NtStatus AcknowledgeOplockLease(OplockLevelCache acknowledge_oplock_level, bool complete_on_close, bool throw_on_error)
+        /// <returns>The NT status code.</returns>
+        /// <remarks>This breaks to None. If you want to request the new oplock level then request a new oplock.</remarks>
+        public NtStatus AcknowledgeOplockLease(bool complete_on_close, bool throw_on_error)
         {
-            using (var input_buffer = new RequestOplockInputBuffer(acknowledge_oplock_level,
+            using (var input_buffer = new RequestOplockInputBuffer(OplockLevelCache.None,
                 complete_on_close ? RequestOplockInputFlag.CompleteAckOnClose : RequestOplockInputFlag.Ack).ToBuffer())
             {
                 using (var output_buffer = new SafeStructureInOutBuffer<RequestOplockOutputBuffer>())
                 {
                     using (var io_status = new SafeIoStatusBuffer())
                     {
-                        return NtSystemCalls.NtFsControlFile(Handle, SafeKernelObjectHandle.Null, IntPtr.Zero, IntPtr.Zero,
+                        var status = NtSystemCalls.NtFsControlFile(Handle, SafeKernelObjectHandle.Null, IntPtr.Zero, IntPtr.Zero,
                             io_status, NtWellKnownIoControlCodes.FSCTL_REQUEST_OPLOCK.ToInt32(), input_buffer.DangerousGetHandle(), input_buffer.Length,
                             output_buffer.DangerousGetHandle(), output_buffer.Length).ToNtException(throw_on_error);
+                        if (status == NtStatus.STATUS_PENDING)
+                        {
+                            // Cancel any pending IO if the result was pending, just to be sure.
+                            CancelIo();
+                        }
+                        return status;
                     }
                 }
             }
@@ -3092,20 +3215,18 @@ namespace NtApiDotNet
         /// <summary>
         /// Acknowledge a lease oplock started with RequestOplockLease.
         /// </summary>
-        /// <param name="acknowledge_oplock_level">The acknowledgement level.</param>
         /// <param name="complete_on_close">True to complete acknowledgement on close.</param>
-        public void AcknowledgeOplockLease(OplockLevelCache acknowledge_oplock_level, bool complete_on_close)
+        public void AcknowledgeOplockLease(bool complete_on_close)
         {
-            AcknowledgeOplockLease(acknowledge_oplock_level, complete_on_close, true);
+            AcknowledgeOplockLease(complete_on_close, true);
         }
 
         /// <summary>
         /// Acknowledge a lease oplock started with RequestOplockLease.
         /// </summary>
-        /// <param name="acknowledge_oplock_level">The acknowledgement level.</param>
-        public void AcknowledgeOplockLease(OplockLevelCache acknowledge_oplock_level)
+        public void AcknowledgeOplockLease()
         {
-            AcknowledgeOplockLease(acknowledge_oplock_level, false);
+            AcknowledgeOplockLease(false);
         }
 
         /// <summary>
@@ -3401,7 +3522,7 @@ namespace NtApiDotNet
         /// <param name="catalog_path">Optional directory path to look for catalog files.</param>
         public void SetCachedSigningLevel(int flags, SigningLevel signing_level, string catalog_path)
         {
-            SetCachedSigningLevel(flags, signing_level, new NtFile[] { this }, catalog_path);
+            SetCachedSigningLevel(flags, signing_level, null, catalog_path);
         }
 
         /// <summary>
@@ -3426,6 +3547,10 @@ namespace NtApiDotNet
         /// <param name="throw_on_error">True to throw on error.</param>
         public NtStatus SetCachedSigningLevel(int flags, SigningLevel signing_level, IEnumerable<NtFile> files, string catalog_path, bool throw_on_error)
         {
+            if (files == null)
+            {
+                files = new NtFile[] { this };
+            }
             return NtSecurity.SetCachedSigningLevel(Handle, flags, signing_level, files.Select(f => f.Handle), catalog_path, throw_on_error);
         }
 
@@ -3495,7 +3620,7 @@ namespace NtApiDotNet
                             if (parent.IsSuccess)
                             {
                                 parent_path = parent.Result.FullPath;
-                                win32_path = Win32Utils.RemoveDevicePrefix(parent.Result.GetWin32PathName(Win32PathNameFlags.None, false).GetResultOrDefault(string.Empty));
+                                win32_path = parent.Result.GetWin32PathName(Win32PathNameFlags.None, false).GetResultOrDefault(string.Empty);
                             }
                         }
 
@@ -3696,7 +3821,18 @@ namespace NtApiDotNet
         [SupportedVersion(SupportedVersion.Windows10_RS4)]
         public void SetDynamicCodeTrust()
         {
-            NtSystemInfo.SetDynamicCodeTrust(Handle).ToNtException();
+            SetDynamicCodeTrust(true);
+        }
+
+        /// <summary>
+        /// Set a file is trusted for dynamic code.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        [SupportedVersion(SupportedVersion.Windows10_RS4)]
+        public NtStatus SetDynamicCodeTrust(bool throw_on_error)
+        {
+            return NtSystemInfo.SetDynamicCodeTrust(Handle).ToNtException(throw_on_error);
         }
 
         /// <summary>
@@ -4365,6 +4501,42 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Query if the driver is in the device stack for the device.
+        /// </summary>
+        /// <param name="driver_path">The driver path. Can be a plain name of full object manager path, e.g. \Device\Blah.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>True indicating driver in path.</returns>
+        public NtResult<bool> DriverInPath(string driver_path, bool throw_on_error)
+        {
+            if (!driver_path.StartsWith(@"\"))
+            {
+                var res = DriverInPath($@"\Driver\{driver_path}", false);
+                if (res.IsSuccess)
+                    return res;
+                return DriverInPath($@"\FileSystem\{driver_path}", throw_on_error);
+            }
+
+            byte[] path = Encoding.Unicode.GetBytes(driver_path);
+            FileFsDriverPathInformation info = new FileFsDriverPathInformation() { DriverNameLength = path.Length };
+            using (var buffer = info.ToBuffer(path.Length, true))
+            {
+                buffer.Data.WriteBytes(path);
+                return QueryVolume(FsInformationClass.FileFsDriverPathInformation, 
+                    buffer, false).CreateResult(throw_on_error, () => buffer.Result.DriverInPath);
+            }
+        }
+
+        /// <summary>
+        /// Query if the driver is in the device stack for the device.
+        /// </summary>
+        /// <param name="driver_path">The driver path.</param>
+        /// <returns>True indicating driver in path.</returns>
+        public bool DriverInPath(string driver_path)
+        {
+            return DriverInPath(driver_path, true).Result;
+        }
+
+        /// <summary>
         /// Get filesystem and volume information.
         /// </summary>
         public NtResult<FileSystemVolumeInformation> GetVolumeInformation(bool throw_on_error)
@@ -4567,6 +4739,70 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Query the quota entries for a volume.
+        /// </summary>
+        /// <param name="sid_list">Return quote entries for the specified SIDs.</param>
+        /// <returns>The list of quota entries.</returns>
+        public IEnumerable<FileQuotaEntry> QueryQuota(IEnumerable<Sid> sid_list)
+        {
+            return QueryQuota(sid_list, null);
+        }
+
+        /// <summary>
+        /// Query all quota entries for a volume.
+        /// </summary>
+        /// <returns>The list of quota entries.</returns>
+        public IEnumerable<FileQuotaEntry> QueryQuota()
+        {
+            return QueryQuota(null, null);
+        }
+
+        /// <summary>
+        /// Set quota entries.
+        /// </summary>
+        /// <param name="quota_entries">The quota entries to set.</param>
+        /// <param name="throw_no_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetQuota(IEnumerable<FileQuotaEntry> quota_entries, bool throw_no_error)
+        {
+            using (var list = new DisposableList())
+            {
+                var buffer = ConvertQuotaEntries(quota_entries.ToArray(), list);
+                IoStatus io_status = new IoStatus();
+                return NtSystemCalls.NtSetQuotaInformationFile(Handle, io_status, buffer, buffer.Length).ToNtException(throw_no_error);
+            }
+        }
+
+        /// <summary>
+        /// Set quota entries.
+        /// </summary>
+        /// <param name="quota_entries">The quota entries to set.</param>
+        public void SetQuota(IEnumerable<FileQuotaEntry> quota_entries)
+        {
+            SetQuota(quota_entries, true);
+        }
+
+        /// <summary>
+        /// Set quota entry.
+        /// </summary>
+        /// <param name="quota_entry">The quota entry to set.</param>
+        public void SetQuota(FileQuotaEntry quota_entry)
+        {
+            SetQuota(new FileQuotaEntry[] { quota_entry });
+        }
+
+        /// <summary>
+        /// Set quota entry.
+        /// </summary>
+        /// <param name="sid">The SID for the quota.</param>
+        /// <param name="limit">The quota limit to set.</param>
+        /// <param name="threshold">The quota threshold to set.</param>
+        public void SetQuota(Sid sid, long threshold, long limit)
+        {
+            SetQuota(new FileQuotaEntry(sid, threshold, limit));
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -4736,19 +4972,21 @@ namespace NtApiDotNet
         /// Get the Win32 path name for the file.
         /// </summary>
         /// <returns>The path, string.Empty on error.</returns>
-        public string Win32PathName => GetWin32PathName(Win32PathNameFlags.None, false).Map(Win32Utils.RemoveDevicePrefix).GetResultOrDefault(string.Empty);
+        public string Win32PathName => GetWin32PathName(Win32PathNameFlags.None, false).GetResultOrDefault(string.Empty);
 
         /// <summary>
         /// Get the low-level device type of the file.
         /// </summary>
         /// <returns>The file device type.</returns>
-        public FileDeviceType DeviceType => QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).DeviceType;
+        public FileDeviceType DeviceType => QueryVolumeFixed<FileFsDeviceInformation>(
+            FsInformationClass.FileFsDeviceInformation, false).GetResultOrDefault()?.DeviceType ?? FileDeviceType.UNKNOWN;
 
         /// <summary>
         /// Get the low-level device characteristics of the file.
         /// </summary>
         /// <returns>The file device characteristics.</returns>
-        public FileDeviceCharacteristics Characteristics => QueryVolumeFixed<FileFsDeviceInformation>(FsInformationClass.FileFsDeviceInformation).Characteristics;
+        public FileDeviceCharacteristics Characteristics => QueryVolumeFixed<FileFsDeviceInformation>(
+            FsInformationClass.FileFsDeviceInformation, false).GetResultOrDefault()?.Characteristics ?? FileDeviceCharacteristics.None;
 
         /// <summary>
         /// Get filesystem and volume information.
@@ -4776,7 +5014,6 @@ namespace NtApiDotNet
                 }
             }
         }
-
 
         /// <summary>
         /// Gets whether the file is on a remote file system.
