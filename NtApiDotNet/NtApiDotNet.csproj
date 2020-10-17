@@ -71,6 +71,9 @@
     <Compile Include="IO\UsnJournal\UsnJournalUtils.cs" />
     <Compile Include="KnownSids.cs" />
     <Compile Include="NtDesktopNative.cs" />
+    <Compile Include="NtEnclave.cs" />
+    <Compile Include="NtEnclaveNative.cs" />
+    <Compile Include="NtEnclaveVBS.cs" />
     <Compile Include="NtFileObjectId.cs" />
     <Compile Include="NtFilterConnectionPort.cs" />
     <Compile Include="NtFilterConnectionPortNative.cs" />
@@ -120,6 +123,7 @@
     <Compile Include="Utilities\Memory\ProcessMemoryReader.cs" />
     <Compile Include="Utilities\Memory\ProcessMemoryStream.cs" />
     <Compile Include="Utilities\Memory\SafeBufferWrapper.cs" />
+    <Compile Include="Utilities\SafeBuffers\SafeEnclaveHandle.cs" />
     <Compile Include="Utilities\SafeBuffers\SafeGuidArrayBuffer.cs" />
     <Compile Include="Utilities\Security\MD4.cs" />
     <Compile Include="Utilities\Security\NFold.cs" />
@@ -419,6 +423,13 @@
     <Compile Include="Win32\Security\Authenticode\AuthenticodeCertificate.cs" />
     <Compile Include="Win32\Security\Authenticode\AuthenticodeUtils.cs" />
     <Compile Include="Win32\Security\Authenticode\ElamInformation.cs" />
+    <Compile Include="Win32\Security\Authenticode\ImagePolicyEntry.cs" />
+    <Compile Include="Win32\Security\Authenticode\ImagePolicyEntryType.cs" />
+    <Compile Include="Win32\Security\Authenticode\ImagePolicyId.cs" />
+    <Compile Include="Win32\Security\Authenticode\ImagePolicyMetadata.cs" />
+    <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_ENTRY.cs" />
+    <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_ENTRY_UNION.cs" />
+    <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_METADATA.cs" />
     <Compile Include="Win32\Security\Native\KERB_TICKET_LOGON.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContextStructs.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContext_SessionKey.cs" />

@@ -189,8 +189,9 @@ namespace NtApiDotNet
 
                 if (config.Secure)
                 {
-                    string win32_path = $@"\\?\GLOBALROOT\{image_path}";
-                    var trustlet_config = config.TrustletConfig ?? NtProcessTrustletConfig.CreateFromFile(win32_path);
+                    var trustlet_config = config.TrustletConfig ?? NtProcessTrustletConfig.CreateFromFile(image_path, false).GetResultOrDefault();
+                    if (trustlet_config == null)
+                        throw new ArgumentException("Couldn't extract trustlet configuration from image file.");
                     dispose.Add(ProcessAttribute.SecureProcess(trustlet_config));
                 }
 
@@ -2007,6 +2008,38 @@ namespace NtApiDotNet
         public NtResult<IoCounters> GetIoCounters(bool throw_on_error)
         {
             return Query<IoCounters>(ProcessInformationClass.ProcessIoCounters, default, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a VBS enclave.
+        /// </summary>
+        /// <param name="size">Size of the enclave.</param>
+        /// <param name="flags">Flags for the enclave.</param>
+        /// <param name="owner_id">Owner ID. Must be 32 bytes.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The created enclave.</returns>
+        public NtResult<NtEnclaveVBS> CreateEnclaveVBS(
+            long size,
+            LdrEnclaveVBSFlags flags,
+            byte[] owner_id,
+            bool throw_on_error)
+        {
+            return NtEnclaveVBS.Create(Handle, size, flags, owner_id, throw_on_error);
+        }
+
+        /// <summary>
+        /// Create a VBS enclave.
+        /// </summary>
+        /// <param name="size">Size of the enclave.</param>
+        /// <param name="flags">Flags for the enclave.</param>
+        /// <param name="owner_id">Owner ID. Must be 32 bytes.</param>
+        /// <returns>The created enclave.</returns>
+        public NtEnclaveVBS CreateEnclaveVBS(
+            long size,
+            LdrEnclaveVBSFlags flags,
+            byte[] owner_id)
+        {
+            return CreateEnclaveVBS(size, flags, owner_id, true).Result;
         }
 
         /// <summary>
