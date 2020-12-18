@@ -228,8 +228,8 @@ namespace NtApiDotNet.Win32
                 using (sid)
                 {
                     Sid result = new Sid(sid);
-                    NtSecurity.CacheSidName(result, name, SidNameSource.Package);
-                    return result.CreateResult();
+                    return NtSecurity.CacheSidName(result, string.Empty, name, 
+                        SidNameSource.Package, SidNameUse.User).CreateResult();
                 }
             }
 
@@ -264,7 +264,8 @@ namespace NtApiDotNet.Win32
                     using (sid)
                     {
                         Sid result = new Sid(sid);
-                        NtSecurity.CacheSidName(result, $"{package_sid.Name}/{restricted_name}", SidNameSource.Package);
+                        NtSecurity.CacheSidName(result, string.Empty, $"{package_sid.Name}/{restricted_name}", 
+                            SidNameSource.Package, SidNameUse.User);
                         return result.CreateResult();
                     }
                 }
@@ -416,7 +417,7 @@ namespace NtApiDotNet.Win32
         {
             using (var resources = new DisposableList())
             {
-                SECURITY_CAPABILITIES caps = Win32Utils.CreateSecuityCapabilities(appcontainer_sid, capabilities ?? new Sid[0], resources);
+                SECURITY_CAPABILITIES caps = Win32Utils.CreateSecurityCapabilities(appcontainer_sid, capabilities ?? new Sid[0], resources);
                 if (!Win32NativeMethods.CreateAppContainerToken(token.GetHandle(), ref caps, out SafeKernelObjectHandle new_token))
                 {
                     return Win32Utils.GetLastWin32Error().CreateResultFromDosError<NtToken>(throw_on_error);

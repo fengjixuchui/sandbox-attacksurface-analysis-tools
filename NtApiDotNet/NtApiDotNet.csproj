@@ -56,6 +56,10 @@
     <Compile Include="AlpcMessage.cs" />
     <Compile Include="AlpcMessageAttributes.cs" />
     <Compile Include="AlpcPortSection.cs" />
+    <Compile Include="ApiSet\ApiSetEntry.cs" />
+    <Compile Include="ApiSet\ApiSetHost.cs" />
+    <Compile Include="ApiSet\ApiSetNamespace.cs" />
+    <Compile Include="ApiSet\ApiSetStructs.cs" />
     <Compile Include="BoundaryDescriptor.cs" />
     <Compile Include="BufferUtils.cs" />
     <Compile Include="CachedEnumerable.cs" />
@@ -70,6 +74,9 @@
     <Compile Include="IO\UsnJournal\UsnJournalReasonFlags.cs" />
     <Compile Include="IO\UsnJournal\UsnJournalUtils.cs" />
     <Compile Include="KnownSids.cs" />
+    <Compile Include="Net\Sockets\HyperVEndpoint.cs" />
+    <Compile Include="Net\Sockets\HyperVSocketGuids.cs" />
+    <Compile Include="Net\Sockets\UnixEndPoint.cs" />
     <Compile Include="NtDesktopNative.cs" />
     <Compile Include="NtEnclave.cs" />
     <Compile Include="NtEnclaveNative.cs" />
@@ -77,6 +84,7 @@
     <Compile Include="NtFileObjectId.cs" />
     <Compile Include="NtFilterConnectionPort.cs" />
     <Compile Include="NtFilterConnectionPortNative.cs" />
+    <Compile Include="NtKeyEntry.cs" />
     <Compile Include="NtKeyHive.cs" />
     <Compile Include="NtMailslotFile.cs" />
     <Compile Include="NtProcessCreateResult.cs" />
@@ -101,10 +109,12 @@
     <Compile Include="SafeStringBuffer.cs" />
     <Compile Include="SafeTokenGroupsBuffer.cs" />
     <Compile Include="SafeTokenPrivilegesBuffer.cs" />
+    <Compile Include="SDKNameAttribute.cs" />
     <Compile Include="SecurityDescriptorSid.cs" />
     <Compile Include="Security\Policy\CentralAccessPolicy.cs" />
     <Compile Include="Security\Policy\CentralAccessRule.cs" />
     <Compile Include="SidIdentifierAuthority.cs" />
+    <Compile Include="SidName.cs" />
     <Compile Include="TokenGroupsBuilder.cs" />
     <Compile Include="TokenPrivilegesBuilder.cs" />
     <Compile Include="UnicodeStringBytesSafeBuffer.cs" />
@@ -137,24 +147,6 @@
     <Compile Include="DebugEvent.cs" />
     <Compile Include="DisposableList.cs" />
     <Compile Include="EaBuffer.cs" />
-    <Compile Include="Forms\AclViewerControl.cs">
-      <SubType>UserControl</SubType>
-    </Compile>
-    <Compile Include="Forms\AclViewerControl.Designer.cs">
-      <DependentUpon>AclViewerControl.cs</DependentUpon>
-    </Compile>
-    <Compile Include="Forms\SecurityDescriptorViewerControl.cs">
-      <SubType>UserControl</SubType>
-    </Compile>
-    <Compile Include="Forms\SecurityDescriptorViewerControl.Designer.cs">
-      <DependentUpon>SecurityDescriptorViewerControl.cs</DependentUpon>
-    </Compile>
-    <Compile Include="Forms\SecurityDescriptorViewerForm.cs">
-      <SubType>Form</SubType>
-    </Compile>
-    <Compile Include="Forms\SecurityDescriptorViewerForm.Designer.cs">
-      <DependentUpon>SecurityDescriptorViewerForm.cs</DependentUpon>
-    </Compile>
     <Compile Include="GenericMapping.cs" />
     <Compile Include="INtTransaction.cs" />
     <Compile Include="MandatoryLabelAce.cs" />
@@ -313,10 +305,12 @@
     <Compile Include="Win32\AppModel\AppModelUtils.cs" />
     <Compile Include="Win32\AppModel\IApplicationActivationManager.cs" />
     <Compile Include="Win32\ConsoleSession.cs" />
+    <Compile Include="Win32\Rpc\CrackedBindingString.cs" />
     <Compile Include="Win32\Debugger\ArrayTypeInformation.cs" />
     <Compile Include="Win32\Debugger\BaseTypeInformation.cs" />
     <Compile Include="Win32\Debugger\DataSymbolInformation.cs" />
     <Compile Include="Win32\Debugger\DbgHelpSymbolResolver.cs" />
+    <Compile Include="Win32\Debugger\Win32DebugConsole.cs" />
     <Compile Include="Win32\Debugger\EnumProcessModulesFilter.cs" />
     <Compile Include="Win32\Debugger\EnumTypeInformation.cs" />
     <Compile Include="Win32\Debugger\FunctionParameter.cs" />
@@ -336,6 +330,7 @@
     <Compile Include="Win32\Debugger\TypeInformationCache.cs" />
     <Compile Include="Win32\Debugger\UdtKind.cs" />
     <Compile Include="Win32\Debugger\UserDefinedTypeInformation.cs" />
+    <Compile Include="Win32\Debugger\Win32DebugString.cs" />
     <Compile Include="Win32\Device\DeviceBusTypeGuids.cs" />
     <Compile Include="Win32\Device\DeviceInterfaceClassGuids.cs" />
     <Compile Include="Win32\Device\DeviceInterfaceInstance.cs" />
@@ -367,8 +362,28 @@
     <Compile Include="Win32\Filter\FilterVolume.cs" />
     <Compile Include="Win32\ISymbolResolver.cs" />
     <Compile Include="Win32\RpcServerParserFlags.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUBind.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUBindAck.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\BindRejectionReason.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUBindNack.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUBase.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUFault.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUFlags.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUHeader.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDURequest.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUResponse.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUShutdown.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUType.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\ContextElement.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\ContextResult.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcNamedPipeClientTransport.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcTransportException.cs" />
     <Compile Include="Win32\SafeHandles\SafeLsaLogonHandle.cs" />
     <Compile Include="Utilities\ASN1\DERParser.cs" />
+    <Compile Include="Win32\SafeHandles\SafeRpcBindingHandle.cs" />
+    <Compile Include="Win32\SafeHandles\SafeRpcIfIdVectorHandle.cs" />
+    <Compile Include="Win32\SafeHandles\SafeRpcInquiryHandle.cs" />
+    <Compile Include="Win32\SafeHandles\SafeRpcStringHandle.cs" />
     <Compile Include="Win32\Security\Authentication\ASN1AuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\AuthenticationKey.cs" />
     <Compile Include="Win32\Security\Authentication\GSSAPIUtils.cs" />
@@ -423,6 +438,7 @@
     <Compile Include="Win32\Security\Authenticode\AuthenticodeCertificate.cs" />
     <Compile Include="Win32\Security\Authenticode\AuthenticodeUtils.cs" />
     <Compile Include="Win32\Security\Authenticode\ElamInformation.cs" />
+    <Compile Include="Win32\Security\Authenticode\EnclaveImport.cs" />
     <Compile Include="Win32\Security\Authenticode\ImagePolicyEntry.cs" />
     <Compile Include="Win32\Security\Authenticode\ImagePolicyEntryType.cs" />
     <Compile Include="Win32\Security\Authenticode\ImagePolicyId.cs" />
@@ -430,7 +446,13 @@
     <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_ENTRY.cs" />
     <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_ENTRY_UNION.cs" />
     <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_METADATA.cs" />
+    <Compile Include="Win32\Security\Authenticode\EnclaveConfiguration.cs" />
     <Compile Include="Win32\Security\Native\KERB_TICKET_LOGON.cs" />
+    <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_ADD_INPUT.cs" />
+    <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_ADD_MULTIPLE_INPUT.cs" />
+    <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_ERROR.cs" />
+    <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_REMOVE_INPUT.cs" />
+    <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_TYPE.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContextStructs.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContext_SessionKey.cs" />
     <Compile Include="Win32\Security\Native\SECPKG_ATTR.cs" />
@@ -520,7 +542,7 @@
     <Compile Include="Win32\Security\Native\SecHandle.cs" />
     <Compile Include="Win32\Security\Native\SecPkgInfo.cs" />
     <Compile Include="Win32\Security\Native\SecStatusCode.cs" />
-    <Compile Include="Win32\Security\Native\SecureStringMarshal.cs" />
+    <Compile Include="Win32\Security\Native\SecureStringMarshalBuffer.cs" />
     <Compile Include="Win32\Security\Native\SECURITY_LOGON_SESSION_DATA.cs" />
     <Compile Include="Win32\Security\Native\SecWinNtAuthIdentityFlags.cs" />
     <Compile Include="Win32\Security\Native\SEC_WINNT_AUTH_IDENTITY.cs" />
@@ -559,17 +581,6 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="Readme.txt" />
-  </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="Forms\AclViewerControl.resx">
-      <DependentUpon>AclViewerControl.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Forms\SecurityDescriptorViewerControl.resx">
-      <DependentUpon>SecurityDescriptorViewerControl.cs</DependentUpon>
-    </EmbeddedResource>
-    <EmbeddedResource Include="Forms\SecurityDescriptorViewerForm.resx">
-      <DependentUpon>SecurityDescriptorViewerForm.cs</DependentUpon>
-    </EmbeddedResource>
   </ItemGroup>
   <ItemGroup />
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />

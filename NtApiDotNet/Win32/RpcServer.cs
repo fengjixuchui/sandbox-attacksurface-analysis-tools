@@ -301,8 +301,14 @@ namespace NtApiDotNet.Win32
                             NdrParser parser = new NdrParser(reader, NtProcess.Current,
                                 sym_resolver, parser_flags);
                             IntPtr ifspec = lib.DangerousGetHandle() + (int)offset.Offset;
-                            var rpc = parser.ReadFromRpcServerInterface(ifspec, lib.DangerousGetHandle());
-                            servers.Add(new RpcServer(rpc, parser.ComplexTypes, file, offset.Offset, offset.Client));
+                            try
+                            {
+                                var rpc = parser.ReadFromRpcServerInterface(ifspec, lib.DangerousGetHandle());
+                                servers.Add(new RpcServer(rpc, parser.ComplexTypes, file, offset.Offset, offset.Client));
+                            }
+                            catch (NdrParserException)
+                            {
+                            }
                         }
                     }
                 }
@@ -431,6 +437,8 @@ namespace NtApiDotNet.Win32
 
         private static IEnumerable<RpcOffset> FindRpcServerInterfaces(ImageSection sect, bool return_clients)
         {
+            if (!sect.Characteristics.HasFlagSet(ImageSectionCharacteristics.Read))
+                yield break;
             byte[] rdata = sect.ToArray();
             foreach (int ofs in FindBytes(rdata, NdrNativeUtils.DCE_TransferSyntax.ToByteArray()).Concat(FindBytes(rdata, NdrNativeUtils.NDR64_TransferSyntax.ToByteArray())))
             {

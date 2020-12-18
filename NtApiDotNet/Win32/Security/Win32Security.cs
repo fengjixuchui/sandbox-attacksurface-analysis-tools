@@ -478,6 +478,111 @@ namespace NtApiDotNet.Win32.Security
             return string.Empty;
         }
 
+        /// <summary>
+        /// Add a SID to name mapping with LSA.
+        /// </summary>
+        /// <param name="domain">The domain name for the SID. The SID must be in the NT authority.</param>
+        /// <param name="name">The account name for the SID. Can be null for a domain SID.</param>
+        /// <param name="sid">The SID to add.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status result.</returns>
+        public static NtStatus AddSidNameMapping(string domain, string name, Sid sid, bool throw_on_error)
+        {
+            using (var sid_buffer = sid.ToSafeBuffer())
+            {
+                LSA_SID_NAME_MAPPING_OPERATION_ADD_INPUT input = new LSA_SID_NAME_MAPPING_OPERATION_ADD_INPUT
+                {
+                    Sid = sid_buffer.DangerousGetHandle(),
+                    DomainName = new UnicodeStringIn(domain)
+                };
+                if (!string.IsNullOrEmpty(name))
+                {
+                    input.AccountName = new UnicodeStringIn(name);
+                }
+                
+                using (var input_buffer = input.ToBuffer())
+                {
+                    SafeLsaMemoryBuffer output = null;
+                    try
+                    {
+                        return SecurityNativeMethods.LsaManageSidNameMapping(LSA_SID_NAME_MAPPING_OPERATION_TYPE.LsaSidNameMappingOperation_Add,
+                            input_buffer, out output).ToNtException(throw_on_error);
+                    }
+                    finally
+                    {
+                        output?.Dispose();
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Add a SID to name mapping with LSA.
+        /// </summary>
+        /// <param name="domain">The domain name for the SID.</param>
+        /// <param name="name">The account name for the SID. Can be null for a domain SID.</param>
+        /// <param name="sid">The SID to add.</param>
+        /// <returns>The NT status result.</returns>
+        public static void AddSidNameMapping(string domain, string name, Sid sid)
+        {
+            AddSidNameMapping(domain, name, sid, true);
+        }
+
+        /// <summary>
+        /// Remove a SID to name mapping with LSA.
+        /// </summary>
+        /// <param name="domain">The domain name for the SID.</param>
+        /// <param name="name">The account name for the SID. Can be null for a domain SID.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status result.</returns>
+        public static NtStatus RemoveSidNameMapping(string domain, string name, bool throw_on_error)
+        {
+            LSA_SID_NAME_MAPPING_OPERATION_REMOVE_INPUT input = new LSA_SID_NAME_MAPPING_OPERATION_REMOVE_INPUT
+            {
+                DomainName = new UnicodeStringIn(domain)
+            };
+            if (name != null)
+            {
+                input.AccountName = new UnicodeStringIn(name);
+            }
+
+            using (var input_buffer = input.ToBuffer())
+            {
+                SafeLsaMemoryBuffer output = null;
+                try
+                {
+                    return SecurityNativeMethods.LsaManageSidNameMapping(LSA_SID_NAME_MAPPING_OPERATION_TYPE.LsaSidNameMappingOperation_Remove,
+                        input_buffer, out output).ToNtException(throw_on_error);
+                }
+                finally
+                {
+                    output?.Dispose();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Remove a SID to name mapping with LSA.
+        /// </summary>
+        /// <param name="domain">The domain name for the SID.</param>
+        /// <param name="name">The account name for the SID. Can be null for a domain SID.</param>
+        /// <returns>The NT status result.</returns>
+        public static void RemoveSidNameMapping(string domain, string name)
+        {
+            RemoveSidNameMapping(domain, name, true);
+        }
+
+        /// <summary>
+        /// Remove a SID to name mapping with LSA.
+        /// </summary>
+        /// <param name="sid">The SID to remove.</param>
+        /// <returns>The NT status result.</returns>
+        public static void RemoveSidNameMapping(Sid sid)
+        {
+            SidName name = sid.GetName();
+            RemoveSidNameMapping(name.Domain, name.NameUse == SidNameUse.Domain ? string.Empty : name.Name, true);
+        }
+
         #endregion
 
         #region Private Members

@@ -44,6 +44,24 @@ namespace NtApiDotNet
         #endregion
 
         #region Static Methods
+
+        /// <summary>
+        /// Create an event object
+        /// </summary>
+        /// <param name="name">The path to the event</param>
+        /// <param name="root">The root object for relative path names</param>
+        /// <param name="type">The type of the event</param>
+        /// <param name="initial_state">The initial state of the event</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The event object</returns>
+        public static NtResult<NtEvent> Create(string name, NtObject root, EventType type, bool initial_state, bool throw_on_error)
+        {
+            using (ObjectAttributes obja = new ObjectAttributes(name, AttributeFlags.CaseInsensitive, root))
+            {
+                return Create(obja, type, initial_state, EventAccessRights.MaximumAllowed, throw_on_error);
+            }
+        }
+
         /// <summary>
         /// Create an event object
         /// </summary>
@@ -54,10 +72,7 @@ namespace NtApiDotNet
         /// <returns>The event object</returns>
         public static NtEvent Create(string name, NtObject root, EventType type, bool initial_state)
         {
-            using (ObjectAttributes obja = new ObjectAttributes(name, AttributeFlags.CaseInsensitive, root))
-            {
-                return Create(obja, type, initial_state, EventAccessRights.MaximumAllowed);
-            }
+            return Create(name, root, type, initial_state, true).Result;
         }
 
         /// <summary>
@@ -229,6 +244,23 @@ namespace NtApiDotNet
         public override NtStatus QueryInformation(EventInformationClass info_class, SafeBuffer buffer, out int return_length)
         {
             return NtSystemCalls.NtQueryEvent(Handle, info_class, buffer, buffer.GetLength(), out return_length);
+        }
+
+        /// <summary>
+        /// Query the information class as an object.
+        /// </summary>
+        /// <param name="info_class">The information class.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The information class as an object.</returns>
+        public override NtResult<object> QueryObject(EventInformationClass info_class, bool throw_on_error)
+        {
+            switch (info_class)
+            {
+                case EventInformationClass.EventBasicInformation:
+                    return Query<EventBasicInformation>(info_class, default, throw_on_error);
+            }
+
+            return base.QueryObject(info_class, throw_on_error);
         }
 
         #endregion

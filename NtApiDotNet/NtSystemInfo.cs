@@ -167,6 +167,15 @@ namespace NtApiDotNet
             return ret.CreateResult();
         }
 
+        private static string GetProcessImagePath(int pid, Dictionary<int, string> cache)
+        {
+            if (!cache.ContainsKey(pid))
+            {
+                cache[pid] = GetProcessIdImagePath(pid, false).GetResultOrDefault(string.Empty);
+            }
+            return cache[pid];
+        }
+
         #endregion
 
         #region Static Methods
@@ -176,10 +185,18 @@ namespace NtApiDotNet
         /// </summary>
         /// <param name="pid">A process ID to filter on. If -1 will get all handles</param>
         /// <param name="allow_query">True to allow the handles returned to query for certain properties</param>
+        /// <param name="force_file_name">True to force all file names to be queried. Otherwise limits to only DISK files.</param>
         /// <returns>The list of handles</returns>
-        public static IEnumerable<NtHandle> GetHandles(int pid, bool allow_query)
+        /// <remarks>The purpose of force_file_name to disable querying a file handle for its path unless it's on a FS volume.
+        /// This is because some non-file types can be in a locked state which causes the filename lookup to hang.</remarks>
+        public static IEnumerable<NtHandle> GetHandles(int pid, bool allow_query, bool force_file_name)
         {
             int repeat_count = 10;
+            Dictionary<int, string> image_paths = new Dictionary<int, string>
+            {
+                [0] = "Idle",
+                [4] = "System"
+            };
 
             while (repeat_count-- > 0)
             {
@@ -207,10 +224,23 @@ namespace NtApiDotNet
                     handle_count = handle_info.NumberOfHandles.ToInt32();
                     SystemHandleTableInfoEntryEx[] handles = new SystemHandleTableInfoEntryEx[handle_count];
                     buffer.Data.ReadArray(0, handles, 0, handle_count);
-                    return handles.Where(h => pid == -1 || h.UniqueProcessId.ToInt32() == pid).Select(h => new NtHandle(h, allow_query));
+
+                    return handles.Where(h => pid == -1 || h.UniqueProcessId.ToInt32() == pid)
+                        .Select(h => new NtHandle(h, allow_query, force_file_name, GetProcessImagePath(h.UniqueProcessId.ToInt32(), image_paths)));
                 }
             }
             throw new NtException(NtStatus.STATUS_BUFFER_TOO_SMALL);
+        }
+
+        /// <summary>
+        /// Get a list of handles
+        /// </summary>
+        /// <param name="pid">A process ID to filter on. If -1 will get all handles</param>
+        /// <param name="allow_query">True to allow the handles returned to query for certain properties</param>
+        /// <returns>The list of handles</returns>
+        public static IEnumerable<NtHandle> GetHandles(int pid, bool allow_query)
+        {
+            return GetHandles(pid, allow_query, false);
         }
 
         /// <summary>
@@ -1256,12 +1286,26 @@ namespace NtApiDotNet
         /// Get the NT product type.
         /// </summary>
         /// <returns></returns>
-        public static NtProductType GetProductType()
+        public static NtProductType ProductType
         {
-            if (!NtRtl.RtlGetNtProductType(out NtProductType result))
-                throw new ArgumentException("Invalid product type.");
-            return result;
+            get
+            {
+                if (!NtRtl.RtlGetNtProductType(out NtProductType result))
+                    throw new ArgumentException("Invalid product type.");
+                return result;
+            }
         }
+
+        /// <summary>
+        /// Get whether this is a multi-session SKU.
+        /// </summary>
+        /// <returns>True if multi-session.</returns>
+        public static bool IsMultiSession => NtRtl.RtlIsMultiSessionSku();
+        /// <summary>
+        /// Get whether this there are multiple users in a session.
+        /// </summary>
+        /// <returns>True if multi-session.</returns>
+        public static bool IsMultiUsersInSession => NtRtl.RtlIsMultiUsersInSessionSku();
         #endregion
     }
 }

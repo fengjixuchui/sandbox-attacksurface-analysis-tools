@@ -1,4 +1,4 @@
-﻿//  Copyright 2020 Google Inc. All Rights Reserved.
+﻿//  Copyright 2016 Google Inc. All Rights Reserved.
 //
 //  Licensed under the Apache License, Version 2.0 (the "License");
 //  you may not use this file except in compliance with the License.
@@ -13,28 +13,15 @@
 //  limitations under the License.
 
 using System;
-using System.Runtime.InteropServices;
-using System.Security;
 
-namespace NtApiDotNet.Win32.Security.Native
+namespace NtApiDotNet
 {
-#pragma warning disable 1591
-    [StructLayout(LayoutKind.Sequential)]
-    internal struct SecureStringMarshal : IDisposable
+    internal sealed class SDKNameAttribute : Attribute
     {
-        public IntPtr Ptr;
-
-        public SecureStringMarshal(SecureString s)
+        public string Name { get; }
+        public SDKNameAttribute(string name)
         {
-            Ptr = Marshal.SecureStringToBSTR(s);
-        }
-
-        public void Dispose()
-        {
-            if (Ptr != IntPtr.Zero)
-            {
-                Marshal.ZeroFreeBSTR(Ptr);
-            }
+            Name = name;
         }
     }
 }

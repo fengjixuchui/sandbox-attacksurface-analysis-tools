@@ -297,16 +297,18 @@ namespace NtApiDotNet
             }
         }
 
-        private string TryGetName(FileInformationClass info_class)
+        private NtResult<string> TryGetName(FileInformationClass info_class, bool throw_on_error)
         {
             using (var buffer = new SafeStructureInOutBuffer<FileNameInformation>(32 * 1024, true))
             {
                 IoStatus status = new IoStatus();
-                NtSystemCalls.NtQueryInformationFile(Handle,
-                    status, buffer, buffer.Length, info_class).ToNtException();
+                NtStatus nt_status = NtSystemCalls.NtQueryInformationFile(Handle,
+                    status, buffer, buffer.Length, info_class);
+                if (!nt_status.IsSuccess())
+                    return nt_status.CreateResultFromError<string>(throw_on_error);
                 char[] result = new char[buffer.Result.NameLength / 2];
                 buffer.Data.ReadArray(0, result, 0, result.Length);
-                return new string(result);
+                return new string(result).CreateResult();
             }
         }
 
@@ -1736,15 +1738,31 @@ namespace NtApiDotNet
         /// <param name="desired_access">The desired access for the file handle</param>
         /// <param name="share_access">The file share access</param>
         /// <param name="open_options">File open options</param>
+        /// <param name="attributes">Flags for the object attributes.</param>
+        /// <param name="throw_on_error">True to throw an exception on error.</param>
+        /// <returns>The NT status code and object result.</returns>
+        /// <exception cref="NtException">Thrown on error.</exception>
+        public NtResult<NtFile> ReOpen(FileAccessRights desired_access, FileShareMode share_access, 
+            FileOpenOptions open_options, AttributeFlags attributes, bool throw_on_error)
+        {
+            using (ObjectAttributes obj_attributes = new ObjectAttributes(string.Empty, attributes, this))
+            {
+                return Open(obj_attributes, desired_access, share_access, open_options, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Re-open an existing file for different access.
+        /// </summary>
+        /// <param name="desired_access">The desired access for the file handle</param>
+        /// <param name="share_access">The file share access</param>
+        /// <param name="open_options">File open options</param>
         /// <param name="throw_on_error">True to throw an exception on error.</param>
         /// <returns>The NT status code and object result.</returns>
         /// <exception cref="NtException">Thrown on error.</exception>
         public NtResult<NtFile> ReOpen(FileAccessRights desired_access, FileShareMode share_access, FileOpenOptions open_options, bool throw_on_error)
         {
-            using (ObjectAttributes obj_attributes = new ObjectAttributes(string.Empty, AttributeFlags.CaseInsensitive, this))
-            {
-                return Open(obj_attributes, desired_access, share_access, open_options, throw_on_error);
-            }
+            return ReOpen(desired_access, share_access, open_options, AttributeFlags.CaseInsensitive, throw_on_error);
         }
 
         /// <summary>
@@ -4803,6 +4821,26 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Get the file's full path.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The file name.</returns>
+        public NtResult<string> GetFileName(bool throw_on_error)
+        {
+            return TryGetName(FileInformationClass.FileNameInformation, throw_on_error);
+        }
+
+        /// <summary>
+        /// Get the file's normalized path.
+        /// </summary>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The file name.</returns>
+        public NtResult<string> GetNormalizedFileName(bool throw_on_error)
+        {
+            return TryGetName(FileInformationClass.FileNormalizedNameInformation, throw_on_error);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -4827,6 +4865,32 @@ namespace NtApiDotNet
         {
             IoStatus io_status = new IoStatus();
             return NtSystemCalls.NtSetInformationFile(Handle, io_status, buffer, buffer.GetLength(), info_class);
+        }
+
+        /// <summary>
+        /// Query the information class as an object.
+        /// </summary>
+        /// <param name="info_class">The information class.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The information class as an object.</returns>
+        public override NtResult<object> QueryObject(FileInformationClass info_class, bool throw_on_error)
+        {
+            switch (info_class)
+            {
+                case FileInformationClass.FileBasicInformation:
+                    return Query<FileBasicInformation>(info_class, default, throw_on_error);
+                case FileInformationClass.FileEndOfFileInformation:
+                    return Query<FileEndOfFileInformation>(info_class, default, throw_on_error);
+                case FileInformationClass.FileStandardInformation:
+                    return Query<FileStandardInformation>(info_class, default, throw_on_error);
+                case FileInformationClass.FileNetworkOpenInformation:
+                    return Query<FileNetworkOpenInformation>(info_class, default, throw_on_error);
+                case FileInformationClass.FileInternalInformation:
+                    return Query<FileInternalInformation>(info_class, default, throw_on_error);
+                case FileInformationClass.FileRemoteProtocolInformation:
+                    return Query<FileRemoteProtocolInformation>(info_class, default, throw_on_error);
+            }
+            return base.QueryObject(info_class, throw_on_error);
         }
 
         #endregion
@@ -5091,12 +5155,12 @@ namespace NtApiDotNet
         /// <summary>
         /// Get the filename with the volume path.
         /// </summary>
-        public string FileName => TryGetName(FileInformationClass.FileNameInformation);
+        public string FileName => TryGetName(FileInformationClass.FileNameInformation, true).Result;
 
         /// <summary>
         /// Get the normalized filename with the volume path.
         /// </summary>
-        public string NormalizedFileName => TryGetName(FileInformationClass.FileNormalizedNameInformation);
+        public string NormalizedFileName => TryGetName(FileInformationClass.FileNormalizedNameInformation, true).Result;
 
         /// <summary>
         /// Get the associated short filename
@@ -5113,7 +5177,7 @@ namespace NtApiDotNet
         /// </summary>
         public string ShortName
         {
-            get => TryGetName(FileInformationClass.FileAlternateNameInformation);
+            get => TryGetName(FileInformationClass.FileAlternateNameInformation, true).Result;
             set => SetName(FileInformationClass.FileShortNameInformation, value);
         }
 
@@ -5121,25 +5185,6 @@ namespace NtApiDotNet
         /// Get the normalized name.
         /// </summary>
         public string NormalizedName => Path.GetFileName(NormalizedFileName);
-
-        /// <summary>
-        /// Get the name of the file.
-        /// </summary>
-        /// <returns>The name of the file.</returns>
-        public override string FullPath
-        {
-            get
-            {
-                if (DeviceType != FileDeviceType.NAMED_PIPE)
-                {
-                    return base.FullPath;
-                }
-                else
-                {
-                    return base.FullPath;
-                }
-            }
-        }
 
         /// <summary>
         /// Get or set the storage reserve ID.
@@ -5160,7 +5205,7 @@ namespace NtApiDotNet
         /// </summary>
         public bool ReadOnly
         {
-            get => !FileAttributes.HasFlagSet(FileAttributes.ReadOnly);
+            get => FileAttributes.HasFlagSet(FileAttributes.ReadOnly);
             set
             {
                 var current_attributes = FileAttributes;

@@ -106,7 +106,7 @@ namespace NtApiDotNet.Win32
         SQoSPresent = 0x00100000,
         OpenReparsePoint = 0x00200000,
         PosixSemantics = 0x01000000,
-        BackupDemantics = 0x02000000,
+        BackupSemantics = 0x02000000,
         DeleteOnClose = 0x04000000,
         SequentialScan = 0x08000000,
         RandomAccess = 0x10000000,
@@ -197,18 +197,20 @@ namespace NtApiDotNet.Win32
         public string pFarmName;
     }
 
-    internal enum SidNameUse
+    public enum SidNameUse
     {
-        SidTypeUser = 1,
-        SidTypeGroup,
-        SidTypeDomain,
-        SidTypeAlias,
-        SidTypeWellKnownGroup,
-        SidTypeDeletedAccount,
-        SidTypeInvalid,
-        SidTypeUnknown,
-        SidTypeComputer,
-        SidTypeLabel
+        None = 0,
+        User,
+        Group,
+        Domain,
+        Alias,
+        WellKnownGroup,
+        DeletedAccount,
+        Invalid,
+        Unknown,
+        Computer,
+        Label,
+        LogonSession
     }
 
     /// <summary>
@@ -580,6 +582,7 @@ namespace NtApiDotNet.Win32
         public WinCertType wCertificateType;   // WIN_CERT_TYPE_xxx
         public byte bCertificate;
     }
+
     internal static class Win32NativeMethods
     {
         [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
@@ -917,11 +920,41 @@ namespace NtApiDotNet.Win32
             );
 
         [DllImport("Advapi32.dll", SetLastError = true)]
-        internal static extern bool QueryServiceObjectSecurity(SafeServiceHandle hService,
+        internal static extern bool DeleteService(
+          SafeServiceHandle hService
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern SafeServiceHandle CreateService(
+          SafeServiceHandle hSCManager,
+          string lpServiceName,
+          string lpDisplayName,
+          ServiceAccessRights dwDesiredAccess,
+          ServiceType dwServiceType,
+          ServiceStartType dwStartType,
+          ServiceErrorControl dwErrorControl,
+          string lpBinaryPathName,
+          string lpLoadOrderGroup,
+          [Out] OptionalInt32 lpdwTagId,
+          string lpDependencies,
+          string lpServiceStartName,
+          IntPtr lpPassword
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true)]
+        internal static extern bool QueryServiceObjectSecurity(
+            SafeServiceHandle hService,
             SecurityInformation dwSecurityInformation,
             [Out] byte[] lpSecurityDescriptor,
             int cbBufSize,
             out int pcbBytesNeeded);
+
+        [DllImport("Advapi32.dll", SetLastError = true)]
+        internal static extern bool SetServiceObjectSecurity(
+            SafeServiceHandle hService,
+            SecurityInformation dwSecurityInformation,
+            [In] byte[] lpSecurityDescriptor
+        );
 
         [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
         internal static extern bool QueryServiceConfig(
@@ -938,6 +971,28 @@ namespace NtApiDotNet.Win32
           SafeBuffer lpBuffer,
           int cbBufSize,
           out int pcbBytesNeeded
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern bool ChangeServiceConfig(
+            SafeServiceHandle hService,
+            ServiceType dwServiceType,
+            ServiceStartType dwStartType,
+            ServiceErrorControl dwErrorControl,
+            string lpBinaryPathName,
+            string lpLoadOrderGroup,
+            [Out] OptionalInt32 lpdwTagId,
+            string lpDependencies,
+            string lpServiceStartName,
+            IntPtr lpPassword,
+            string lpDisplayName
+        );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern bool ChangeServiceConfig2(
+            SafeServiceHandle hService,
+            int dwInfoLevel,
+            SafeBuffer lpInfo
         );
 
         [DllImport("Advapi32.dll", SetLastError = true)]
@@ -962,6 +1017,13 @@ namespace NtApiDotNet.Win32
               ref int lpResumeHandle,
               string pszGroupName
             );
+
+        [DllImport("Advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        internal static extern bool StartService(
+          SafeServiceHandle hService,
+          int dwNumServiceArgs,
+          [MarshalAs(UnmanagedType.LPArray)] string[] lpServiceArgVectors
+        );
 
         [DllImport("kernel32.dll", SetLastError = true)]
         internal static extern bool InitializeProcThreadAttributeList(
@@ -1044,7 +1106,7 @@ namespace NtApiDotNet.Win32
         internal static extern bool CreateProcessWithLogonW(
           string lpUsername,
           string lpDomain,
-          SecureStringMarshal lpPassword,
+          SecureStringMarshalBuffer lpPassword,
           CreateProcessLogonFlags dwLogonFlags,
           string lpApplicationName,
           string lpCommandLine,

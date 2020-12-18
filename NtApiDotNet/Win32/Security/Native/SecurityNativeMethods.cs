@@ -598,6 +598,23 @@ namespace NtApiDotNet.Win32.Security.Native
           out int CountReturned
         );
 
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaAddAccountRights(
+            SafeLsaHandle PolicyHandle,
+            SafeSidBufferHandle AccountSid,
+            [In] UnicodeStringIn[] UserRights,
+            int CountOfRights
+        );
+
+        [DllImport("Advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaRemoveAccountRights(
+            SafeLsaHandle PolicyHandle,
+            SafeSidBufferHandle AccountSid,
+            [MarshalAs(UnmanagedType.U1)] bool AllRights,
+            [In] UnicodeStringIn[] UserRights,
+            int CountOfRights
+        );
+
         [DllImport("Secur32.dll", CharSet = CharSet.Unicode)]
         internal static extern NtStatus LsaCallAuthenticationPackage(
               SafeLsaLogonHandle LsaHandle,
@@ -607,6 +624,13 @@ namespace NtApiDotNet.Win32.Security.Native
               out SafeLsaReturnBufferHandle ProtocolReturnBuffer,
               out int ReturnBufferLength,
               out NtStatus ProtocolStatus
+        );
+
+        [DllImport("advapi32.dll", CharSet = CharSet.Unicode)]
+        internal static extern NtStatus LsaManageSidNameMapping(
+            LSA_SID_NAME_MAPPING_OPERATION_TYPE OperationType,
+            SafeBuffer OperationInput,
+            out SafeLsaMemoryBuffer OperationOutput
         );
 
         [DllImport("sspicli.dll", CharSet = CharSet.Unicode)]

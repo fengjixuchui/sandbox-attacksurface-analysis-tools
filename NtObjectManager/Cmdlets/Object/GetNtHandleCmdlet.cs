@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet;
+using NtObjectManager.Utils;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -20,6 +21,109 @@ using System.Management.Automation;
 
 namespace NtObjectManager.Cmdlets.Object
 {
+    /// <summary>
+    /// <para type="description">Handle group.</para>
+    /// </summary>
+    public sealed class NtHandleObjectGroup 
+    {
+        private readonly Lazy<Tuple<string, SecurityDescriptor>> _get_values;
+
+        private Tuple<string, SecurityDescriptor> GetValues()
+        {
+            string name = null;
+            SecurityDescriptor sd = null;
+            foreach (var h in Handles)
+            {
+                if (h.HandleValid)
+                {
+                    if (name == null)
+                    {
+                        name = h.Name;
+                    }
+                    if (sd == null)
+                    {
+                        sd = h.SecurityDescriptor;
+                    }
+                    if (name != null && sd != null)
+                    {
+                        break;
+                    }
+                }
+            }
+            return Tuple.Create(name ?? string.Empty, sd);
+        }
+
+        /// <summary>
+        /// The mumber of handles in the group.
+        /// </summary>
+        public long Count { get; }
+        /// <summary>
+        /// Number of processes this kernel object is shared with.
+        /// </summary>
+        public int ShareCount { get; }
+        /// <summary>
+        /// The list of unique process IDs.
+        /// </summary>
+        public IEnumerable<int> ProcessIds { get; }
+        /// <summary>
+        /// The name of the key.
+        /// </summary>
+        public ulong Object { get; }
+        /// <summary>
+        /// The group enumeration.
+        /// </summary>
+        public IEnumerable<NtHandle> Handles { get; }
+        /// <summary>
+        /// Get the security descriptor for the handle group.
+        /// </summary>
+        public SecurityDescriptor SecurityDescriptor => _get_values.Value.Item2;
+        /// <summary>
+        /// Get the name for the handle group.
+        /// </summary>
+        public string Name => _get_values.Value.Item1;
+        /// <summary>
+        /// Does the group have a name.
+        /// </summary>
+        public bool HasName => Name.Length > 0;
+        /// <summary>
+        /// Does the group have a security descriptor.
+        /// </summary>
+        public bool HasSecurityDescriptor => SecurityDescriptor != null;
+        /// <summary>
+        /// The intersection of all handle access.
+        /// </summary>
+        public AccessMask AccessIntersection { get; }
+        /// <summary>
+        /// The union of all handle access.
+        /// </summary>
+        public AccessMask AccessUnion { get; }
+
+        private static AccessMask IntersectAccessMask(IEnumerable<IGrouping<int, NtHandle>> pid_group)
+        {
+            AccessMask start_mask = 0xFFFFFFFF;
+            foreach (var group in pid_group)
+            {
+                AccessMask curr_mask = group.Select(h => h.GrantedAccess).Aggregate((a, b) => a | b);
+                start_mask &= curr_mask;
+            }
+            return start_mask;
+        }
+
+        internal NtHandleObjectGroup(IGrouping<ulong, NtHandle> group)
+        {
+            Object = group.Key;
+            Count = group.Count();
+            Handles = group;
+            var pid_group = group.GroupBy(h => h.ProcessId);
+            var pids = pid_group.Select(g => g.Key).ToList();
+            ProcessIds = pids.AsReadOnly();
+            ShareCount = pids.Count;
+            AccessIntersection = IntersectAccessMask(pid_group);
+            AccessUnion = group.Select(h => h.GrantedAccess).Aggregate((a, b) => a | b);
+            _get_values = new Lazy<Tuple<string, SecurityDescriptor>>(GetValues);
+        }
+    }
+
     /// <summary>
     /// <para type="synopsis">Get NT handle information.</para>
     /// <para type="description">This cmdlet gets handle information for all process on the system. You can specify a specific process by setting the -ProcessId parameter.</para>
@@ -46,8 +150,12 @@ namespace NtObjectManager.Cmdlets.Object
     ///   <code>Get-NtHandle 1234 -NoQuery</code>
     ///   <para>Get all NT handles filtered to a specific Process ID but don't try and query information about the handle such as name.</para>
     /// </example>
+    ///     /// <example>
+    ///   <code>Get-NtHandle -GroupByAddress</code>
+    ///   <para>Get all NT handles grouped by their object address.</para>
+    /// </example>
     [Cmdlet(VerbsCommon.Get, "NtHandle", DefaultParameterSetName = "All")]
-    [OutputType(typeof(NtHandle))]
+    [OutputType(typeof(NtHandle), typeof(NtHandleObjectGroup))]
     public class GetNtHandleCmdlet : PSCmdlet
     {
         /// <summary>
@@ -70,11 +178,25 @@ namespace NtObjectManager.Cmdlets.Object
         public SwitchParameter NoQuery { get; set; }
 
         /// <summary>
-        /// <para type="description">Specify list of object types to filter handles.</para>
+        /// <para type="description">Specify that the returned handle entries should force querying for file information from non-filesystem files. 
+        /// This is not the default as it can cause the lookup of filenames and security descriptors to hang.</para>
         /// </summary>
         [Parameter]
-        public string[] ObjectTypes { get; set; }
-        
+        public SwitchParameter ForceFileQuery { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify list of object types to filter handles.</para>
+        /// </summary>
+        [Parameter, ArgumentCompleter(typeof(NtTypeArgumentCompleter))]
+        [Alias("ObjectTypes")]
+        public string[] ObjectType { get; set; }
+
+        /// <summary>
+        /// <para type="description">Specify the result should be grouped by address.</para>
+        /// </summary>
+        [Parameter(ParameterSetName = "All")]
+        public SwitchParameter GroupByAddress { get; set; }
+
         /// <summary>
         /// Constructor.
         /// </summary>
@@ -91,19 +213,27 @@ namespace NtObjectManager.Cmdlets.Object
             IEnumerable<NtHandle> handles;
             if (ParameterSetName == "FromProcess")
             {
-                handles = Process.GetHandles(!NoQuery);
+                handles = Process.GetHandles(!NoQuery, ForceFileQuery, true).Result;
             }
             else
             {
-                handles = NtSystemInfo.GetHandles(ProcessId, !NoQuery);
+                handles = NtSystemInfo.GetHandles(ProcessId, !NoQuery, ForceFileQuery);
             }
 
-            if (ObjectTypes != null && ObjectTypes.Length > 0)
+            if (ObjectType?.Length > 0)
             {
-                HashSet<string> object_types = new HashSet<string>(ObjectTypes, StringComparer.OrdinalIgnoreCase);
+                HashSet<string> object_types = new HashSet<string>(ObjectType, StringComparer.OrdinalIgnoreCase);
                 handles = handles.Where(h => object_types.Contains(h.ObjectType));
             }
-            WriteObject(handles, true);
+
+            if (GroupByAddress)
+            {
+                WriteObject(handles.GroupBy(h => h.Object).Select(g => new NtHandleObjectGroup(g)), true);
+            }
+            else
+            {
+                WriteObject(handles, true);
+            }
         }
     }
 }

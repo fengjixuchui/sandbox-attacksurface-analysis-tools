@@ -22,31 +22,56 @@ namespace NtApiDotNet
     public enum ProcessAccessRights : uint
     {
         None = 0,
+        [SDKName("PROCESS_TERMINATE")]
         Terminate = 0x0001,
+        [SDKName("PROCESS_CREATE_THREAD")]
         CreateThread = 0x0002,
+        [SDKName("PROCESS_SET_SESSIONID")]
         SetSessionId = 0x0004,
+        [SDKName("PROCESS_VM_OPERATION")]
         VmOperation = 0x0008,
+        [SDKName("PROCESS_VM_READ")]
         VmRead = 0x0010,
+        [SDKName("PROCESS_VM_WRITE")]
         VmWrite = 0x0020,
+        [SDKName("PROCESS_DUP_HANDLE")]
         DupHandle = 0x0040,
+        [SDKName("PROCESS_CREATE_PROCESS")]
         CreateProcess = 0x0080,
+        [SDKName("PROCESS_SET_QUOTA")]
         SetQuota = 0x0100,
+        [SDKName("PROCESS_SET_INFORMATION")]
         SetInformation = 0x0200,
+        [SDKName("PROCESS_QUERY_INFORMATION")]
         QueryInformation = 0x0400,
+        [SDKName("PROCESS_SUSPEND_RESUME")]
         SuspendResume = 0x0800,
+        [SDKName("PROCESS_QUERY_LIMITED_INFORMATION")]
         QueryLimitedInformation = 0x1000,
+        [SDKName("PROCESS_SET_LIMITED_INFORMATION")]
         SetLimitedInformation = 0x2000,
         AllAccess = 0x1FFFFF,
+        [SDKName("GENERIC_READ")]
         GenericRead = GenericAccessRights.GenericRead,
+        [SDKName("GENERIC_WRITE")]
         GenericWrite = GenericAccessRights.GenericWrite,
+        [SDKName("GENERIC_EXECUTE")]
         GenericExecute = GenericAccessRights.GenericExecute,
+        [SDKName("GENERIC_ALL")]
         GenericAll = GenericAccessRights.GenericAll,
+        [SDKName("DELETE")]
         Delete = GenericAccessRights.Delete,
+        [SDKName("READ_CONTROL")]
         ReadControl = GenericAccessRights.ReadControl,
+        [SDKName("WRITE_DAC")]
         WriteDac = GenericAccessRights.WriteDac,
+        [SDKName("WRITE_OWNER")]
         WriteOwner = GenericAccessRights.WriteOwner,
+        [SDKName("SYNCHRONIZE")]
         Synchronize = GenericAccessRights.Synchronize,
+        [SDKName("MAXIMUM_ALLOWED")]
         MaximumAllowed = GenericAccessRights.MaximumAllowed,
+        [SDKName("ACCESS_SYSTEM_SECURITY")]
         AccessSystemSecurity = GenericAccessRights.AccessSystemSecurity
     };
 
@@ -421,6 +446,13 @@ namespace NtApiDotNet
         public IntPtr ProcessHandle;
     }
 
+    [StructLayout(LayoutKind.Sequential)]
+    public struct ProcessCycleTimeInformation
+    {
+        public long AccumulatedCycles;
+        public long CurrentCycleCount;
+    }
+
     public enum ProcessInformationClass
     {
         ProcessBasicInformation, 
@@ -522,7 +554,9 @@ namespace NtApiDotNet
         ProcessEnableLogging,
         ProcessLeapSecondInformation,
         ProcessFiberShadowStackAllocation,
-        ProcessFreeFiberShadowStackAllocation
+        ProcessFreeFiberShadowStackAllocation,
+        ProcessAltSystemCallInformation,
+        ProcessDynamicEHContinuationTargets,
     }
 
     public enum ProcessMitigationPolicy
@@ -676,6 +710,63 @@ namespace NtApiDotNet
         public UnicodeString TargetDevicePath;
     }
 
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct RateQuotaLimit
+    {
+        public int RateData;
+        public int RatePercent => RateData & 0x7F;
+
+        public override string ToString()
+        {
+            return $"{RatePercent}%";
+        }
+    }
+
+    [Flags]
+    public enum QuotaLimitsExFlags
+    {
+        None = 0,
+        MinEnable = 1,
+        MinDisable = 2,
+        MaxEnable = 4,
+        MaxDisable = 8,
+        UseDefaultLimits = 0x10
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct QuotaLimitsEx
+    {
+        public IntPtr PagedPoolLimit;
+        public IntPtr NonPagedPoolLimit;
+        public IntPtr MinimumWorkingSetSize;
+        public IntPtr MaximumWorkingSetSize;
+        public IntPtr PagefileLimit;
+        public LargeIntegerStruct TimeLimit;
+        public IntPtr WorkingSetLimit;
+        public IntPtr Reserved2;
+        public IntPtr Reserved3;
+        public IntPtr Reserved4;
+        public QuotaLimitsExFlags Flags;
+        public RateQuotaLimit CpuRateLimit;
+    }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct VmCountersEx
+    {
+        public IntPtr PeakVirtualSize;
+        public IntPtr VirtualSize;
+        public int PageFaultCount;
+        public IntPtr PeakWorkingSetSize;
+        public IntPtr WorkingSetSize;
+        public IntPtr QuotaPeakPagedPoolUsage;
+        public IntPtr QuotaPagedPoolUsage;
+        public IntPtr QuotaPeakNonPagedPoolUsage;
+        public IntPtr QuotaNonPagedPoolUsage;
+        public IntPtr PagefileUsage;
+        public IntPtr PeakPagefileUsage;
+        public IntPtr PrivateUsage;
+    }
+
     public static partial class NtSystemCalls
     {
         [DllImport("ntdll.dll")]
@@ -784,6 +875,20 @@ namespace NtApiDotNet
         IsLongPathAwareProcess = 0x80,
     }
 
+    [Flags]
+    public enum PebCrossProcessFlags
+    {
+        None = 0,
+        ProcessInJob = 1,
+        ProcessInitializing = 2,
+        ProcessUsingVEH = 4,
+        ProcessUsingVCH = 8,
+        ProcessUsingFTH = 0x10,
+        ProcessPreviouslyThrottled = 0x20,
+        ProcessCurrentlyThrottled = 0x40,
+        ProcessImagesHotPatched = 0x80
+    }
+
     public interface IPeb
     {
         bool GetBeingDebugged();
@@ -791,6 +896,7 @@ namespace NtApiDotNet
         IntPtr GetImageBaseAddress();
         IntPtr GetProcessHeap();
         IntPtr GetProcessParameters();
+        IntPtr GetApiSetMap();
     }
 
     /// <summary>
@@ -812,11 +918,14 @@ namespace NtApiDotNet
         public IntPtr ProcessParameters; // PRTL_USER_PROCESS_PARAMETERS
         public IntPtr SubSystemData;
         public IntPtr ProcessHeap;
-
-        public bool GetBeingDebugged()
-        {
-            return BeingDebugged;
-        }
+        public IntPtr FastPebLock;
+        public IntPtr AtlThunkSListPtr;
+        public IntPtr IFEOKey;
+        public PebCrossProcessFlags CrossProcessFlags;
+        public IntPtr UserSharedInfoPtr;
+        public int SystemReserved;
+        public int AtlThunkSListPtr32;
+        public IntPtr ApiSetMap;
 
         IntPtr IPeb.GetProcessParameters()
         {
@@ -836,6 +945,16 @@ namespace NtApiDotNet
         IntPtr IPeb.GetProcessHeap()
         {
             return ProcessHeap;
+        }
+
+        bool IPeb.GetBeingDebugged()
+        {
+            return BeingDebugged;
+        }
+
+        IntPtr IPeb.GetApiSetMap()
+        {
+            return ApiSetMap;
         }
     }
 
@@ -858,8 +977,21 @@ namespace NtApiDotNet
         public int ProcessParameters; // PRTL_USER_PROCESS_PARAMETERS
         public int SubSystemData;
         public int ProcessHeap;
+        public int FastPebLock;
+        public int AtlThunkSListPtr;
+        public int IFEOKey;
+        public PebCrossProcessFlags CrossProcessFlags;
+        public int UserSharedInfoPtr;
+        public int SystemReserved;
+        public int AtlThunkSListPtr32;
+        public int ApiSetMap;
 
-        public bool GetBeingDebugged()
+        IntPtr IPeb.GetApiSetMap()
+        {
+            return new IntPtr(ApiSetMap);
+        }
+
+        bool IPeb.GetBeingDebugged()
         {
             return BeingDebugged;
         }

@@ -114,6 +114,10 @@ namespace NtApiDotNet.Win32
         /// </summary>
         public ServiceStartType StartType => _service_information.Value.StartType;
         /// <summary>
+        /// Whether the service is a delayed auto start service.
+        /// </summary>
+        public bool DelayedAutoStart => _service_information.Value.DelayedAutoStart;
+        /// <summary>
         /// Error control.
         /// </summary>
         public ServiceErrorControl ErrorControl => _service_information.Value.ErrorControl;
@@ -137,6 +141,10 @@ namespace NtApiDotNet.Win32
         /// Whether the service can be stopped.
         /// </summary>
         public bool CanStop => ControlsAccepted.HasFlagSet(ServiceControlsAccepted.Stop);
+        /// <summary>
+        /// Type of service host when using Win32Share.
+        /// </summary>
+        public string ServiceHostType { get; }
 
         private static RegistryKey OpenKeySafe(RegistryKey rootKey, string path)
         {
@@ -207,6 +215,7 @@ namespace NtApiDotNet.Win32
             ServiceDll = string.Empty;
             ImagePath = string.Empty;
             CommandLine = string.Empty;
+            ServiceHostType = string.Empty;
 
             using (RegistryKey key = OpenKeySafe(Registry.LocalMachine, $@"SYSTEM\CurrentControlSet\Services\{Name}"))
             {
@@ -214,7 +223,20 @@ namespace NtApiDotNet.Win32
                 {
                     CommandLine = ReadStringFromKey(key, null, "ImagePath");
                     ImagePath = Win32Utils.GetImagePathFromCommandLine(CommandLine);
+                    string[] args = Win32Utils.ParseCommandLine(CommandLine);
+                    if (ServiceType.HasFlagSet(ServiceType.Win32ShareProcess))
+                    {
+                        for (int i = 0; i < args.Length - 1; ++i)
+                        {
+                            if (args[i] == "-k")
+                            {
+                                ServiceHostType = args[i + 1];
+                                break;
+                            }
+                        }
+                    }
                     ServiceDll = ReadStringFromKey(key, "Parameters", "ServiceDll");
+
                     if (string.IsNullOrEmpty(ServiceDll))
                     {
                         ServiceDll = ReadStringFromKey(key, null, "ServiceDll");

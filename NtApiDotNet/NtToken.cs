@@ -1152,6 +1152,27 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Perform a capability check for a token.
+        /// </summary>
+        /// <param name="capability_name">The name of the capability to check.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>True if the token has the capability.</returns>
+        public NtResult<bool> CapabilityCheck(string capability_name, bool throw_on_error)
+        {
+            return NtSecurity.CapabilityCheck(Handle, capability_name, throw_on_error);
+        }
+
+        /// <summary>
+        /// Perform a capability check for a token.
+        /// </summary>
+        /// <param name="capability_name">The name of the capability to check.</param>
+        /// <returns>True if the token has the capability.</returns>
+        public bool CapabilityCheck(string capability_name)
+        {
+            return CapabilityCheck(capability_name, true).Result;
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -1172,6 +1193,22 @@ namespace NtApiDotNet
         public override NtStatus SetInformation(TokenInformationClass info_class, SafeBuffer buffer)
         {
             return NtSystemCalls.NtSetInformationToken(Handle, info_class, buffer, buffer.GetLength());
+        }
+
+        /// <summary>
+        /// Query the information class as an object.
+        /// </summary>
+        /// <param name="info_class">The information class.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The information class as an object.</returns>
+        public override NtResult<object> QueryObject(TokenInformationClass info_class, bool throw_on_error)
+        {
+            switch (info_class)
+            {
+                case TokenInformationClass.TokenStatistics:
+                    return Query<TokenStatistics>(info_class, default, throw_on_error);
+            }
+            return base.QueryObject(info_class, throw_on_error);
         }
 
         #endregion

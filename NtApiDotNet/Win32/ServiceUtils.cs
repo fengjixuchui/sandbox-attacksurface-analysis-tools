@@ -15,7 +15,12 @@
 using Microsoft.Win32.SafeHandles;
 using System;
 using System.Collections.Generic;
+using System.Linq;
+using System.Runtime.CompilerServices;
+using System.Runtime.ConstrainedExecution;
 using System.Runtime.InteropServices;
+using System.Security;
+using System.Text;
 
 namespace NtApiDotNet.Win32
 {
@@ -150,9 +155,30 @@ namespace NtApiDotNet.Win32
         {
         }
 
+        public SafeServiceHandle(IntPtr handle, bool owns_handle)
+            : base(owns_handle)
+        {
+            SetHandle(handle);
+        }
+
         protected override bool ReleaseHandle()
         {
             return Win32NativeMethods.CloseServiceHandle(handle);
+        }
+
+        [ReliabilityContract(Consistency.MayCorruptInstance, Cer.MayFail)]
+        public SafeServiceHandle Detach()
+        {
+            RuntimeHelpers.PrepareConstrainedRegions();
+            try // Needed for constrained region.
+            {
+                IntPtr handle = DangerousGetHandle();
+                SetHandleAsInvalid();
+                return new SafeServiceHandle(handle, true);
+            }
+            finally
+            {
+            }
         }
     }
 
@@ -170,7 +196,8 @@ namespace NtApiDotNet.Win32
         public ServiceFlags dwServiceFlags;
     }
 
-    internal enum SC_ENUM_TYPE {
+    internal enum SC_ENUM_TYPE
+    {
         SC_ENUM_PROCESS_INFO = 0
     }
 
@@ -264,12 +291,20 @@ namespace NtApiDotNet.Win32
         Windows = 1,
         WindowsLight = 2,
         AntimalwareLight = 3,
+        AppLight = 4,
     }
 
     [StructLayout(LayoutKind.Sequential)]
     internal struct SERVICE_LAUNCH_PROTECTED_INFO
     {
         public ServiceLaunchProtectedType dwLaunchProtected;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct SERVICE_DELAYED_AUTO_START_INFO
+    {
+        [MarshalAs(UnmanagedType.Bool)]
+        public bool fDelayedAutostart;
     }
 
     public enum ServiceStartType
@@ -303,7 +338,7 @@ namespace NtApiDotNet.Win32
         public IntPtr lpDisplayName;
     }
 
-    #pragma warning restore
+#pragma warning restore
     /// <summary>
     /// Utilities for accessing services.
     /// </summary>
@@ -314,6 +349,7 @@ namespace NtApiDotNet.Win32
         private const int SERVICE_CONFIG_SERVICE_SID_INFO = 5;
         private const int SERVICE_CONFIG_REQUIRED_PRIVILEGES_INFO = 6;
         private const int SERVICE_CONFIG_LAUNCH_PROTECTED = 12;
+        private const int SERVICE_CONFIG_DELAYED_AUTO_START_INFO = 3;
 
         internal static string GetString(this IntPtr ptr)
         {
@@ -337,18 +373,56 @@ namespace NtApiDotNet.Win32
             return ss.AsReadOnly();
         }
 
-        private static SecurityDescriptor GetServiceSecurityDescriptor(SafeServiceHandle handle, string type_name)
+        internal static string ToMultiString(this IEnumerable<string> ss)
         {
-            byte[] sd = new byte[8192];
-            if (!Win32NativeMethods.QueryServiceObjectSecurity(handle, SecurityInformation.Dacl
+            if (ss == null || !ss.Any())
+                return null;
+
+            StringBuilder builder = new StringBuilder();
+
+            foreach (var s in ss)
+            {
+                builder.Append(s);
+                builder.Append('\0');
+            }
+            builder.Append('\0');
+            return builder.ToString();
+        }
+
+        private static SecurityInformation DEFAULT_SECURITY_INFORMATION = SecurityInformation.Dacl
                 | SecurityInformation.Owner
                 | SecurityInformation.Label
-                | SecurityInformation.Group, sd, sd.Length, out _))
+                | SecurityInformation.Group;
+
+        private static NtResult<SecurityDescriptor> GetServiceSecurityDescriptor(
+            SafeServiceHandle handle, string type_name, SecurityInformation security_information,
+            bool throw_on_error)
+        {
+            byte[] sd = new byte[8192];
+            return Win32NativeMethods.QueryServiceObjectSecurity(handle, security_information,
+                sd, sd.Length, out _).CreateWin32Result(throw_on_error, 
+                () => new SecurityDescriptor(sd, GetServiceNtType(type_name)));
+        }
+
+        private static NtStatus SetServiceSecurityDescriptor(SafeServiceHandle handle,
+            SecurityInformation security_information, SecurityDescriptor security_descriptor, bool throw_on_error)
+        {
+            if (handle is null)
             {
-                throw new SafeWin32Exception();
+                throw new ArgumentNullException(nameof(handle));
             }
 
-            return new SecurityDescriptor(sd, GetServiceNtType(type_name));
+            if (security_descriptor is null)
+            {
+                throw new ArgumentNullException(nameof(security_descriptor));
+            }
+
+            if (!Win32NativeMethods.SetServiceObjectSecurity(handle, security_information, security_descriptor.ToByteArray()))
+            {
+                return Win32Utils.GetLastWin32Error().ToNtException(throw_on_error);
+            }
+
+            return NtStatus.STATUS_SUCCESS;
         }
 
         private static IEnumerable<ServiceTriggerInformation> GetTriggersForService(SafeServiceHandle service)
@@ -425,7 +499,21 @@ namespace NtApiDotNet.Win32
             }
         }
 
-        private static NtResult<ServiceInformation> GetServiceSecurityInformation(SafeServiceHandle scm, string name, bool throw_on_error)
+        private static bool GetDelayedStart(SafeServiceHandle service)
+        {
+            using (var buf = new SafeStructureInOutBuffer<SERVICE_DELAYED_AUTO_START_INFO>())
+            {
+                if (!Win32NativeMethods.QueryServiceConfig2(service, SERVICE_CONFIG_DELAYED_AUTO_START_INFO,
+                        buf, buf.Length, out int needed))
+                {
+                    return false;
+                }
+                return buf.Result.fDelayedAutostart;
+            }
+        }
+
+        private static NtResult<ServiceInformation> GetServiceSecurityInformation(SafeServiceHandle scm, string name,
+            SecurityInformation security_information, bool throw_on_error)
         {
             using (SafeServiceHandle service = Win32NativeMethods.OpenService(scm, name,
                 ServiceAccessRights.QueryConfig | ServiceAccessRights.ReadControl))
@@ -435,10 +523,11 @@ namespace NtApiDotNet.Win32
                     return Win32Utils.GetLastWin32Error().CreateResultFromDosError<ServiceInformation>(throw_on_error);
                 }
 
-                return new ServiceInformation(name, GetServiceSecurityDescriptor(service, "service"),
+                return new ServiceInformation(name, 
+                    GetServiceSecurityDescriptor(service, "service", security_information, false).GetResultOrDefault(),
                     GetTriggersForService(service), GetServiceSidType(service),
                     GetServiceLaunchProtectedType(service), GetServiceRequiredPrivileges(service),
-                    QueryConfig(service, false).GetResultOrDefault()).CreateResult();
+                    QueryConfig(service, false).GetResultOrDefault(), GetDelayedStart(service)).CreateResult();
             }
         }
 
@@ -446,7 +535,7 @@ namespace NtApiDotNet.Win32
         {
             using (var buf = new SafeStructureInOutBuffer<QUERY_SERVICE_CONFIG>(8192, false))
             {
-                return Win32NativeMethods.QueryServiceConfig(service, buf, buf.Length, 
+                return Win32NativeMethods.QueryServiceConfig(service, buf, buf.Length,
                     out int required).CreateWin32Result(throw_on_error, () => buf.Detach());
             }
         }
@@ -528,6 +617,28 @@ namespace NtApiDotNet.Win32
                 }
             }
         }
+
+        private static NtResult<SafeServiceHandle> OpenService(string name, ServiceAccessRights desired_access, bool throw_on_error)
+        {
+            using (SafeServiceHandle scm = Win32NativeMethods.OpenSCManager(null, null,
+                            ServiceControlManagerAccessRights.Connect))
+            {
+                if (scm.IsInvalid)
+                {
+                    return Win32Utils.GetLastWin32Error().CreateResultFromDosError<SafeServiceHandle>(throw_on_error);
+                }
+
+                using (var service = Win32NativeMethods.OpenService(scm, name, desired_access))
+                {
+                    if (service.IsInvalid)
+                    {
+                        return Win32Utils.GetLastWin32Error().CreateResultFromDosError<SafeServiceHandle>(throw_on_error);
+                    }
+                    return service.Detach().CreateResult();
+                }
+            }
+        }
+
         #endregion
 
         #region Static Methods
@@ -564,18 +675,107 @@ namespace NtApiDotNet.Win32
             };
             return mapping;
         }
-        
+
         /// <summary>
         /// Get the security descriptor of the SCM.
         /// </summary>
-        /// <returns></returns>
+        /// <returns>The SCM security descriptor.</returns>
         public static SecurityDescriptor GetScmSecurityDescriptor()
         {
+            return GetScmSecurityDescriptor(DEFAULT_SECURITY_INFORMATION);
+        }
+
+        /// <summary>
+        /// Get the security descriptor of the SCM.
+        /// </summary>
+        /// <param name="security_information">Parts of the security descriptor to return.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The SCM security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> GetScmSecurityDescriptor(SecurityInformation security_information, bool throw_on_error)
+        {
+            var desired_access = NtSecurity.QuerySecurityAccessMask(security_information).ToSpecificAccess<ServiceControlManagerAccessRights>();
+
             using (SafeServiceHandle scm = Win32NativeMethods.OpenSCManager(null, null,
-                            ServiceControlManagerAccessRights.Connect | ServiceControlManagerAccessRights.ReadControl))
+                            ServiceControlManagerAccessRights.Connect | desired_access))
             {
-                return GetServiceSecurityDescriptor(scm, "scm");
+                if (scm.IsInvalid)
+                    return Win32Utils.GetLastWin32Error().CreateResultFromDosError<SecurityDescriptor>(throw_on_error);
+                return GetServiceSecurityDescriptor(scm, "scm", security_information, throw_on_error);
             }
+        }
+
+        /// <summary>
+        /// Get the security descriptor of the SCM.
+        /// </summary>
+        /// <param name="security_information">Parts of the security descriptor to return.</param>
+        /// <returns>The SCM security descriptor.</returns>
+        public static SecurityDescriptor GetScmSecurityDescriptor(SecurityInformation security_information)
+        {
+            return GetScmSecurityDescriptor(security_information, true).Result;
+        }
+
+        /// <summary>
+        /// Get the security descriptor for a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="security_information">Parts of the security descriptor to return.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The security descriptor.</returns>
+        public static NtResult<SecurityDescriptor> GetServiceSecurityDescriptor(string name, 
+            SecurityInformation security_information, bool throw_on_error)
+        {
+            var desired_access = NtSecurity.QuerySecurityAccessMask(security_information).ToSpecificAccess<ServiceAccessRights>();
+
+            using (var service = OpenService(name, desired_access, throw_on_error))
+            {
+                if (!service.IsSuccess)
+                    return service.Cast<SecurityDescriptor>();
+                return GetServiceSecurityDescriptor(service.Result, "service", security_information, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Get the security descriptor for a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="security_information">Parts of the security descriptor to return.</param>
+        /// <returns>The security descriptor.</returns>
+        public static SecurityDescriptor GetServiceSecurityDescriptor(string name,
+            SecurityInformation security_information)
+        {
+            return GetServiceSecurityDescriptor(name, security_information, true).Result;
+        }
+
+        /// <summary>
+        /// Set the SCM security descriptor.
+        /// </summary>
+        /// <param name="security_descriptor">The security descriptor to set.</param>
+        /// <param name="security_information">The parts of the security descriptor to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus SetScmSecurityDescriptor(SecurityDescriptor security_descriptor, 
+            SecurityInformation security_information, bool throw_on_error)
+        {
+            var desired_access = NtSecurity.SetSecurityAccessMask(security_information).ToSpecificAccess<ServiceControlManagerAccessRights>();
+
+            using (SafeServiceHandle scm = Win32NativeMethods.OpenSCManager(null, null,
+                            ServiceControlManagerAccessRights.Connect | desired_access))
+            {
+                if (scm.IsInvalid)
+                    return Win32Utils.GetLastWin32Error().ToNtException(throw_on_error);
+                return SetServiceSecurityDescriptor(scm, security_information, security_descriptor, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Set the SCM security descriptor.
+        /// </summary>
+        /// <param name="security_descriptor">The security descriptor to set.</param>
+        /// <param name="security_information">The parts of the security descriptor to set.</param>
+        public static void SetScmSecurityDescriptor(SecurityDescriptor security_descriptor,
+            SecurityInformation security_information)
+        {
+            SetScmSecurityDescriptor(security_descriptor, security_information, true);
         }
 
         /// <summary>
@@ -587,15 +787,47 @@ namespace NtApiDotNet.Win32
         public static NtResult<ServiceInformation> GetServiceInformation(string name, bool throw_on_error)
         {
             using (SafeServiceHandle scm = Win32NativeMethods.OpenSCManager(null, null,
-                            ServiceControlManagerAccessRights.Connect | ServiceControlManagerAccessRights.ReadControl))
+                            ServiceControlManagerAccessRights.Connect))
             {
                 if (scm.IsInvalid)
                 {
                     return Win32Utils.GetLastWin32Error().CreateResultFromDosError<ServiceInformation>(throw_on_error);
                 }
 
-                return GetServiceSecurityInformation(scm, name, throw_on_error);
+                return GetServiceSecurityInformation(scm, name, DEFAULT_SECURITY_INFORMATION, throw_on_error);
             }
+        }
+
+        /// <summary>
+        /// Set the security descriptor for a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="security_descriptor">The security descriptor to set.</param>
+        /// <param name="security_information">The security information to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status.</returns>
+        public static NtStatus SetServiceSecurityDescriptor(string name, SecurityDescriptor security_descriptor, 
+            SecurityInformation security_information, bool throw_on_error)
+        {
+            var desired_access = NtSecurity.SetSecurityAccessMask(security_information).ToSpecificAccess<ServiceAccessRights>();
+            using (var service = OpenService(name, desired_access, throw_on_error))
+            {
+                if (!service.IsSuccess)
+                    return service.Status;
+                return SetServiceSecurityDescriptor(service.Result, security_information, security_descriptor, throw_on_error);
+            }
+        }
+
+        /// <summary>
+        /// Set the security descriptor for a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="security_descriptor">The security descriptor to set.</param>
+        /// <param name="security_information">The security information to set.</param>
+        public static void SetServiceSecurityDescriptor(string name, SecurityDescriptor security_descriptor,
+            SecurityInformation security_information)
+        {
+            SetServiceSecurityDescriptor(name, security_descriptor, security_information, true);
         }
 
         /// <summary>
@@ -672,7 +904,7 @@ namespace NtApiDotNet.Win32
                     throw new SafeWin32Exception();
                 }
 
-                using (var service = Win32NativeMethods.OpenService(scm, name, 
+                using (var service = Win32NativeMethods.OpenService(scm, name,
                     ServiceAccessRights.QueryConfig | ServiceAccessRights.QueryStatus))
                 {
                     if (service.IsInvalid)
@@ -775,7 +1007,7 @@ namespace NtApiDotNet.Win32
         /// <returns>A list of all services and drivers.</returns>
         public static IEnumerable<RunningService> GetServicesAndDrivers()
         {
-            return GetServices(SERVICE_STATE.SERVICE_STATE_ALL, 
+            return GetServices(SERVICE_STATE.SERVICE_STATE_ALL,
                 GetDriverTypes() | GetServiceTypes());
         }
 
@@ -799,7 +1031,7 @@ namespace NtApiDotNet.Win32
             switch (type_name.ToLower())
             {
                 case "service":
-                    return new NtType("Service", GetServiceGenericMapping(), 
+                    return new NtType("Service", GetServiceGenericMapping(),
                         typeof(ServiceAccessRights), typeof(ServiceAccessRights),
                         MandatoryLabelPolicy.NoWriteUp);
                 case "scm":
@@ -809,6 +1041,174 @@ namespace NtApiDotNet.Win32
             }
             return null;
         }
+
+        /// <summary>
+        /// Create a new service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="display_name">The display name for the service.</param>
+        /// <param name="service_type">The service type.</param>
+        /// <param name="start_type">The service start type.</param>
+        /// <param name="error_control">Error control.</param>
+        /// <param name="binary_path_name">Path to the service executable.</param>
+        /// <param name="load_order_group">Load group order.</param>
+        /// <param name="dependencies">List of service dependencies.</param>
+        /// <param name="service_start_name">The username for the service.</param>
+        /// <param name="password">Password for the username if needed.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The registered service information.</returns>
+        public static NtResult<RunningService> CreateService(
+            string name,
+            string display_name,
+            ServiceType service_type,
+            ServiceStartType start_type,
+            ServiceErrorControl error_control,
+            string binary_path_name,
+            string load_order_group,
+            IEnumerable<string> dependencies,
+            string service_start_name,
+            SecureString password,
+            bool throw_on_error)
+        {
+            if (string.IsNullOrEmpty(name))
+            {
+                throw new ArgumentException($"'{nameof(name)}' cannot be null or empty", nameof(name));
+            }
+
+            if (string.IsNullOrEmpty(binary_path_name))
+            {
+                throw new ArgumentException($"'{nameof(binary_path_name)}' cannot be null or empty", nameof(binary_path_name));
+            }
+
+            using (var scm = Win32NativeMethods.OpenSCManager(null, null,
+                ServiceControlManagerAccessRights.Connect | ServiceControlManagerAccessRights.CreateService))
+            {
+                if (scm.IsInvalid)
+                    return Win32Utils.GetLastWin32Error().CreateResultFromDosError<RunningService>(throw_on_error);
+
+                IntPtr pwd = password != null ? Marshal.SecureStringToBSTR(password) : IntPtr.Zero;
+                try
+                {
+                    using (var service = Win32NativeMethods.CreateService(scm, name, display_name, ServiceAccessRights.MaximumAllowed,
+                            service_type, start_type, error_control, binary_path_name, load_order_group, null, dependencies.ToMultiString(),
+                            string.IsNullOrEmpty(service_start_name) ? null : service_start_name, pwd))
+                    {
+                        if (service.IsInvalid)
+                            return Win32Utils.GetLastWin32Error().CreateResultFromDosError<RunningService>(throw_on_error);
+                        return new RunningService(name, display_name ?? string.Empty, QueryStatus(service)).CreateResult();
+                    }
+                }
+                finally
+                {
+                    if (pwd != IntPtr.Zero)
+                        Marshal.FreeBSTR(pwd);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Create a new service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="display_name">The display name for the service.</param>
+        /// <param name="service_type">The service type.</param>
+        /// <param name="start_type">The service start type.</param>
+        /// <param name="error_control">Error control.</param>
+        /// <param name="binary_path_name">Path to the service executable.</param>
+        /// <param name="load_order_group">Load group order.</param>
+        /// <param name="dependencies">List of service dependencies.</param>
+        /// <param name="service_start_name">The username for the service.</param>
+        /// <param name="password">Password for the username if needed.</param>
+        /// <returns>The registered service information.</returns>
+        public static RunningService CreateService(
+            string name,
+            string display_name,
+            ServiceType service_type,
+            ServiceStartType start_type,
+            ServiceErrorControl error_control,
+            string binary_path_name,
+            string load_order_group,
+            IEnumerable<string> dependencies,
+            string service_start_name,
+            SecureString password)
+        {
+            return CreateService(name, display_name, service_type,
+                start_type, error_control, binary_path_name, load_order_group,
+                dependencies, service_start_name, password, true).Result;
+        }
+
+        /// <summary>
+        /// Delete a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status.</returns>
+        public static NtStatus DeleteService(string name, bool throw_on_error)
+        {
+            using (var service = OpenService(name, ServiceAccessRights.Delete, throw_on_error))
+            {
+                if (!service.IsSuccess)
+                    return service.Status;
+                return Win32NativeMethods.DeleteService(service.Result).GetLastWin32Error().ToNtException(throw_on_error);
+            }
+        }
+        /// <summary>
+        /// Delete a service.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        public static void DeleteService(string name)
+        {
+            DeleteService(name, true);
+        }
+
+        /// <summary>
+        /// Change service configuration.
+        /// </summary>
+        /// <param name="name">The name of the service.</param>
+        /// <param name="display_name">The display name for the service.</param>
+        /// <param name="service_type">The service type.</param>
+        /// <param name="start_type">The service start type.</param>
+        /// <param name="error_control">Error control.</param>
+        /// <param name="binary_path_name">Path to the service executable.</param>
+        /// <param name="load_order_group">Load group order.</param>
+        /// <param name="dependencies">List of service dependencies.</param>
+        /// <param name="service_start_name">The username for the service.</param>
+        /// <param name="password">Password for the username if needed.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public static NtStatus ChangeServiceConfig(
+            string name,
+            string display_name,
+            ServiceType? service_type,
+            ServiceStartType? start_type,
+            ServiceErrorControl? error_control,
+            string binary_path_name,
+            string load_order_group,
+            IEnumerable<string> dependencies,
+            string service_start_name,
+            SecureString password,
+            bool throw_on_error)
+        {
+            using (var service = OpenService(name, ServiceAccessRights.ChangeConfig, throw_on_error))
+            {
+                if (!service.IsSuccess)
+                    return service.Status;
+                IntPtr pwd = password != null ? Marshal.SecureStringToBSTR(password) : IntPtr.Zero;
+                try
+                {
+                    return Win32NativeMethods.ChangeServiceConfig(service.Result,
+                        service_type ?? (ServiceType)(-1), start_type ?? (ServiceStartType)(-1),
+                        error_control ?? (ServiceErrorControl)(-1), binary_path_name, load_order_group,
+                        null, dependencies.ToMultiString(), service_start_name, pwd, display_name).GetLastWin32Error().ToNtException(throw_on_error);
+                }
+                finally
+                {
+                    if (pwd != IntPtr.Zero)
+                        Marshal.FreeBSTR(pwd);
+                }
+            }
+        }
+
         #endregion
     }
 }

@@ -13,6 +13,8 @@
 //  limitations under the License.
 
 using Microsoft.Win32.SafeHandles;
+using NtApiDotNet.ApiSet;
+using NtApiDotNet.Win32.Security.Authenticode;
 using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
@@ -20,6 +22,7 @@ using System.ComponentModel;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -154,6 +157,46 @@ namespace NtApiDotNet.Win32
     }
 
     /// <summary>
+    /// Characteristic flags for image section.
+    /// </summary>
+    [Flags]
+    public enum ImageSectionCharacteristics : uint
+    {
+        /// <summary>
+        /// None.
+        /// </summary>
+        None = 0,
+        /// <summary>
+        /// Section is code.
+        /// </summary>
+        Code = 0x00000020,
+        /// <summary>
+        /// Section is initialized data.
+        /// </summary>
+        InitiailizedData = 0x00000040,
+        /// <summary>
+        /// Section is uninitialized data.
+        /// </summary>
+        UninitializedData = 0x00000080,
+        /// <summary>
+        /// Section is shared.
+        /// </summary>
+        Shared = 0x10000000,
+        /// <summary>
+        /// Section is executable.
+        /// </summary>
+        Execute = 0x20000000,
+        /// <summary>
+        /// Section is readable.
+        /// </summary>
+        Read = 0x40000000,
+        /// <summary>
+        /// Section is writable.
+        /// </summary>
+        Write = 0x80000000,
+    }
+
+    /// <summary>
     /// Class which represents a section from a loaded PE file.
     /// </summary>
     public class ImageSection
@@ -170,16 +213,28 @@ namespace NtApiDotNet.Win32
         /// Relative Virtual address of the data from the library base.
         /// </summary>
         public long RelativeVirtualAddress { get; }
+        /// <summary>
+        /// Image section characteristics.
+        /// </summary>
+        public ImageSectionCharacteristics Characteristics { get; }
 
         /// <summary>
         /// Get the data as an array.
         /// </summary>
-        /// <returns>The data as an array.</returns>
+        /// <returns>The data as an array. If can't read the section returns an empty array.</returns>
+        [HandleProcessCorruptedStateExceptions]
         public byte[] ToArray()
         {
-            byte[] ret = new byte[Data.ByteLength];
-            Data.ReadArray(0, ret, 0, ret.Length);
-            return ret;
+            try
+            {
+                byte[] ret = new byte[Data.ByteLength];
+                Data.ReadArray(0, ret, 0, ret.Length);
+                return ret;
+            }
+            catch(AccessViolationException)
+            {
+                return new byte[0];
+            }
         }
 
         internal ImageSection(ImageSectionHeader header, bool mapped_as_image, IntPtr base_ptr)
@@ -189,6 +244,9 @@ namespace NtApiDotNet.Win32
             int data_size = mapped_as_image ? header.VirtualSize : header.SizeOfRawData;
             Data = new SafeHGlobalBuffer(base_ptr + data_offset, data_size, false);
             RelativeVirtualAddress = header.VirtualAddress;
+            Characteristics = (ImageSectionCharacteristics)(uint)header.Characteristics;
+            Characteristics &= ImageSectionCharacteristics.Code | ImageSectionCharacteristics.Execute | ImageSectionCharacteristics.InitiailizedData
+                | ImageSectionCharacteristics.Read | ImageSectionCharacteristics.Shared | ImageSectionCharacteristics.UninitializedData | ImageSectionCharacteristics.Write;
         }
     }
 
@@ -380,6 +438,56 @@ namespace NtApiDotNet.Win32
         public int PointerToRawData;
     }
 
+    internal enum IMAGE_SCN_CHARACTERISTICS : uint
+    {
+        IMAGE_SCN_TYPE_REG = 0x00000000,
+        IMAGE_SCN_TYPE_DSECT = 0x00000001,
+        IMAGE_SCN_TYPE_NOLOAD = 0x00000002,
+        IMAGE_SCN_TYPE_GROUP = 0x00000004,
+        IMAGE_SCN_TYPE_NO_PAD = 0x00000008,
+        IMAGE_SCN_TYPE_COPY = 0x00000010,
+        IMAGE_SCN_CNT_CODE = 0x00000020,
+        IMAGE_SCN_CNT_INITIALIZED_DATA = 0x00000040,
+        IMAGE_SCN_CNT_UNINITIALIZED_DATA = 0x00000080,
+        IMAGE_SCN_LNK_OTHER = 0x00000100,
+        IMAGE_SCN_LNK_INFO = 0x00000200,
+        IMAGE_SCN_TYPE_OVER = 0x00000400,
+        IMAGE_SCN_LNK_REMOVE = 0x00000800,
+        IMAGE_SCN_LNK_COMDAT = 0x00001000,
+        IMAGE_SCN_UNUSED_000020000 = 0x00002000,
+        IMAGE_SCN_MEM_PROTECTED = 0x00004000,
+        IMAGE_SCN_NO_DEFER_SPEC_EXC = 0x00004000,
+        IMAGE_SCN_GPREL = 0x00008000,
+        IMAGE_SCN_MEM_FARDATA = 0x00008000,
+        IMAGE_SCN_MEM_SYSHEAP = 0x00010000,
+        IMAGE_SCN_MEM_PURGEABLE = 0x00020000,
+        IMAGE_SCN_MEM_16BIT = 0x00020000,
+        IMAGE_SCN_MEM_LOCKED = 0x00040000,
+        IMAGE_SCN_MEM_PRELOAD = 0x00080000,
+        IMAGE_SCN_ALIGN_1BYTES = 0x00100000,
+        IMAGE_SCN_ALIGN_2BYTES = 0x00200000,
+        IMAGE_SCN_ALIGN_4BYTES = 0x00300000,
+        IMAGE_SCN_ALIGN_8BYTES = 0x00400000,
+        IMAGE_SCN_ALIGN_16BYTES = 0x00500000,
+        IMAGE_SCN_ALIGN_32BYTES = 0x00600000,
+        IMAGE_SCN_ALIGN_64BYTES = 0x00700000,
+        IMAGE_SCN_ALIGN_128BYTES = 0x00800000,
+        IMAGE_SCN_ALIGN_256BYTES = 0x00900000,
+        IMAGE_SCN_ALIGN_512BYTES = 0x00A00000,
+        IMAGE_SCN_ALIGN_1024BYTES = 0x00B00000,
+        IMAGE_SCN_ALIGN_2048BYTES = 0x00C00000,
+        IMAGE_SCN_ALIGN_4096BYTES = 0x00D00000,
+        IMAGE_SCN_ALIGN_8192BYTES = 0x00E00000,
+        IMAGE_SCN_LNK_NRELOC_OVFL = 0x01000000,
+        IMAGE_SCN_MEM_DISCARDABLE = 0x02000000,
+        IMAGE_SCN_MEM_NOT_CACHED = 0x04000000,
+        IMAGE_SCN_MEM_NOT_PAGED = 0x08000000,
+        IMAGE_SCN_MEM_SHARED = 0x10000000,
+        IMAGE_SCN_MEM_EXECUTE = 0x20000000,
+        IMAGE_SCN_MEM_READ = 0x40000000,
+        IMAGE_SCN_MEM_WRITE = 0x80000000,
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     internal struct ImageSectionHeader
     {
@@ -393,12 +501,70 @@ namespace NtApiDotNet.Win32
         public int PointerToLinenumbers;
         public ushort NumberOfRelocations;
         public ushort NumberOfLinenumbers;
-        public uint Characteristics;
+        public IMAGE_SCN_CHARACTERISTICS Characteristics;
 
         public string GetName()
         {
             return Encoding.UTF8.GetString(Name).TrimEnd('\0');
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct IMAGE_LOAD_CONFIG_CODE_INTEGRITY
+    {
+        public ushort Flags;          // Flags to indicate if CI information is available, etc.
+        public ushort Catalog;        // 0xFFFF means not available
+        public int CatalogOffset;
+        public int Reserved;       // Additional bitmask to be defined later
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    internal struct IMAGE_LOAD_CONFIG_DIRECTORY
+    {
+        public int Size;
+        public int TimeDateStamp;
+        public ushort MajorVersion;
+        public ushort MinorVersion;
+        public int GlobalFlagsClear;
+        public int GlobalFlagsSet;
+        public int CriticalSectionDefaultTimeout;
+        public IntPtr DeCommitFreeBlockThreshold;
+        public IntPtr DeCommitTotalFreeThreshold;
+        public IntPtr LockPrefixTable;                // VA
+        public IntPtr MaximumAllocationSize;
+        public IntPtr VirtualMemoryThreshold;
+        public IntPtr ProcessAffinityMask;
+        public int ProcessHeapFlags;
+        public ushort CSDVersion;
+        public ushort DependentLoadFlags;
+        public IntPtr EditList;                       // VA
+        public IntPtr SecurityCookie;                 // VA
+        public IntPtr SEHandlerTable;                 // VA
+        public IntPtr SEHandlerCount;
+        public IntPtr GuardCFCheckFunctionPointer;    // VA
+        public IntPtr GuardCFDispatchFunctionPointer; // VA
+        public IntPtr GuardCFFunctionTable;           // VA
+        public IntPtr GuardCFFunctionCount;
+        public int GuardFlags;
+        IMAGE_LOAD_CONFIG_CODE_INTEGRITY CodeIntegrity;
+        public IntPtr GuardAddressTakenIatEntryTable; // VA
+        public IntPtr GuardAddressTakenIatEntryCount;
+        public IntPtr GuardLongJumpTargetTable;       // VA
+        public IntPtr GuardLongJumpTargetCount;
+        public IntPtr DynamicValueRelocTable;         // VA
+        public IntPtr CHPEMetadataPointer;            // VA
+        public IntPtr GuardRFFailureRoutine;          // VA
+        public IntPtr GuardRFFailureRoutineFunctionPointer; // VA
+        public int DynamicValueRelocTableOffset;
+        public ushort DynamicValueRelocTableSection;
+        public ushort Reserved2;
+        public IntPtr GuardRFVerifyStackPointerFunctionPointer; // VA
+        public int HotPatchTableOffset;
+        public int Reserved3;
+        public IntPtr EnclaveConfigurationPointer;     // VA
+        public IntPtr VolatileMetadataPointer;         // VA
+        public IntPtr GuardEHContinuationTable;        // VA
+        public IntPtr GuardEHContinuationCount;
     }
 
     /// <summary>
@@ -915,6 +1081,22 @@ namespace NtApiDotNet.Win32
         }
 
         /// <summary>
+        /// Return resolved API set imports for the DLL.
+        /// </summary>
+        public IEnumerable<DllImport> ApiSetImports
+        {
+            get
+            {
+                if (_apiset_imports == null)
+                {
+                    ResolveApiSetImports();
+                }
+
+                return _apiset_imports.AsReadOnly();
+            }
+        }
+
+        /// <summary>
         /// Get CodeView Debug Data from DLL.
         /// </summary>
         public DllDebugData DebugData
@@ -933,6 +1115,19 @@ namespace NtApiDotNet.Win32
         /// Get image signing level.
         /// </summary>
         public SigningLevel ImageSigningLevel => NtVirtualMemory.QueryImageInformation(NtProcess.Current.Handle, DangerousGetHandle().ToInt64()).ImageSigningLevel;
+
+        /// <summary>
+        /// Get embedded enclave configuration.
+        /// </summary>
+        public EnclaveConfiguration EnclaveConfiguration
+        {
+            get
+            {
+                if (_enclave_config == null)
+                    _enclave_config = new Lazy<EnclaveConfiguration>(GetEnclaveConfiguration);
+                return _enclave_config.Value;
+            }
+        }
 
         #endregion
 
@@ -1067,6 +1262,7 @@ namespace NtApiDotNet.Win32
         private const ushort IMAGE_DIRECTORY_ENTRY_EXPORT = 0;
         private const ushort IMAGE_DIRECTORY_ENTRY_IMPORT = 1;
         private const ushort IMAGE_DIRECTORY_ENTRY_DEBUG = 6;
+        private const ushort IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG = 10;
         private const ushort IMAGE_DIRECTORY_ENTRY_DELAY_IMPORT = 13;
         private const int IMAGE_DEBUG_TYPE_CODEVIEW = 2;
         private Dictionary<IntPtr, IntPtr> _delayed_imports;
@@ -1078,7 +1274,9 @@ namespace NtApiDotNet.Win32
         private DllCharacteristics _dll_characteristics;
         private List<DllExport> _exports;
         private List<DllImport> _imports;
+        private List<DllImport> _apiset_imports;
         private DllDebugData _debug_data;
+        private Lazy<EnclaveConfiguration> _enclave_config;
         private string _full_path;
 
         private IntPtr RvaToVA(long rva)
@@ -1223,9 +1421,26 @@ namespace NtApiDotNet.Win32
             return new DllImportFunction(dll_name, name, lookup == iat_func ? 0 : iat_func, ordinal);
         }
 
+        private static string ResolveApiSetName(string module_name, string dll_name)
+        {
+            if (!dll_name.StartsWith("api-", StringComparison.OrdinalIgnoreCase) &&
+                !dll_name.StartsWith("ext-", StringComparison.OrdinalIgnoreCase))
+            {
+                return dll_name;
+            }
+
+            var apiset = ApiSetNamespace.Current.GetApiSet(dll_name);
+            if (apiset == null)
+                return dll_name;
+
+            string name = apiset.GetHostModule(module_name);
+            return string.IsNullOrEmpty(name) ? dll_name : name;
+        }
+
         private DllImport ParseSingleImport(int name_rva, int lookup_rva, int iat_rva, bool is_64bit, bool delay_loaded)
         {
             string dll_name = Marshal.PtrToStringAnsi(RvaToVA(name_rva));
+
             List<DllImportFunction> funcs = new List<DllImportFunction>();
             IntPtr lookup_table = RvaToVA(lookup_rva);
             IntPtr iat_table = RvaToVA(iat_rva);
@@ -1315,6 +1530,42 @@ namespace NtApiDotNet.Win32
             bool is_64bit = GetOptionalHeader(GetHeaderPointer(GetBasePointer())).GetMagic() == IMAGE_NT_OPTIONAL_HDR_MAGIC.HDR64;
             ParseNormalImports(is_64bit);
             ParseDelayImports(is_64bit);
+        }
+
+        private struct DllImportFunctionEqualityComparer : IEqualityComparer<DllImportFunction>
+        {
+            bool IEqualityComparer<DllImportFunction>.Equals(DllImportFunction x, DllImportFunction y)
+            {
+                return x.Name == y.Name;
+            }
+
+            int IEqualityComparer<DllImportFunction>.GetHashCode(DllImportFunction obj)
+            {
+                return obj.Name.GetHashCode();
+            }
+        }
+
+        private void ResolveApiSetImports()
+        {
+            _apiset_imports = new List<DllImport>();
+            foreach (var group in Imports.GroupBy(i => ResolveApiSetName(Name, i.DllName), StringComparer.OrdinalIgnoreCase))
+            {
+                string dll_name = group.Key;
+                bool delay_loaded = true;
+                IEnumerable<DllImportFunction> funcs = new DllImportFunction[0];
+                foreach (var entry in group)
+                {
+                    delay_loaded &= entry.DelayLoaded;
+                    funcs = funcs.Concat(entry.Functions.Select(f => new DllImportFunction(dll_name, f.Name, f.Address, f.Ordinal)));
+                }
+
+                funcs = funcs.Distinct(new DllImportFunctionEqualityComparer());
+                var funcs_list = funcs.ToList();
+                funcs_list.Sort((a, b) => a.Name.CompareTo(b.Name));
+
+                _apiset_imports.Add(new DllImport(dll_name, delay_loaded, 
+                    funcs_list, FullPath));
+            }
         }
 
         private IntPtr GetHeaderPointer(IntPtr base_ptr)
@@ -1447,6 +1698,60 @@ namespace NtApiDotNet.Win32
             }
             return _full_path;
         }
+
+        private IMAGE_LOAD_CONFIG_DIRECTORY? GetLoadConfig()
+        {
+            if (!MappedAsImage)
+                return null;
+
+            IntPtr load_config = Win32NativeMethods.ImageDirectoryEntryToData(handle, MappedAsImage,
+                    IMAGE_DIRECTORY_ENTRY_LOAD_CONFIG, out int size);
+            if (load_config == IntPtr.Zero)
+                return null;
+            var buffer = new SafeHGlobalBuffer(load_config, size, false);
+            int struct_size = buffer.Read<int>(0);
+            using (var new_buffer = new SafeStructureInOutBuffer<IMAGE_LOAD_CONFIG_DIRECTORY>(struct_size, false))
+            {
+                new_buffer.WriteBytes(buffer.ReadBytes(struct_size));
+                return new_buffer.Result;
+            }
+        }
+
+        private IEnumerable<EnclaveImport> ReadImports(IMAGE_ENCLAVE_CONFIG config)
+        {
+            List<EnclaveImport> imports = new List<EnclaveImport>();
+            IntPtr import_list = RvaToVA(config.ImportList);
+            for (int i = 0; i < config.NumberOfImports; ++i)
+            {
+                IMAGE_ENCLAVE_IMPORT import = (IMAGE_ENCLAVE_IMPORT)Marshal.PtrToStructure(import_list, typeof(IMAGE_ENCLAVE_IMPORT));
+                if (import.MatchType != ImageEnclaveImportMatchType.None)
+                {
+                    IntPtr name = RvaToVA(import.ImportName);
+                    imports.Add(new EnclaveImport(import, Marshal.PtrToStringAnsi(name)));
+                }
+                import_list += config.ImportEntrySize;
+            }
+            return imports;
+        }
+
+        private EnclaveConfiguration GetEnclaveConfiguration()
+        {
+            try
+            {
+                var enclave_config = GetLoadConfig()?.EnclaveConfigurationPointer ?? IntPtr.Zero;
+                if (enclave_config == IntPtr.Zero)
+                    return null;
+                var config = (IMAGE_ENCLAVE_CONFIG)Marshal.PtrToStructure(enclave_config, typeof(IMAGE_ENCLAVE_CONFIG));
+                List<EnclaveImport> imports = new List<EnclaveImport>();
+                
+                return new EnclaveConfiguration(FullPath, config, ReadImports(config));
+            }
+            catch
+            {
+            }
+            return null;
+        }
+
         #endregion
 
         #region Static Properties

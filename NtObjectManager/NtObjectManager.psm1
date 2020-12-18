@@ -1366,23 +1366,62 @@ function New-NtProcessConfig {
 .SYNOPSIS
 Create a new native NT process.
 .DESCRIPTION
-This cmdlet creates a new native NT process.
+This cmdlet creates a new native NT process. This can be via NtCreateUserProcess with a configuration
+or NtCreateProcessEx without configuration.
 .PARAMETER Config
 The configuration for the new process from New-NtProcessConfig.
 .PARAMETER ReturnOnError
 Specify to always return a result even on error.
+.PARAMETER SecurityDescriptor
+Specify security descriptor for the process.
+.PARAMETER Access
+Specify the access to the process object.
+.PARAMETER Parent
+Specify the parent process. Default is current process.
+.PARAMETER Flags
+Specify creation flags.
+.PARAMETER Section
+Specify initial image section.
+.PARAMETER DebugPort
+Specify debug port.
+.PARAMETER Token
+Specify process token.
 .INPUTS
 None
 .OUTPUTS
 NtApiDotNet.NtProcessCreateResult
+NtApiDotNet.NtProcess
 #>
 function New-NtProcess {
+    [CmdletBinding(DefaultParameterSetName="FromCreateEx")]
     Param(
-        [Parameter(Mandatory = $true, Position = 0)]
+        [Parameter(Mandatory = $true, Position = 0, ParameterSetName="FromConfig")]
         [NtApiDotNet.NtProcessCreateConfig]$Config,
-        [switch]$ReturnOnError
+        [Parameter(ParameterSetName="FromConfig")]
+        [switch]$ReturnOnError,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotnet.ProcessAccessRights]$Access = "MaximumAllowed",
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.NtProcess]$Parent,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.ProcessCreateFlags]$Flags = 0,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.NtSection]$Section,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.NtDebug]$DebugPort,
+        [Parameter(ParameterSetName="FromCreateEx")]
+        [NtApiDotNet.NtToken]$Token
     )
-    [NtApiDotNet.NtProcess]::Create($Config, !$ReturnOnError)
+
+    if ($PSCmdlet.ParameterSetName -eq "FromConfig") {
+        [NtApiDotNet.NtProcess]::Create($Config, !$ReturnOnError)
+    } else {
+        Use-NtObject($obja = New-NtObjectAttributes -SecurityDescriptor $SecurityDescriptor) {
+            [NtApiDotNet.NtProcess]::Create($obja, $Access, $Parent, $Flags, $Section, $DebugPort, $Token)
+        }
+    }
 }
 
 <#
@@ -3368,7 +3407,7 @@ function Get-NtVirtualMemory {
                 $State = $State -bor "Free"
             }
             if ($Name -ne "") {
-                $Process.QueryAllMemoryInformation($Type, $State) | Where-Object MappedImageName -eq $Name | Write-Output
+                $Process.QueryAllMemoryInformation($Type, $State) | Where-Object Name -eq $Name | Write-Output
             }
             else {
                 $Process.QueryAllMemoryInformation($Type, $State) | Write-Output
@@ -3423,6 +3462,10 @@ The size of the memory to read. This is the maximum, if the memory address is in
 The process to read from, defaults to current process.
 .PARAMETER ReadAll
 Specify to ensure you read all the requested memory from the process.
+.PARAMETER Mapping
+Specify a mapped section object.
+.PARAMETER Offset
+Specify the offset into the mapped section.
 .OUTPUTS
 byte[] - The array of read bytes. The size of the output might be smaller than the requested size.
 .EXAMPLE
@@ -3434,17 +3477,30 @@ Read up to 4096 from $addr in another process.
 .EXAMPLE
 Read-NtVirtualMemory $addr 0x1000 -ReadAll
 Read up to 4096 from $addr, fail if can't read all the bytes.
+.EXAMPLE
+Read-NtVirtualMemory $map -Offset 100 -Size 512
+Read up to 512 bytes from offset 100 into a mapped file.
 #>
 function Read-NtVirtualMemory {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="FromAddress")]
     param (
-        [parameter(Mandatory, Position = 0)]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromAddress")]
         [int64]$Address,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromMapping")]
+        [NtApiDotNet.NtMappedSection]$Mapping,
+        [parameter(ParameterSetName="FromMapping")]
+        [int64]$Offset = 0,
         [parameter(Mandatory, Position = 1)]
         [int]$Size,
+        [parameter(ParameterSetName="FromAddress")]
         [NtApiDotNet.NtProcess]$Process = [NtApiDotnet.NtProcess]::Current,
         [switch]$ReadAll
     )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromMapping") {
+        $Address = $Mapping.BaseAddress + $Offset
+        $Process = $Mapping.Process
+    }
     $Process.ReadMemory($Address, $Size, $ReadAll)
 }
 
@@ -3459,6 +3515,10 @@ The address location to write.
 The data buffer to write.
 .PARAMETER Process
 The process to write to, defaults to current process.
+.PARAMETER Mapping
+Specify a mapped section object.
+.PARAMETER Offset
+Specify the offset into the mapped section.
 .OUTPUTS
 int - The length of bytes successfully written.
 .EXAMPLE
@@ -3467,16 +3527,29 @@ Write 5 bytes to $addr
 .EXAMPLE
 Write-NtVirtualMemory $addr 0, 1, 2, 3, 4 -Process $process
 Write 5 bytes to $addr in another process.
+.EXAMPLE
+Write-NtVirtualMemory $map -Offset 100 -Data 0, 1, 2, 3, 4
+Write 5 bytes to a mapping at offset 100.
 #>
 function Write-NtVirtualMemory {
-    [CmdletBinding()]
+    [CmdletBinding(DefaultParameterSetName="FromAddress")]
     param (
-        [parameter(Mandatory, Position = 0)]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromAddress")]
         [int64]$Address,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromMapping")]
+        [NtApiDotNet.NtMappedSection]$Mapping,
+        [parameter(ParameterSetName="FromMapping")]
+        [int64]$Offset = 0,
         [parameter(Mandatory, Position = 1)]
         [byte[]]$Data,
+        [parameter(ParameterSetName="FromAddress")]
         [NtApiDotNet.NtProcess]$Process = [NtApiDotnet.NtProcess]::Current
     )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromMapping") {
+        $Address = $Mapping.BaseAddress + $Offset
+        $Process = $Mapping.Process
+    }
     $Process.WriteMemory($Address, $Data)
 }
 
@@ -3519,6 +3592,7 @@ function Get-EmbeddedAuthenticodeSignature {
         $elam = $false
         $store = $false
         $ium = $false
+        $enclave = $false
 
         foreach ($eku in $cert.EnhancedKeyUsageList) {
             switch ($eku.ObjectId) {
@@ -3530,6 +3604,7 @@ function Get-EmbeddedAuthenticodeSignature {
                 "1.3.6.1.4.1.311.76.5.1" { $dynamic = $true }
                 "1.3.6.1.4.311.76.3.1" { $store = $true }
                 "1.3.6.1.4.1.311.10.3.37" { $ium = $true }
+                "1.3.6.1.4.1.311.10.3.42" { $enclave = $true }
             }
         }
 
@@ -3547,6 +3622,7 @@ function Get-EmbeddedAuthenticodeSignature {
             Store                 = $store;
             IsolatedUserMode      = $ium;
             HasPageHash           = $page_hash;
+            Enclave               = $enclave;
         }
 
         if ($elam) {
@@ -3561,6 +3637,14 @@ function Get-EmbeddedAuthenticodeSignature {
             $policy = [NtApiDotNet.Win32.Security.Authenticode.ImagePolicyMetadata]::CreateFromFile($Path, $false)
             if ($policy.IsSuccess) {
                 $props["TrustletPolicy"] = $policy.Result
+            }
+        }
+        if ($ium -or $enclave) {
+            $enclave = [NtApiDotNet.Win32.Security.Authenticode.AuthenticodeUtils]::GetEnclaveConfiguration($path, $false)
+            if ($enclave.IsSuccess) {
+                $props["EnclaveConfig"] = $enclave.Result
+                $props["EnclavePrimaryImage"] = $enclave.Result.PrimaryImage
+                $props["Enclave"] = $true
             }
         }
 
@@ -3578,6 +3662,8 @@ This cmdlet looks up a name for a SID and returns the name with a source for whe
 The SID to lookup the name for.
 .PARAMETER BypassCache
 Specify to bypass the name cache for this lookup.
+.INPUTS
+NtApiDotNet.Sid[]
 .OUTPUTS
 NtApiDotNet.SidName
 .EXAMPLE
@@ -3596,7 +3682,7 @@ function Get-NtSidName {
     )
 
     PROCESS {
-        [NtApiDotNet.NtSecurity]::GetNameForSid($Sid, $BypassCache)
+        $Sid.GetName($BypassCache)
     }
 }
 
@@ -4474,10 +4560,10 @@ function Get-RpcEndpoint {
     Param(
         [parameter(Mandatory, Position = 0, ParameterSetName = "FromId")]
         [parameter(Mandatory, Position = 0, ParameterSetName = "FromIdAndVersion")]
-        [string]$InterfaceId,
+        [Guid]$InterfaceId,
         [parameter(Mandatory, Position = 1, ParameterSetName = "FromIdAndVersion")]
         [Version]$InterfaceVersion,
-        [parameter(Mandatory, Position = 0, ParameterSetName = "FromServer", ValueFromPipeline)]
+        [parameter(Mandatory, ParameterSetName = "FromServer", ValueFromPipeline)]
         [NtApiDotNet.Ndr.NdrRpcServerInterface]$Server,
         [parameter(Mandatory, ParameterSetName = "FromBinding")]
         [string]$Binding,
@@ -4485,40 +4571,53 @@ function Get-RpcEndpoint {
         [string]$AlpcPort,
         [parameter(ParameterSetName = "FromIdAndVersion")]
         [parameter(ParameterSetName = "FromServer")]
-        [switch]$FindAlpcPort
+        [switch]$FindAlpcPort,
+        [parameter(ParameterSetName = "All")]
+        [parameter(ParameterSetName = "FromId")]
+        [parameter(ParameterSetName = "FromIdAndVersion")]
+        [string]$SearchBinding = "",
+        [parameter(ParameterSetName = "All")]
+        [parameter(ParameterSetName = "FromId")]
+        [parameter(ParameterSetName = "FromIdAndVersion")]
+        [string[]]$ProtocolSequence = @()
     )
 
     PROCESS {
-        switch ($PsCmdlet.ParameterSetName) {
+        $eps = switch ($PsCmdlet.ParameterSetName) {
             "All" {
-                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints() | Write-Output
+                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($SearchBinding)
             }
             "FromId" {
-                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($InterfaceId) | Write-Output
+                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($SearchBinding, $InterfaceId)
             }
             "FromIdAndVersion" {
                 if ($FindAlpcPort) {
-                    [NtApiDotNet.Win32.RpcEndpointMapper]::FindAlpcEndpointForInterface($InterfaceId, $InterfaceVersion) | Write-Output
+                    [NtApiDotNet.Win32.RpcEndpointMapper]::FindAlpcEndpointForInterface($InterfaceId, $InterfaceVersion)
                 }
                 else {
-                    [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($InterfaceId, $InterfaceVersion) | Write-Output
+                    [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($SearchBinding, $InterfaceId, $InterfaceVersion)
                 }
             }
             "FromServer" {
                 if ($FindAlpcPort) {
-                    [NtApiDotNet.Win32.RpcEndpointMapper]::FindAlpcEndpointForInterface($Server.InterfaceId, $Server.InterfaceVersion) | Write-Output
+                    [NtApiDotNet.Win32.RpcEndpointMapper]::FindAlpcEndpointForInterface($Server.InterfaceId, $Server.InterfaceVersion)
                 }
                 else {
-                    [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($Server) | Write-Output
+                    [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($Server)
                 }
             }
             "FromBinding" {
-                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpointsForBinding($Binding) | Write-Output
+                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpointsForBinding($Binding)
             }
             "FromAlpc" {
-                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpointsForAlpcPort($AlpcPort) | Write-Output
+                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpointsForAlpcPort($AlpcPort)
             }
         }
+
+        if ($ProtocolSequence.Count -gt 0) {
+            $eps = $eps | Where-Object {$_.ProtocolSequence -in $ProtocolSequence}
+        }
+        $eps | Write-Output
     }
 }
 
@@ -4851,18 +4950,16 @@ function Get-RunningService {
         [NtApiDotNet.Win32.ServiceState]$State = "Active",
         [parameter(Mandatory, ParameterSetName = "FromArgs")]
         [NtApiDotNet.Win32.ServiceType]$ServiceType = 0,
-        [parameter(ParameterSetName = "FromName", Position = 0)]
+        [parameter(Mandatory, ParameterSetName = "FromName", Position = 0)]
         [string[]]$Name
     )
 
     PROCESS {
         switch ($PSCmdlet.ParameterSetName) {
             "All" {
+                $ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes()
                 if ($Driver) {
                     $ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetDriverTypes()
-                }
-                else {
-                    $ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes()
                 }
 
                 if ($IncludeNonActive) {
@@ -4872,15 +4969,77 @@ function Get-RunningService {
                     $State = "Active"
                 }
 
-                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $ServiceType) | Write-Output
+                Get-Win32Service -State $State -Type $ServiceType
             }
             "FromArgs" {
-                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $ServiceType) | Write-Output
+                Get-Win32Service -State $State -Type $ServiceType
+            }
+            "FromName" {
+                Get-Win32Service -Name $Name
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Gets a list of win32 services.
+.DESCRIPTION
+This cmdlet gets a list of all win32 services. 
+.PARAMETER State
+Specify the state of the services to get.
+.PARAMETER Type
+Specify to filter the services to specific types only.
+.PARAMETER Name
+Specify names to lookup.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.RunningService[]
+.EXAMPLE
+Get-Win32Service
+Get all services.
+.EXAMPLE
+Get-Win32Service -State Active
+Get all active services.
+.EXAMPLE
+Get-Win32Service -State All -Type UserService
+Get all user services.
+.EXAMPLE
+Get-Win32Service -ProcessId 1234
+Get services running in PID 1234.
+.EXAMPLE
+Get-Win32Service -Name WebClient
+Get the WebClient service.
+#>
+function Get-Win32Service {
+    [CmdletBinding(DefaultParameterSetName = "All")]
+    Param(
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.Win32.ServiceState]$State = "All",
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.Win32.ServiceType]$Type = 0,
+        [parameter(Mandatory, ParameterSetName = "FromName", Position = 0)]
+        [string[]]$Name,
+        [parameter(Mandatory, ParameterSetName = "FromPid", Position = 0)]
+        [int[]]$ProcessId
+    )
+
+    PROCESS {
+        switch ($PSCmdlet.ParameterSetName) {
+            "All" {
+                if ($Type -eq 0) {
+                    $Type = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes()
+                }
+                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $Type) | Write-Output
             }
             "FromName" {
                 foreach ($n in $Name) {
                     [NtApiDotNet.Win32.ServiceUtils]::GetService($n) | Write-Output
                 }
+            }
+            "FromPid" {
+                Get-Win32Service -State Active | Where-Object {$_.ProcessId -in $ProcessId}
             }
         }
     }
@@ -5757,6 +5916,8 @@ function Connect-RpcClient {
         [string]$EndpointPath,
         [parameter(ParameterSetName = "FromProtocol")]
         [string]$ProtocolSequence = "ncalrpc",
+        [parameter(ParameterSetName = "FromProtocol")]
+        [string]$NetworkAddress,
         [parameter(Position = 1, Mandatory, ParameterSetName = "FromEndpoint")]
         [NtApiDotNet.Win32.RpcEndpoint]$Endpoint,
         [parameter(Mandatory, ParameterSetName = "FromFindEndpoint")]
@@ -5768,7 +5929,7 @@ function Connect-RpcClient {
     PROCESS {
         switch ($PSCmdlet.ParameterSetName) {
             "FromProtocol" {
-                $Client.Connect($ProtocolSequence, $EndpointPath, $SecurityQualityOfService)
+                $Client.Connect($ProtocolSequence, $EndpointPath, $NetworkAddress, $SecurityQualityOfService)
             }
             "FromEndpoint" {
                 $Client.Connect($Endpoint, $SecurityQualityOfService)
@@ -6054,7 +6215,10 @@ function Close-NtObject {
         [parameter(Mandatory, Position = 1, ParameterSetName = "FromCurrentProcess")]
         [IntPtr]$Handle,
         [parameter(Mandatory, ParameterSetName = "FromCurrentProcess")]
-        [switch]$CurrentProcess
+        [parameter(Mandatory, ParameterSetName = "FromCurrentProcessSafe")]
+        [switch]$CurrentProcess,
+        [parameter(Mandatory, Position = 0, ParameterSetName = "FromCurrentProcessSafe")]
+        [NtApiDotNet.SafeKernelObjectHandle]$SafeHandle
     )
 
     PROCESS {
@@ -6063,6 +6227,7 @@ function Close-NtObject {
             "FromProcess" { [NtApiDotNet.NtObject]::CloseHandle($Process, $Handle) }
             "FromProcessId" { [NtApiDotNet.NtObject]::CloseHandle($ProcessId, $Handle) }
             "FromCurrentProcess" { [NtApiDotNet.NtObject]::CloseHandle($Handle) }
+            "FromCurrentProcessSafe" { [NtApiDotNet.NtObject]::CloseHandle($SafeHandle) }
         }
     }
 }
@@ -6890,6 +7055,10 @@ function Import-Win32Module {
         [NtApiDotNet.Win32.LoadLibraryFlags]$Flags = 0
     )
 
+    if (Test-Path $Path) {
+        $Path = Resolve-Path $Path
+    }
+
     [NtApiDotNet.Win32.SafeLoadLibraryHandle]::LoadLibrary($Path, $Flags) | Write-Output
 }
 
@@ -6917,6 +7086,9 @@ function Get-Win32Module {
     )
 
     if ($PSCmdlet.ParameterSetName -eq "FromPath") {
+        if (Test-Path $Path) {
+            $Path = Resolve-Path $Path
+        }
         [NtApiDotNet.Win32.SafeLoadLibraryHandle]::GetModuleHandle($Path) | Write-Output
     }
     else {
@@ -6978,6 +7150,8 @@ Specify the DLL.
 Specify the path to the DLL.
 .PARAMETER DllName
 Specify a name of a DLL to only show imports from.
+.PARAMETER ResolveApiSet
+Specify to resolve API set names to the DLl names.
 .INPUTS
 None
 .OUTPUTS
@@ -6990,18 +7164,23 @@ function Get-Win32ModuleImport {
         [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module,
         [Parameter(Position = 0, Mandatory, ParameterSetName = "FromPath")]
         [string]$Path,
-        [string]$DllName
+        [string]$DllName,
+        [switch]$ResolveApiSet
     )
 
     $imports = if ($PsCmdlet.ParameterSetName -eq "FromPath") {
         Use-NtObject($lib = Import-Win32Module -Path $Path -Flags LoadLibraryAsDataFile) {
             if ($null -ne $lib) {
-                Get-Win32ModuleImport -Module $lib
+                Get-Win32ModuleImport -Module $lib -ResolveApiSet:$ResolveApiSet
             }
         }
     }
     else {
-        $Module.Imports
+        if ($ResolveApiSet) {
+            $Module.ApiSetImports
+        } else {
+            $Module.Imports
+        }
     }
 
     if ($DllName -ne "") {
@@ -7725,6 +7904,7 @@ function Edit-NtSecurityDescriptor {
         [Parameter(ParameterSetName = "ModifySd")]
         [Parameter(ParameterSetName = "ToAutoInherit")]
         [Parameter(ParameterSetName = "MapGenericSd")]
+        [Parameter(ParameterSetName = "UnmapGenericSd")]
         [NtApiDotNet.NtType]$Type,
         [Parameter(ParameterSetName = "CanonicalizeSd")]
         [switch]$CanonicalizeDacl,
@@ -7732,12 +7912,15 @@ function Edit-NtSecurityDescriptor {
         [switch]$CanonicalizeSacl,
         [Parameter(Mandatory, ParameterSetName = "MapGenericSd")]
         [switch]$MapGeneric,
+        [Parameter(Mandatory, ParameterSetName = "UnmapGenericSd")]
+        [switch]$UnmapGeneric,
         [Parameter(Mandatory, ParameterSetName = "ToAutoInherit")]
         [switch]$ConvertToAutoInherit,
         [Parameter(ParameterSetName = "ToAutoInherit")]
         [switch]$Container,
         [Parameter(ParameterSetName = "ToAutoInherit")]
         [NtApiDotNet.SecurityDescriptor]$Parent,
+        [Parameter(ParameterSetName = "ToAutoInherit")]
         [Nullable[Guid]]$ObjectType = $null,
         [switch]$PassThru
     )
@@ -7770,6 +7953,9 @@ function Edit-NtSecurityDescriptor {
     }
     elseif ($PsCmdlet.ParameterSetName -eq "MapGenericSd") {
         $SecurityDescriptor.MapGenericAccess($Type)
+    }
+    elseif ($PsCmdlet.ParameterSetName -eq "UnmapGenericSd") {
+        $SecurityDescriptor.UnmapGenericAccess($Type)
     }
     elseif ($PsCmdlet.ParameterSetName -eq "ToAutoInherit") {
         $SecurityDescriptor.ConvertToAutoInherit($Parent,
@@ -9447,6 +9633,100 @@ function Get-NtAccountRight {
         }
         "FromName" {
             [NtApiDotNet.Win32.LogonUtils]::GetAccountRights((Get-NtSid -Name $Name)) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Add account rights for current system.
+.DESCRIPTION
+This cmdlet adds account rights for the current system to a SID.
+.PARAMETER Sid
+Specify a SID to add the account right for.
+.PARAMETER Privilege
+Specify the privileges to add.
+.PARAMETER Name
+Specify the list of account right names to add.
+.PARAMETER LogonType
+Specify the list of logon types to add.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Add-NtAccountRight -Sid WD -Privilege SeAssignPrimaryTokenPrivilege
+Add everyone group to SeAssignPrimaryTokenPrivilege
+#>
+function Add-NtAccountRight {
+    [CmdletBinding(DefaultParameterSetName = "FromPrivs")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Sid]$Sid,
+        [parameter(Mandatory, ParameterSetName = "FromPrivs")]
+        [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
+        [parameter(Mandatory, ParameterSetName = "FromString")]
+        [string[]]$Name,
+        [parameter(Mandatory, ParameterSetName = "FromLogonType")]
+        [NtApiDotNet.Win32.Security.Policy.AccountRightLogonType[]]$LogonType
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromString" {
+            [NtApiDotNet.Win32.LogonUtils]::AddAccountRights($Sid, $Name)
+        }
+        "FromPrivs" {
+            [NtApiDotNet.Win32.LogonUtils]::AddAccountRights($Sid, $Privilege)
+        }
+        "FromLogonType" {
+            [NtApiDotNet.Win32.LogonUtils]::AddAccountRights($Sid, $LogonType)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Remove account rights for current system.
+.DESCRIPTION
+This cmdlet removes account rights for the current system from a SID.
+.PARAMETER Sid
+Specify a SID to remove the account right for.
+.PARAMETER Privilege
+Specify the privileges to remove.
+.PARAMETER Name
+Specify the list of account right names to remove.
+.PARAMETER LogonType
+Specify the list of logon types to remove.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Remove-NtAccountRight -Sid WD -Privilege SeAssignPrimaryTokenPrivilege
+Remove everyone group from SeAssignPrimaryTokenPrivilege
+#>
+function Remove-NtAccountRight {
+    [CmdletBinding(DefaultParameterSetName = "FromPrivs")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Sid]$Sid,
+        [parameter(Mandatory, ParameterSetName = "FromPrivs")]
+        [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
+        [parameter(Mandatory, ParameterSetName = "FromString")]
+        [string[]]$Name,
+        [parameter(Mandatory, ParameterSetName = "FromLogonType")]
+        [NtApiDotNet.Win32.Security.Policy.AccountRightLogonType[]]$LogonType
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromString" {
+            [NtApiDotNet.Win32.LogonUtils]::RemoveAccountRights($Sid, $Name)
+        }
+        "FromPrivs" {
+            [NtApiDotNet.Win32.LogonUtils]::RemoveAccountRights($Sid, $Privilege)
+        }
+        "FromLogonType" {
+            [NtApiDotNet.Win32.LogonUtils]::RemoveAccountRights($Sid, $LogonType)
         }
     }
 }
@@ -12121,6 +12401,10 @@ Get a range of system information values.
 This cmdlet gets a range of system information values.
 .PARAMETER IsolatedUserMode
 Return isolated usermode flags.
+.PARAMETER ProcessorInformation
+Return processor information.
+.PARAMETER MultiSession
+Return whether this system is a multi-session SKU.
 .INPUTS
 None
 .OUTPUTS
@@ -12133,13 +12417,17 @@ function Get-NtSystemInformation {
     param(
         [Parameter(Mandatory, ParameterSetName="IsolatedUserMode")]
         [switch]$IsolatedUserMode,
-        [Parameter(Mandatory, ParameterSetName="ProcessInformation")]
-        [switch]$ProcessInformation
+        [Parameter(Mandatory, ParameterSetName="ProcessorInformation")]
+        [switch]$ProcessorInformation,
+        [Parameter(Mandatory, ParameterSetName="MultiSession")]
+        [switch]$MultiSession
     )
     if ($IsolatedUserMode) {
         [NtApiDotNet.NtSystemInfo]::IsolatedUserModeFlags
-    } elseif ($ProcessInformation) {
+    } elseif ($ProcessorInformation) {
         [NtApiDotNet.NtSystemInfo]::ProcessorInformation
+    } elseif ($MultiSession) {
+        [NtApiDotNet.NtSystemInfo]::IsMultiSession
     }
 }
 
@@ -12245,4 +12533,443 @@ function Invoke-NtEnclave {
     )
 
     [NtApiDotNet.NtEnclave]::Call($Routine, $Parameter, $WaitForThread)
+}
+
+<#
+.SYNOPSIS
+Start a Win32 debug console.
+.DESCRIPTION
+This cmdlet starts a Win32 debug console and prints the debug output to the shell.
+.PARAMETER Global
+Capture debug output for session 0.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Start-Win32DebugConsole {
+    param(
+        [switch]$Global
+    )
+
+    try {
+        Use-NtObject($console = New-Win32DebugConsole -Global:$Global) {
+            while($true) {
+                $result = Read-Win32DebugConsole -Console $console -TimeoutMs 1000
+                if ($null -ne $result.Output) {
+                    Write-Host "[$($result.ProcessId)] - $($result.Output.Trim())"
+                }
+            }
+        }
+    } catch {
+        Write-Error $_
+    }
+}
+
+<#
+.SYNOPSIS
+Create a new Win32 debug console.
+.DESCRIPTION
+This cmdlet creates Win32 debug console. You can then read debug events using Read-Win32DebugConsole.
+.PARAMETER Global
+Capture debug output for session 0.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Debugger.Win32DebugConsole
+#>
+function New-Win32DebugConsole {
+    param(
+        [switch]$Global
+    )
+
+    $session_id = if ($Global) {
+        0
+    } else {
+        (Get-NtProcess -Current).SessionId
+    }
+    [NtApiDotNet.Win32.Debugger.Win32DebugConsole]::Create($session_id)
+}
+
+<#
+.SYNOPSIS
+Reads a debug event from the Win32 debug console.
+.DESCRIPTION
+This cmdlet reads a Win32 debug event from a console.
+.PARAMETER Console
+The console to read from.
+.PARAMETER TimeoutMs
+The timeout to read in milliseconds. The default is to wait indefinitely.
+.PARAMETER Async
+Read the string asynchronously.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Debugger.Win32DebugString
+System.Threading.Tasks.Task[Win32DebugString]
+#>
+function Read-Win32DebugConsole {
+    param(
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Debugger.Win32DebugConsole]$Console,
+        [int]$TimeoutMs = -1,
+        [switch]$Async
+    )
+
+    if ($Async) {
+        $Console.ReadAsync($TimeoutMs)
+    } else {
+        $Console.Read($TimeoutMs)
+    }
+}
+
+<#
+.SYNOPSIS
+Test if a process can be opened.
+.DESCRIPTION
+This cmdlet tests if a process can be opened. You can specify a specific access mask to check
+or request the maximum access.
+.PARAMETER ProcessId
+Specify the process ID to check.
+.PARAMETER Access
+Specify the access to check.
+.INPUTS
+None
+.OUTPUTS
+Boolean
+.EXAMPLE
+Test-NtProcess -ProcessId 1234
+Test if PID 1234 can be opened with maximum access.
+.EXAMPLE
+Test-NtProcess -ProcessId 1234 -Access DupHandle
+Test if PID 1234 can be opened with DupHandle access.
+#>
+function Test-NtProcess {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [int]$ProcessId,
+        [NtApiDotNet.ProcessAccessRights]$Access = "MaximumAllowed"
+    )
+
+    Use-NtObject($proc = [NtApiDotNet.NtProcess]::Open($ProcessId, $Access, $false)) {
+        $proc.IsSuccess
+    }
+}
+
+<#
+.SYNOPSIS
+Get API set entries
+.DESCRIPTION
+This cmdlet gets API set entries for the current system.
+.PARAMETER Name
+Specify an API set name to lookup.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.ApiSet.ApiSetEntry[]
+.EXAMPLE
+Get-NtApiSet
+Get all API set entries.
+.EXAMPLE
+Get-NtApiSet -Name "api-ms-win-base-util-l1-1-0"
+Get an API set by name.
+#>
+function Get-NtApiSet {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name
+    )
+
+    if ($PSCmdlet.ParameterSetName -eq "FromName") {
+        [NtApiDotNet.ApiSet.ApiSetNamespace]::Current.GetApiSet($Name)
+    } else {
+        [NtApiDotNet.ApiSet.ApiSetNamespace]::Current.Entries | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Add a SID to name mapping.
+.DESCRIPTION
+This cmdlet adds a SID to name mapping. You can also add the name to LSASS if you have SeTcbPrivilege
+and the SID meets specific requirements.
+.PARAMETER Sid
+Specify the SID to add.
+.PARAMETER Domain
+Specify the domain name to add. When adding a cache this is optional. For register this is required.
+.PARAMETER Name
+Specify the name to add. For register this is optional.
+.PARAMETER NameUse
+Specify the name to use type.
+.PARAMETER Register
+Register SID name with LSASS.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Add-NtSidName -Sid S-1-2-3-4-5 -Domain ABC -User XYZ
+Add a SID name.
+.EXAMPLE
+Add-NtSidName -Sid S-1-5-101-0 -Domain ABC -User XYZ -Register
+Add a SID name and register with LSASS.
+#>
+function Add-NtSidName {
+    [CmdletBinding(DefaultParameterSetName="FromName")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Sid]$Sid,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromName")]
+        [parameter(Position = 2, ParameterSetName="RegisterSid")]
+        [string]$Name,
+        [parameter(Position = 2, ParameterSetName="FromName")]
+        [parameter(Mandatory, Position = 1, ParameterSetName="RegisterSid")]
+        [string]$Domain,
+        [parameter(Position = 3, ParameterSetName="FromName")]
+        [NtApiDotNet.Win32.SidNameUse]$NameUse = "Group",
+        [parameter(Mandatory, ParameterSetName="RegisterSid")]
+        [switch]$Register
+    )
+
+    if ($Register) {
+        [NtApiDotNet.Win32.Security.Win32Security]::AddSidNameMapping($Domain, $Name, $Sid)
+    } else {
+        [NtApiDotNet.NtSecurity]::AddSidName($Sid, $Domain, $Name, $NameUse)
+    }
+}
+
+<#
+.SYNOPSIS
+Add a SID to name mapping.
+.DESCRIPTION
+This cmdlet adds a SID to name mapping. You can also add the name to LSASS if you have SeTcbPrivilege
+and the SID meets specific requirements.
+.PARAMETER Sid
+Specify an API set name to lookup.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Remove-NtSidName -Sid S-1-2-3-4-5
+Remove a SID name.
+.EXAMPLE
+Remove-NtSidName -Sid S-1-5-101-0 -Unregister
+Remove a SID name and unregister with LSASS.
+#>
+function Remove-NtSidName {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Sid]$Sid,
+        [switch]$Unregister
+    )
+
+    if ($Unregister) {
+        [NtApiDotNet.Win32.Security.Win32Security]::RemoveSidNameMapping($Sid)
+    }
+    [NtApiDotNet.NtSecurity]::RemoveSidName($Sid)
+}
+
+<#
+.SYNOPSIS
+Clear the SID to name cache.
+.DESCRIPTION
+This cmdlet clears the SID to name cache.
+.INPUTS
+None
+.OUTPUTS
+None
+.EXAMPLE
+Clear-NtSidName
+Clears the SID to name cache.
+#>
+function Clear-NtSidName {
+    [NtApiDotNet.NtSecurity]::ClearSidNameCache()
+}
+
+<#
+.SYNOPSIS
+Create a new Win32 service.
+.DESCRIPTION
+This cmdlet creates a new Win32 service. This is similar New-Service but it exposes
+all the options from the CreateService API and allows you to specify service users.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER DisplayName
+Specify the display name for the service.
+.PARAMETER Type
+Specify the service type.
+.PARAMETER Start
+Specify the service start type.
+.PARAMETER Path
+Specify the path to the service binary.
+.PARAMETER LoadOrderGroup
+Specify the load order group.
+.PARAMETER Dependencies
+Specify the list of dependencies.
+.PARAMETER Username
+Specify the username for the service.
+.PARAMETER Password
+Specify the password for the username.
+.PARAMETER PassThru
+Specify to return information about the service.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.RunningService
+#>
+function New-Win32Service {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [string]$Name,
+        [string]$DisplayName,
+        [NtApiDotNet.Win32.ServiceType]$Type = "Win32OwnProcess",
+        [NtApiDotNet.Win32.ServiceStartType]$Start = "Demand",
+        [NtApiDotNet.Win32.ServiceErrorControl]$ErrorControl = 0,
+        [parameter(Mandatory, Position = 1)]
+        [string]$Path,
+        [string]$LoadOrderGroup,
+        [string[]]$Dependencies,
+        [string]$Username,
+        [System.Security.SecureString]$Password,
+        [switch]$PassThru
+    )
+
+    $service = [NtApiDotNet.Win32.ServiceUtils]::CreateService($Name, $DisplayName, $Type, $Start, $ErrorControl, $Path, $LoadOrderGroup, $Dependencies, $Username, $Password)
+    if ($PassThru) {
+        $service
+    }
+}
+
+<#
+.SYNOPSIS
+Delete a Win32 service.
+.DESCRIPTION
+This cmdlet deletes a Win32 service. This is basically the same as Remove-Service
+but is available on PowerShell 5.1.
+.PARAMETER Name
+Specify the name of the service.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Remove-Win32Service {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [string]$Name
+    )
+
+    [NtApiDotNet.Win32.ServiceUtils]::DeleteService($Name)
+}
+
+<#
+.SYNOPSIS
+Check if a token has a specified capability.
+.DESCRIPTION
+This cmdlet checks if a token has a specified capability. This is primarily for checking AppContainer tokens.
+.PARAMETER Token
+Specify the token to check. If you do not specify the token then the effective token is used.
+.PARAMETER Name
+The name of the capability to check.
+.INPUTS
+None
+.OUTPUTS
+Boolean
+#>
+function Test-NtTokenCapability {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [string]$Name,
+        [NtApiDotNet.NtToken]$Token
+    )
+
+    if ($null -eq $Token) {
+        [NtApiDotNet.NtSecurity]::CapabilityCheck($null, $Name)
+    } else {
+        $Token.CapabilityCheck($Name)
+    }
+}
+
+<#
+.SYNOPSIS
+Get the security descriptor for a service.
+.DESCRIPTION
+This cmdlet gets the security descriptor for a service or the SCM.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER ServiceControlManager
+Specify to query the service control manager security descriptor.
+.PARAMETER SecurityInformation
+Specify the parts of the security descriptor to return.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.SecurityDescriptor
+#>
+function Get-Win32ServiceSecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName="FromName")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name,
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromScm")]
+        [switch]$ServiceControlManager,
+        [parameter(Position = 1)]
+        [NtApiDotNet.SecurityInformation]$SecurityInformation = "Owner, Group, Dacl, Label"
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceSecurityDescriptor($Name, $SecurityInformation)
+        }
+        "FromScm" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetScmSecurityDescriptor($SecurityInformation)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Set the security descriptor for a service.
+.DESCRIPTION
+This cmdlet sets the security descriptor for a service or the SCM.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER ServiceControlManager
+Specify to set the service control manager security descriptor.
+.PARAMETER SecurityInformation
+Specify the parts of the security descriptor to set.
+.PARAMETER SecurityDescriptor 
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Set-Win32ServiceSecurityDescriptor {
+    [CmdletBinding(DefaultParameterSetName="FromName")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name,
+        [parameter(Mandatory, ParameterSetName="FromScm")]
+        [switch]$ServiceControlManager,
+        [parameter(Mandatory, Position = 1)]
+        [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
+        [parameter(Mandatory, Position = 2)]
+        [NtApiDotNet.SecurityInformation]$SecurityInformation
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            [NtApiDotNet.Win32.ServiceUtils]::SetServiceSecurityDescriptor($Name, $SecurityDescriptor, $SecurityInformation)
+        }
+        "FromScm" {
+            [NtApiDotNet.Win32.ServiceUtils]::SetScmSecurityDescriptor($SecurityDescriptor, $SecurityInformation)
+        }
+    }
 }

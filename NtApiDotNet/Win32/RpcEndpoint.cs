@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet.Win32.Rpc;
+using NtApiDotNet.Win32.SafeHandles;
 using System;
 
 namespace NtApiDotNet.Win32
@@ -94,7 +95,7 @@ namespace NtApiDotNet.Win32
             }
             else if (ProtocolSequence.Equals("ncacn_np", StringComparison.OrdinalIgnoreCase) && !string.IsNullOrEmpty(Endpoint))
             {
-                EndpointPath = $@"\??{Endpoint}";
+                EndpointPath = string.IsNullOrEmpty(NetworkAddress) ? $@"\??{Endpoint}" : $@"\??\UNC\{NetworkAddress}{Endpoint}";
             }
             else
             {

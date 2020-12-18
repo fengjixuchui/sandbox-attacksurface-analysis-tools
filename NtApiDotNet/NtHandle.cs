@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using System;
+using System.IO;
 
 namespace NtApiDotNet
 {
@@ -25,6 +26,16 @@ namespace NtApiDotNet
         /// The ID of the process holding the handle
         /// </summary>
         public int ProcessId { get; }
+
+        /// <summary>
+        /// Get the image path for the process which contains this handle.
+        /// </summary>
+        public string ProcessImagePath { get; }
+
+        /// <summary>
+        /// Get name of the process which contains this handle.
+        /// </summary>
+        public string ProcessName => Path.GetFileName(ProcessImagePath);
 
         /// <summary>
         /// The object type index
@@ -92,6 +103,23 @@ namespace NtApiDotNet
         public bool ProtectFromClose => Attributes.HasFlag(AttributeFlags.ProtectClose);
 
         /// <summary>
+        /// Whether the handle has write access.
+        /// </summary>
+        public bool HasWriteAccess => NtType?.HasWritePermission(GrantedAccess) ?? false;
+        /// <summary>
+        /// Whether the handle has read access.
+        /// </summary>
+        public bool HasReadAccess => NtType?.HasReadPermission(GrantedAccess) ?? false;
+        /// <summary>
+        /// Whether the handle has execute access.
+        /// </summary>
+        public bool HasExecuteAccess => NtType?.HasExecutePermission(GrantedAccess) ?? false;
+        /// <summary>
+        /// Whether the handle has full access.
+        /// </summary>
+        public bool HasFullAccess => NtType?.HasFullPermission(GrantedAccess) ?? false;
+
+        /// <summary>
         /// The name of the object (needs to have set query access in constructor)
         /// </summary>
         public string Name
@@ -115,6 +143,28 @@ namespace NtApiDotNet
             }
         }
 
+        /// <summary>
+        /// Indicates if the handle was valid.
+        /// </summary>
+        /// <remarks>This can cause the handle's values to be queried which can take time.</remarks>
+        public bool HandleValid
+        {
+            get
+            {
+                QueryValues();
+                return _handle_valid;
+            }
+        }
+
+        /// <summary>
+        /// Overridden ToString.
+        /// </summary>
+        /// <returns>The handle as a string.</returns>
+        public override string ToString()
+        {
+            return $"PID: {ProcessId} Type: {ObjectType}";
+        }
+
         private void QueryValues()
         {
             if (_allow_query)
@@ -130,13 +180,29 @@ namespace NtApiDotNet
                     }
 
                     NtType = obj.Result.NtType;
+                    if (!_force_file_query && obj.Result.NtTypeName == "File")
+                    {
+                        using (var file = obj.Result.ToTypedObject() as NtFile)
+                        {
+                            var device_type = file?.DeviceType ?? FileDeviceType.UNKNOWN;
+                            switch (device_type)
+                            {
+                                case FileDeviceType.DISK:
+                                case FileDeviceType.CD_ROM:
+                                    break;
+                                default:
+                                    return;
+                            }
+                        }
+                    }
+                    _handle_valid = true;
                     _name = GetName(obj.Result);
                     _sd = GetSecurityDescriptor(obj.Result);
                 }
             }
         }
 
-        internal NtHandle(SystemHandleTableInfoEntryEx entry, bool allow_query)
+        internal NtHandle(SystemHandleTableInfoEntryEx entry, bool allow_query, bool force_file_query, string process_image_path)
         {
             ProcessId = entry.UniqueProcessId.ToInt32();
             NtType info = NtType.GetTypeByIndex(entry.ObjectTypeIndex);
@@ -150,9 +216,11 @@ namespace NtApiDotNet
             Object = entry.Object.ToUInt64();
             GrantedAccess = entry.GrantedAccess;
             _allow_query = allow_query;
+            _force_file_query = force_file_query;
+            ProcessImagePath = process_image_path;
         }
 
-        internal NtHandle(int process_id, ProcessHandleTableEntryInfo entry, bool allow_query)
+        internal NtHandle(int process_id, ProcessHandleTableEntryInfo entry, bool allow_query, bool force_file_query, string process_image_path)
         {
             ProcessId = process_id;
             NtType = NtType.GetTypeByIndex(entry.ObjectTypeIndex);
@@ -160,6 +228,8 @@ namespace NtApiDotNet
             Handle = entry.HandleValue.ToInt32();
             GrantedAccess = entry.GrantedAccess;
             _allow_query = allow_query;
+            _force_file_query = force_file_query;
+            ProcessImagePath = process_image_path;
         }
 
         /// <summary>
@@ -195,12 +265,34 @@ namespace NtApiDotNet
             return GetObject(true).Result;
         }
 
+        /// <summary>
+        /// Close the handle in the original process.
+        /// </summary>
+        /// <param name="throw_on_error">True throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        /// <remarks>This is not recommended.</remarks>
+        public NtStatus CloseHandle(bool throw_on_error)
+        {
+            return NtObject.CloseHandle(ProcessId, 
+                new IntPtr(Handle), throw_on_error);
+        }
+
+        /// <summary>
+        /// Close the handle in the original process.
+        /// </summary>
+        /// <remarks>This is not recommended.</remarks>
+        public void CloseHandle()
+        {
+            CloseHandle(true);
+        }
+
         private string GetName(NtGeneric obj)
         {
             if (obj == null)
             {
                 return string.Empty;
             }
+
             return obj.FullPath;
         }
 
@@ -228,5 +320,7 @@ namespace NtApiDotNet
         private string _name;
         private SecurityDescriptor _sd;
         private bool _allow_query;
+        private bool _force_file_query;
+        private bool _handle_valid;
     }
 }

@@ -25,7 +25,8 @@ namespace NtApiDotNet
         #region Private Members
         private bool _read_state_data;
         private SecurityDescriptor _security_descriptor;
-        private static readonly string[] _root_keys = { @"\Registry\Machine\System\CurrentControlSet\Control\Notifications",
+        private static readonly string[] _root_keys = { 
+            @"\Registry\Machine\System\CurrentControlSet\Control\Notifications",
             @"\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\Notifications",
             @"\Registry\Machine\Software\Microsoft\Windows NT\CurrentVersion\VolatileNotifications" };
 
@@ -33,15 +34,18 @@ namespace NtApiDotNet
         {
             using (var buffer = new SafeStructureInOutBuffer<T>())
             {
-                return NtSystemCalls.NtQueryWnfStateNameInformation(ref state_name,
-                    WnfStateNameInformation.NameExist, 
-                    IntPtr.Zero, buffer, buffer.Length).CreateResult(throw_on_error, () => buffer.Result);
+                return NtSystemCalls.NtQueryWnfStateNameInformation(state_name,
+                    info_class, IntPtr.Zero, buffer, buffer.Length).CreateResult(throw_on_error, () => buffer.Result);
             }
         }
 
+        private static NtType _wnf_type = new NtType("Wnf", NtWnf.GenericMapping,
+                        typeof(WnfAccessRights), typeof(WnfAccessRights),
+                        MandatoryLabelPolicy.NoWriteUp);
+
         private void ReadStateData(NtKeyValue value)
         {
-            _security_descriptor = new SecurityDescriptor(value.Data);
+            _security_descriptor = new SecurityDescriptor(value.Data, _wnf_type);
         }
 
         private void ReadStateData()
@@ -260,27 +264,39 @@ namespace NtApiDotNet
         public ulong StateName { get; }
 
         /// <summary>
+        /// The state name decoded.
+        /// </summary>
+        public ulong DecodedStateName => StateName ^ StateNameKey;
+
+        /// <summary>
         /// Get the associated lifetime for the state name.
         /// </summary>
-        public WnfStateNameLifetime Lifetime
-        {
-            get
-            {
-                ulong decoded_statename = StateName ^ StateNameKey;
-                return (WnfStateNameLifetime)(int)((decoded_statename >> 4) & 3);
-            }
-        }
+        public WnfStateNameLifetime Lifetime => (WnfStateNameLifetime)(int)((DecodedStateName >> 4) & 3);
+
+        /// <summary>
+        /// Version of the WNF state name.
+        /// </summary>
+        public int Version => (int)(DecodedStateName & 0xF);
+
+        /// <summary>
+        /// Data scope of WNF state name.
+        /// </summary>
+        public WnfDataScope DataScope => (WnfDataScope)(int)((DecodedStateName >> 6) & 0xF);
+
+        /// <summary>
+        /// Is WNF state name persistent.
+        /// </summary>
+        public bool IsPersistent => ((DecodedStateName >> 10) & 1) == 1;
+
+        /// <summary>
+        /// Unique identifier of WNF state name,
+        /// </summary>
+        public ulong UniqueId => (DecodedStateName >> 11);
 
         /// <summary>
         /// Get if the state has subscribers.
         /// </summary>
-        public bool SubscribersPresent
-        {
-            get
-            {
-                return Query<int>(StateName, WnfStateNameInformation.SubscribersPresent, true).Result != 0;
-            }
-        }
+        public bool SubscribersPresent => Query<int>(StateName, WnfStateNameInformation.SubscribersPresent, true).Result != 0;
 
         /// <summary>
         /// Get the security descriptor for this object, if known.
@@ -322,8 +338,7 @@ namespace NtApiDotNet
             {
                 using (var buffer = new SafeHGlobalBuffer(size))
                 {
-                    ulong state_name = StateName;
-                    NtStatus status = NtSystemCalls.NtQueryWnfStateData(ref state_name, type_id, 
+                    NtStatus status = NtSystemCalls.NtQueryWnfStateData(StateName, type_id, 
                         explicit_scope, out int changestamp, buffer, ref size);
                     if (status == NtStatus.STATUS_BUFFER_TOO_SMALL)
                     {
@@ -370,8 +385,7 @@ namespace NtApiDotNet
         {
             using (var buffer = data.ToBuffer())
             {
-                ulong state_name = StateName;
-                return NtSystemCalls.NtUpdateWnfStateData(ref state_name, buffer, 
+                return NtSystemCalls.NtUpdateWnfStateData(StateName, buffer, 
                     buffer.Length, type_id, explicit_scope,
                     matching_changestamp ?? 0, matching_changestamp.HasValue).ToNtException(throw_on_error);
             }
@@ -384,6 +398,34 @@ namespace NtApiDotNet
         public void UpdateStateData(byte[] data)
         {
             UpdateStateData(data, null, IntPtr.Zero, null, true);
+        }
+
+        /// <summary>
+        /// Delete the state data for the WNF object.
+        /// </summary>
+        /// <param name="explicit_scope">Optional explicit scope.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus DeleteStateData(IntPtr explicit_scope, bool throw_on_error)
+        {
+            return NtSystemCalls.NtDeleteWnfStateData(StateName, explicit_scope).ToNtException(throw_on_error);
+        }
+
+        /// <summary>
+        /// Delete the state data for the WNF object.
+        /// </summary>
+        /// <param name="explicit_scope">Optional explicit scope.</param>
+        public void DeleteStateData(IntPtr explicit_scope)
+        {
+            DeleteStateData(explicit_scope, true);
+        }
+
+        /// <summary>
+        /// Delete the state data for the WNF object.
+        /// </summary>
+        public void DeleteStateData()
+        {
+            DeleteStateData(IntPtr.Zero);
         }
 
         #endregion
