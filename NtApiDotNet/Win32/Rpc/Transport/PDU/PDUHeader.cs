@@ -32,6 +32,18 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
         public ushort AuthLength { get; set; }
         public int CallId { get; set; }
 
+        public PDUHeader(PDUType type)
+        {
+            MajorVersion = RPC_VERSION_MAJOR;
+            MinorVersion = RPC_VERSION_MINOR;
+            Type = type;
+            Flags = PDUFlags.None;
+            DataRep = new NdrDataRepresentation();
+            FragmentLength = 0;
+            AuthLength = 0;
+            CallId = 0;
+        }
+
         public static PDUHeader Read(BinaryReader reader)
         {
             PDUHeader header = new PDUHeader
@@ -65,7 +77,9 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
             switch (Type)
             {
                 case PDUType.BindAck:
-                    return new PDUBindAck(data);
+                    return new PDUBindAck(data, false);
+                case PDUType.AlterContextResp:
+                    return new PDUBindAck(data, true);
                 case PDUType.BindNack:
                     return new PDUBindNack(data);
                 case PDUType.Response:

@@ -12,7 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
@@ -27,7 +26,8 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
         public string SecondaryAddress { get; }
         public List<ContextResult> ResultList { get; }
 
-        public PDUBindAck(byte[] data) : base(PDUType.BindAck)
+        public PDUBindAck(byte[] data, bool alter_context) 
+            : base(alter_context ? PDUType.AlterContextResp : PDUType.BindAck)
         {
             MemoryStream stm = new MemoryStream(data);
             BinaryReader reader = new BinaryReader(stm, Encoding.ASCII);
@@ -42,11 +42,6 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
                 stm.Position += (4 - padding);
             }
             ResultList = ContextResult.ReadList(reader);
-        }
-
-        public override List<byte[]> DoFragment(int max_frag_length)
-        {
-            throw new NotImplementedException();
         }
     }
 }

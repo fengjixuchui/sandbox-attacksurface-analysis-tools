@@ -24,6 +24,7 @@
     <DocumentationFile>bin\Debug\NtApiDotNet.XML</DocumentationFile>
     <Prefer32Bit>false</Prefer32Bit>
     <LangVersion>7.3</LangVersion>
+    <AllowUnsafeBlocks>false</AllowUnsafeBlocks>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
@@ -74,6 +75,7 @@
     <Compile Include="IO\UsnJournal\UsnJournalReasonFlags.cs" />
     <Compile Include="IO\UsnJournal\UsnJournalUtils.cs" />
     <Compile Include="KnownSids.cs" />
+    <Compile Include="Ndr\NdrUtils.cs" />
     <Compile Include="Net\Sockets\HyperVEndpoint.cs" />
     <Compile Include="Net\Sockets\HyperVSocketGuids.cs" />
     <Compile Include="Net\Sockets\UnixEndPoint.cs" />
@@ -133,6 +135,7 @@
     <Compile Include="Utilities\Memory\ProcessMemoryReader.cs" />
     <Compile Include="Utilities\Memory\ProcessMemoryStream.cs" />
     <Compile Include="Utilities\Memory\SafeBufferWrapper.cs" />
+    <Compile Include="Utilities\SafeBuffers\SafeBufferView.cs" />
     <Compile Include="Utilities\SafeBuffers\SafeEnclaveHandle.cs" />
     <Compile Include="Utilities\SafeBuffers\SafeGuidArrayBuffer.cs" />
     <Compile Include="Utilities\Security\MD4.cs" />
@@ -305,6 +308,9 @@
     <Compile Include="Win32\AppModel\AppModelUtils.cs" />
     <Compile Include="Win32\AppModel\IApplicationActivationManager.cs" />
     <Compile Include="Win32\ConsoleSession.cs" />
+    <Compile Include="Win32\Net\TcpListenerInformation.cs" />
+    <Compile Include="Win32\Net\Win32NetworkNativeMethods.cs" />
+    <Compile Include="Win32\Net\Win32NetworkUtils.cs" />
     <Compile Include="Win32\Rpc\CrackedBindingString.cs" />
     <Compile Include="Win32\Debugger\ArrayTypeInformation.cs" />
     <Compile Include="Win32\Debugger\BaseTypeInformation.cs" />
@@ -362,6 +368,8 @@
     <Compile Include="Win32\Filter\FilterVolume.cs" />
     <Compile Include="Win32\ISymbolResolver.cs" />
     <Compile Include="Win32\RpcServerParserFlags.cs" />
+    <Compile Include="Win32\Rpc\RpcServerProcessInformation.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\PDUAuth3.cs" />
     <Compile Include="Win32\Rpc\Transport\PDU\PDUBind.cs" />
     <Compile Include="Win32\Rpc\Transport\PDU\PDUBindAck.cs" />
     <Compile Include="Win32\Rpc\Transport\PDU\BindRejectionReason.cs" />
@@ -376,8 +384,18 @@
     <Compile Include="Win32\Rpc\Transport\PDU\PDUType.cs" />
     <Compile Include="Win32\Rpc\Transport\PDU\ContextElement.cs" />
     <Compile Include="Win32\Rpc\Transport\PDU\ContextResult.cs" />
+    <Compile Include="Win32\Rpc\Transport\PDU\AuthData.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcAuthenticationLevel.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcAuthenticationType.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcHyperVClientTransport.cs" />
     <Compile Include="Win32\Rpc\Transport\RpcNamedPipeClientTransport.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcConnectedClientTransport.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcAuthenticationCapabilities.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcStreamClientTransport.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcStreamSocketClientTransport.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcTcpClientTransport.cs" />
     <Compile Include="Win32\Rpc\Transport\RpcTransportException.cs" />
+    <Compile Include="Win32\Rpc\Transport\RpcTransportSecurity.cs" />
     <Compile Include="Win32\SafeHandles\SafeLsaLogonHandle.cs" />
     <Compile Include="Utilities\ASN1\DERParser.cs" />
     <Compile Include="Win32\SafeHandles\SafeRpcBindingHandle.cs" />
@@ -386,7 +404,10 @@
     <Compile Include="Win32\SafeHandles\SafeRpcStringHandle.cs" />
     <Compile Include="Win32\Security\Authentication\ASN1AuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\AuthenticationKey.cs" />
+    <Compile Include="Win32\Security\Authentication\EncryptedMessage.cs" />
     <Compile Include="Win32\Security\Authentication\GSSAPIUtils.cs" />
+    <Compile Include="Win32\Security\Authentication\IClientAuthenticationContext.cs" />
+    <Compile Include="Win32\Security\Authentication\IServerAuthenticationContext.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAPReplyEncryptedPart.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACDevice.cs" />
     <Compile Include="Win32\Security\Authentication\Kerberos\KerberosAuthorizationDataPACLogon.cs" />
@@ -435,6 +456,7 @@
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Negotiate\NegotiateResponseAuthenticationToken.cs" />
     <Compile Include="Win32\Security\Authentication\Ntlm\NtlmAuthenticateAuthenticationTokenV2.cs" />
+    <Compile Include="Win32\Security\Authentication\SecurityContextUtils.cs" />
     <Compile Include="Win32\Security\Authenticode\AuthenticodeCertificate.cs" />
     <Compile Include="Win32\Security\Authenticode\AuthenticodeUtils.cs" />
     <Compile Include="Win32\Security\Authenticode\ElamInformation.cs" />
@@ -447,6 +469,9 @@
     <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_ENTRY_UNION.cs" />
     <Compile Include="Win32\Security\Authenticode\IMAGE_POLICY_METADATA.cs" />
     <Compile Include="Win32\Security\Authenticode\EnclaveConfiguration.cs" />
+    <Compile Include="Win32\Security\Buffers\SecurityBuffer.cs" />
+    <Compile Include="Win32\Security\Buffers\SecurityBufferInOut.cs" />
+    <Compile Include="Win32\Security\Buffers\SecurityBufferOut.cs" />
     <Compile Include="Win32\Security\Native\KERB_TICKET_LOGON.cs" />
     <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_ADD_INPUT.cs" />
     <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_ADD_MULTIPLE_INPUT.cs" />
@@ -454,7 +479,10 @@
     <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_REMOVE_INPUT.cs" />
     <Compile Include="Win32\Security\Native\LSA_SID_NAME_MAPPING_OPERATION_TYPE.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContextStructs.cs" />
+    <Compile Include="Win32\Security\Native\SecPkgContext_PackageInfo.cs" />
     <Compile Include="Win32\Security\Native\SecPkgContext_SessionKey.cs" />
+    <Compile Include="Win32\Security\Native\SecPkgContext_Sizes.cs" />
+    <Compile Include="Win32\Security\Native\SecPkgContext_StreamSizes.cs" />
     <Compile Include="Win32\Security\Native\SECPKG_ATTR.cs" />
     <Compile Include="Win32\Security\Native\SEC_CHANNEL_BINDING.cs" />
     <Compile Include="Win32\Security\Policy\AccountRight.cs" />
@@ -538,7 +566,7 @@
     <Compile Include="Win32\Security\Native\POLICY_AUDIT_SID_ARRAY.cs" />
     <Compile Include="Win32\Security\Native\SecBuffer.cs" />
     <Compile Include="Win32\Security\Native\SecBufferDesc.cs" />
-    <Compile Include="Win32\Security\Native\SecBufferType.cs" />
+    <Compile Include="Win32\Security\Buffers\SecurityBufferType.cs" />
     <Compile Include="Win32\Security\Native\SecHandle.cs" />
     <Compile Include="Win32\Security\Native\SecPkgInfo.cs" />
     <Compile Include="Win32\Security\Native\SecStatusCode.cs" />

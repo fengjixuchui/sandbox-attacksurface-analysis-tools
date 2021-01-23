@@ -63,5 +63,30 @@ namespace NtApiDotNet.Win32.Rpc.Transport
         /// Get the transport protocol sequence.
         /// </summary>
         string ProtocolSequence { get; }
+
+        /// <summary>
+        /// Get whether the client has been authenticated.
+        /// </summary>
+        bool Authenticated { get; }
+
+        /// <summary>
+        /// Get the transports authentication type.
+        /// </summary>
+        RpcAuthenticationType AuthenticationType { get; }
+
+        /// <summary>
+        /// Get the transports authentication level.
+        /// </summary>
+        RpcAuthenticationLevel AuthenticationLevel { get; }
+
+        /// <summary>
+        /// Get information about the local server process, if known.
+        /// </summary>
+        RpcServerProcessInformation ServerProcess { get; }
+
+        /// <summary>
+        /// Get the current Call ID.
+        /// </summary>
+        int CallId { get; }
     }
 }

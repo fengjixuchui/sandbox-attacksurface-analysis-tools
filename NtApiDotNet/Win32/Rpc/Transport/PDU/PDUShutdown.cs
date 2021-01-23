@@ -12,9 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using System;
-using System.Collections.Generic;
-
 namespace NtApiDotNet.Win32.Rpc.Transport.PDU
 {
     internal class PDUShutdown : PDUBase
@@ -22,11 +19,6 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
         public PDUShutdown() 
             : base(PDUType.Shutdown)
         {
-        }
-
-        public override List<byte[]> DoFragment(int max_frag_length)
-        {
-            throw new NotImplementedException();
         }
     }
 }

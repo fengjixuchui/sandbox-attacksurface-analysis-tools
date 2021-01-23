@@ -12,8 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using System.Collections.Generic;
-using System.IO;
+using System;
 
 namespace NtApiDotNet.Win32.Rpc.Transport.PDU
 {
@@ -26,11 +25,9 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
             PDUType = pdu_type;
         }
 
-        public abstract List<byte[]> DoFragment(int max_frag_length);
-
-        public virtual PDUFlags GetFlags()
+        public virtual byte[] ToArray()
         {
-            return PDUFlags.None;
+            throw new NotImplementedException();
         }
     }
 }

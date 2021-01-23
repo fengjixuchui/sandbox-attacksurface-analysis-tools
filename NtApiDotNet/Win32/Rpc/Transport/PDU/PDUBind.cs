@@ -19,8 +19,8 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
 {
     internal class PDUBind : PDUBase
     {
-        public PDUBind(ushort max_xmit_frag, ushort max_recv_frag) 
-            : base(PDUType.Bind)
+        public PDUBind(ushort max_xmit_frag, ushort max_recv_frag, bool alter_context) 
+            : base(alter_context ? PDUType.AlterContext : PDUType.Bind)
         {
             _max_xmit_frag = max_xmit_frag;
             _max_recv_frag = max_recv_frag;
@@ -32,7 +32,7 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
 
         public List<ContextElement> Elements { get; }
 
-        public override List<byte[]> DoFragment(int max_frag_length)
+        public override byte[] ToArray()
         {
             MemoryStream stm = new MemoryStream();
             BinaryWriter writer = new BinaryWriter(stm);
@@ -40,7 +40,7 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
             writer.Write(_max_recv_frag);
             writer.Write(0); // assoc_group_id.
             ContextElement.WriteList(writer, Elements);
-            return new List<byte[]>() { stm.ToArray() };
+            return stm.ToArray();
         }
     }
 }

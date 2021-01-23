@@ -674,6 +674,17 @@ namespace NtApiDotNet
         }
 
         /// <summary>
+        /// Set port attribute flags.
+        /// </summary>
+        /// <param name="flags">The flags to set.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <returns>The NT status code.</returns>
+        public NtStatus SetPortAttributeFlags(AlpcPortAttributeFlags flags, bool throw_on_error)
+        {
+            return Set(AlpcPortInformationClass.AlpcPortInformation, new AlpcPortAttributes() { Flags = flags }, throw_on_error);
+        }
+
+        /// <summary>
         /// Method to query information for this object type.
         /// </summary>
         /// <param name="info_class">The information class.</param>
@@ -703,7 +714,11 @@ namespace NtApiDotNet
         /// <summary>
         /// Port flags.
         /// </summary>
-        public AlpcPortAttributeFlags Flags => Query<AlpcBasicInformation>(AlpcPortInformationClass.AlpcBasicInformation).Flags;
+        public AlpcPortAttributeFlags Flags
+        {
+            get => Query<AlpcBasicInformation>(AlpcPortInformationClass.AlpcBasicInformation).Flags;
+            set => SetPortAttributeFlags(value, true);
+        }
 
         /// <summary>
         /// Port sequence number.
@@ -715,6 +730,8 @@ namespace NtApiDotNet
         /// </summary>
         public long PortContext => Query<AlpcBasicInformation>(AlpcPortInformationClass.AlpcBasicInformation).PortContext.ToInt64();
 
+
+
         #endregion
     }
 
@@ -724,6 +741,7 @@ namespace NtApiDotNet
     public class NtAlpcClient : NtAlpc
     {
         #region Private Members
+        private readonly Lazy<NtResult<AlpcServerSessionInformation>> _server_info;
 
         private static NtResult<NtAlpcClient> ConnectInternal(
             string port_name,
@@ -778,6 +796,7 @@ namespace NtApiDotNet
         internal NtAlpcClient(SafeKernelObjectHandle handle)
     :       base(handle)
         {
+            _server_info = new Lazy<NtResult<AlpcServerSessionInformation>>(() => Query<AlpcServerSessionInformation>(AlpcPortInformationClass.AlpcServerSessionInformation, default, false));
         }
 
         #endregion
@@ -958,6 +977,20 @@ namespace NtApiDotNet
             return GetServerProcess(true).Result;
         }
 
+        #endregion
+
+        #region Public Properties
+        /// <summary>
+        /// Get the server process ID.
+        /// </summary>
+        [SupportedVersion(SupportedVersion.Windows10_19H1)]
+        public int ServerProcessId => _server_info.Value.GetResultOrDefault().ProcessId;
+
+        /// <summary>
+        /// Get the server session ID.
+        /// </summary>
+        [SupportedVersion(SupportedVersion.Windows10_19H1)]
+        public int ServerSessionId => _server_info.Value.GetResultOrDefault().SessionId;
         #endregion
     }
 

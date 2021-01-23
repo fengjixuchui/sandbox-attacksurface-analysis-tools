@@ -32,6 +32,7 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
         BindNack = 13,
         AlterContext = 14,
         AlterContextResp = 15,
+        Auth3 = 16,
         Shutdown = 17,
         CoCancel = 18,
         Orphaned = 19,

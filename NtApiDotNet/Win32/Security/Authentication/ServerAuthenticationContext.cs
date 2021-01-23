@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Win32.Security.Buffers;
 using NtApiDotNet.Win32.Security.Native;
 using System;
 using System.Collections.Generic;
@@ -22,7 +23,7 @@ namespace NtApiDotNet.Win32.Security.Authentication
     /// <summary>
     /// Class to represent a server authentication context.
     /// </summary>
-    public sealed class ServerAuthenticationContext : IDisposable, IAuthenticationContext
+    public sealed class ServerAuthenticationContext : IDisposable, IAuthenticationContext, IServerAuthenticationContext
     {
         private readonly CredentialHandle _creds;
         private readonly SecHandle _context;
@@ -61,6 +62,16 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Get the Session Key for this context.
         /// </summary>
         public byte[] SessionKey => GetSessionKey(_context);
+
+        /// <summary>
+        /// Get the maximum signature size of this context.
+        /// </summary>
+        public int MaxSignatureSize => SecurityContextUtils.GetMaxSignatureSize(_context);
+
+        /// <summary>
+        /// Get the size of the security trailer for this context.
+        /// </summary>
+        public int SecurityTrailerSize => SecurityContextUtils.GetSecurityTrailerSize(_context);
 
         /// <summary>
         /// Get an access token for the authenticated user.
@@ -131,17 +142,127 @@ namespace NtApiDotNet.Win32.Security.Authentication
             Done = GenServerContext(token);
         }
 
+        /// <summary>
+        /// Make a signature for this context.
+        /// </summary>
+        /// <param name="messages">The message buffers to sign.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>The signature blob.</returns>
+        public byte[] MakeSignature(IEnumerable<SecurityBuffer> messages, int sequence_no)
+        {
+            return SecurityContextUtils.MakeSignature(_context, 0, messages, sequence_no);
+        }
+
+        /// <summary>
+        /// Make a signature for this context.
+        /// </summary>
+        /// <param name="message">The message to sign.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>The signature blob.</returns>
+        public byte[] MakeSignature(byte[] message, int sequence_no)
+        {
+            return SecurityContextUtils.MakeSignature(_context, 0, message, sequence_no);
+        }
+
+        /// <summary>
+        /// Verify a signature for this context.
+        /// </summary>
+        /// <param name="message">The message to verify.</param>
+        /// <param name="signature">The signature blob for the message.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>True if the signature is valid, otherwise false.</returns>
+        public bool VerifySignature(byte[] message, byte[] signature, int sequence_no)
+        {
+            return SecurityContextUtils.VerifySignature(_context, message, signature, sequence_no);
+        }
+
+        /// <summary>
+        /// Verify a signature for this context.
+        /// </summary>
+        /// <param name="messages">The messages to verify.</param>
+        /// <param name="signature">The signature blob for the message.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>True if the signature is valid, otherwise false.</returns>
+        public bool VerifySignature(IEnumerable<SecurityBuffer> messages, byte[] signature, int sequence_no)
+        {
+            return SecurityContextUtils.VerifySignature(_context, messages, signature, sequence_no);
+        }
+
+        /// <summary>
+        /// Encrypt a message for this context.
+        /// </summary>
+        /// <param name="message">The message to encrypt.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>The encrypted message.</returns>
+        public EncryptedMessage EncryptMessage(byte[] message, int sequence_no)
+        {
+            return SecurityContextUtils.EncryptMessage(_context, 0, message, sequence_no);
+        }
+
+        /// <summary>
+        /// Encrypt a message for this context.
+        /// </summary>
+        /// <param name="messages">The messages to encrypt.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>The signature for the messages.</returns>
+        /// <remarks>The messages are encrypted in place. You can add buffers with the ReadOnly flag to prevent them being encrypted.</remarks>
+        public byte[] EncryptMessage(IEnumerable<SecurityBuffer> messages, int sequence_no)
+        {
+            return SecurityContextUtils.EncryptMessage(_context, 0, messages, sequence_no);
+        }
+
+        /// <summary>
+        /// Decrypt a message for this context.
+        /// </summary>
+        /// <param name="messages">The messages to decrypt.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <param name="signature">The signature for the messages.</param>
+        /// <remarks>The messages are decrypted in place. You can add buffers with the ReadOnly flag to prevent them being decrypted.</remarks>
+        public void DecryptMessage(IEnumerable<SecurityBuffer> messages, byte[] signature, int sequence_no)
+        {
+            SecurityContextUtils.DecryptMessage(_context, messages, signature, sequence_no);
+        }
+
+        /// <summary>
+        /// Decrypt a message for this context.
+        /// </summary>
+        /// <param name="message">The message to decrypt.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <returns>The decrypted message.</returns>
+        public byte[] DecryptMessage(EncryptedMessage message, int sequence_no)
+        {
+            return SecurityContextUtils.DecryptMessage(_context, message, sequence_no);
+        }
+
+        /// <summary>
+        /// Query the context's package info.
+        /// </summary>
+        /// <returns>The authentication package info,</returns>
+        public AuthenticationPackage GetAuthenticationPackage()
+        {
+            return SecurityContextUtils.GetAuthenticationPackage(_context);
+        }
+
+        /// <summary>
+        /// Dispose the client context.
+        /// </summary>
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
         private bool GenServerContext(AuthenticationToken token)
         {
             bool new_context = _new_context;
             _new_context = false;
             using (DisposableList list = new DisposableList())
             {
-                SecBuffer out_sec_buffer = list.AddResource(new SecBuffer(SecBufferType.Token, 64*1024));
+                SecBuffer out_sec_buffer = list.AddResource(new SecBuffer(SecurityBufferType.Token, 64*1024));
                 SecBufferDesc out_buffer_desc = list.AddResource(new SecBufferDesc(out_sec_buffer));
 
                 List<SecBuffer> buffers = new List<SecBuffer>();
-                buffers.Add(list.AddResource(new SecBuffer(SecBufferType.Token, token.ToArray())));
+                buffers.Add(list.AddResource(new SecBuffer(SecurityBufferType.Token, token.ToArray())));
                 if (_channel_binding != null)
                 {
                     buffers.Add(list.AddResource(SecBuffer.CreateForChannelBinding(_channel_binding)));
@@ -163,10 +284,18 @@ namespace NtApiDotNet.Win32.Security.Authentication
             }
         }
 
-        void IDisposable.Dispose()
+        private void Dispose(bool _)
         {
             if (!_new_context)
                 SecurityNativeMethods.DeleteSecurityContext(_context);
+        }
+
+        /// <summary>
+        /// Finalizer.
+        /// </summary>
+        ~ServerAuthenticationContext()
+        {
+            Dispose(false);
         }
 
         private string GetTargetName()

@@ -12,8 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using System;
-using System.Collections.Generic;
 using System.IO;
 
 namespace NtApiDotNet.Win32.Rpc.Transport.PDU
@@ -24,6 +22,7 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
         public ushort ContextId { get; }
         public byte CancelCount { get; }
         public int Status { get; }
+        public byte[] ExtendedErrorData { get; }
 
         public PDUFault(byte[] data) : base(PDUType.Fault)
         {
@@ -32,14 +31,19 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
             AllocHint = reader.ReadInt32();
             ContextId = reader.ReadUInt16();
             CancelCount = reader.ReadByte();
-            reader.ReadByte(); // reserved.
+            bool extended_error_present = reader.ReadByte() != 0;
             Status = reader.ReadInt32();
-            // TODO: Added additional fault data.
-        }
-
-        public override List<byte[]> DoFragment(int max_frag_length)
-        {
-            throw new NotImplementedException();
+            reader.ReadInt32(); // Reserved.
+            if (extended_error_present)
+            {
+                try
+                {
+                    ExtendedErrorData = reader.ReadBytes(AllocHint - 0x20);
+                }
+                catch (EndOfStreamException)
+                {
+                }
+            }
         }
     }
 }

@@ -12,6 +12,7 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Net.Sockets;
 using System;
 using System.Collections.Generic;
 
@@ -26,9 +27,9 @@ namespace NtApiDotNet.Win32.Rpc.Transport
         /// Connect a new RPC client transport.
         /// </summary>
         /// <param name="endpoint">The RPC endpoint.</param>
-        /// <param name="security_quality_of_service">The security quality of service for the connection.</param>
+        /// <param name="transport_security">The transport security for the connection.</param>
         /// <returns>The connected transport.</returns>
-        IRpcClientTransport Connect(RpcEndpoint endpoint, SecurityQualityOfService security_quality_of_service);
+        IRpcClientTransport Connect(RpcEndpoint endpoint, RpcTransportSecurity transport_security);
     }
 
     /// <summary>
@@ -36,25 +37,74 @@ namespace NtApiDotNet.Win32.Rpc.Transport
     /// </summary>
     public static class RpcClientTransportFactory
     {
-        private static Dictionary<string, IRpcClientTransportFactory> _factories = 
+        private static readonly Dictionary<string, IRpcClientTransportFactory> _factories = 
             new Dictionary<string, IRpcClientTransportFactory>(StringComparer.OrdinalIgnoreCase) { 
                 { "ncalrpc", new AlpcRpcClientTransportFactory() },
-                { "ncacn_np", new NamedPipeRpcClientTransportFactory() }
+                { "ncacn_np", new NamedPipeRpcClientTransportFactory() },
+                { "ncacn_ip_tcp", new TcpRpcClientTransportFactory() },
+                { "ncacn_hvsocket", new HyperVRpcClientTransportFactory() },
             };
 
         private class AlpcRpcClientTransportFactory : IRpcClientTransportFactory
         {
-            public IRpcClientTransport Connect(RpcEndpoint endpoint, SecurityQualityOfService security_quality_of_service)
+            public IRpcClientTransport Connect(RpcEndpoint endpoint, RpcTransportSecurity transport_security)
             {
-                return new RpcAlpcClientTransport(endpoint.EndpointPath, security_quality_of_service);
+                return new RpcAlpcClientTransport(endpoint.EndpointPath, transport_security.SecurityQualityOfService);
             }
         }
 
         private class NamedPipeRpcClientTransportFactory : IRpcClientTransportFactory
         {
-            public IRpcClientTransport Connect(RpcEndpoint endpoint, SecurityQualityOfService security_quality_of_service)
+            public IRpcClientTransport Connect(RpcEndpoint endpoint, RpcTransportSecurity transport_security)
             {
-                return new RpcNamedPipeClientTransport(endpoint.EndpointPath, security_quality_of_service);
+                return new RpcNamedPipeClientTransport(endpoint.EndpointPath, transport_security);
+            }
+        }
+
+        private class TcpRpcClientTransportFactory : IRpcClientTransportFactory
+        {
+            public IRpcClientTransport Connect(RpcEndpoint endpoint, RpcTransportSecurity transport_security)
+            {
+                string hostname = string.IsNullOrEmpty(endpoint.NetworkAddress) ? "127.0.0.1" : endpoint.NetworkAddress;
+                int port = int.Parse(endpoint.Endpoint);
+                return new RpcTcpClientTransport(hostname, port, transport_security);
+            }
+        }
+
+        private class HyperVRpcClientTransportFactory : IRpcClientTransportFactory
+        {
+            private static Guid ResolveVmId(string guid)
+            {
+                switch (guid.ToLower())
+                {
+                    case "parent":
+                        return HyperVSocketGuids.HV_GUID_PARENT;
+                    case "children":
+                        return HyperVSocketGuids.HV_GUID_CHILDREN;
+                    case "silohost":
+                        return HyperVSocketGuids.HV_GUID_SILOHOST;
+                    case "loopback":
+                        return HyperVSocketGuids.HV_GUID_LOOPBACK;
+                    default:
+                        return Guid.Parse(guid);
+                }
+            }
+
+            private static HyperVEndPoint GetEndpoint(string endpoint)
+            {
+                if (Guid.TryParse(endpoint, out Guid service_id))
+                {
+                    return new HyperVEndPoint(service_id, HyperVSocketGuids.HV_GUID_LOOPBACK);
+                }
+                string[] vals = endpoint.Split(':');
+                if (vals.Length != 2)
+                    throw new ArgumentException("Invalid HyperV socket address.");
+                return new HyperVEndPoint(Guid.Parse(vals[0]), ResolveVmId(vals[1]));
+            }
+
+            public IRpcClientTransport Connect(RpcEndpoint endpoint, RpcTransportSecurity transport_security)
+            {
+                return new RpcHyperVClientTransport(GetEndpoint(endpoint.Endpoint), transport_security);
             }
         }
 
@@ -76,14 +126,28 @@ namespace NtApiDotNet.Win32.Rpc.Transport
         /// <returns>The  connected client transport.</returns>
         /// <exception cref="ArgumentException">Thrown if protocol sequence unsupported.</exception>
         /// <exception cref="Exception">Other exceptions depending on the connection.</exception>
+        [Obsolete("Use ConnectEndpoint specifying RpcTransportSecurity.")]
         public static IRpcClientTransport ConnectEndpoint(RpcEndpoint endpoint, SecurityQualityOfService security_quality_of_service)
+        {
+            return ConnectEndpoint(endpoint, new RpcTransportSecurity(security_quality_of_service));
+        }
+
+        /// <summary>
+        /// Connect a client transport from an endpoint.
+        /// </summary>
+        /// <param name="endpoint">The RPC endpoint.</param>
+        /// <param name="transport_security">The transport security for the connection.</param>
+        /// <returns>The  connected client transport.</returns>
+        /// <exception cref="ArgumentException">Thrown if protocol sequence unsupported.</exception>
+        /// <exception cref="Exception">Other exceptions depending on the connection.</exception>
+        public static IRpcClientTransport ConnectEndpoint(RpcEndpoint endpoint, RpcTransportSecurity transport_security)
         {
             if (!_factories.ContainsKey(endpoint.ProtocolSequence))
             {
                 throw new ArgumentException($"Unsupported protocol sequence {endpoint.ProtocolSequence}", nameof(endpoint));
             }
 
-            return _factories[endpoint.ProtocolSequence].Connect(endpoint, security_quality_of_service);
+            return _factories[endpoint.ProtocolSequence].Connect(endpoint, transport_security);
         }
     }
 }

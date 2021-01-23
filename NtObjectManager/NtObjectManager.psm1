@@ -89,7 +89,7 @@ function Get-AccessibleAlpcPort {
 Set the state of a token's privileges.
 .DESCRIPTION
 This cmdlet will set the state of a token's privileges. This is commonly used to enable debug/backup privileges to perform privileged actions.
-If no token is specified then the current process token is used.
+If no token is specified then the current effective token is used.
 .PARAMETER Privilege
 A list of privileges to set their state.
 .PARAMETER Token
@@ -160,6 +160,77 @@ function Set-NtTokenPrivilege {
             $result | Write-Output
         }
     }
+}
+
+<#
+.SYNOPSIS
+Enable a token's privileges.
+.DESCRIPTION
+This cmdlet will enable a token's privileges. This is commonly used to enable debug/backup privileges to perform privileged actions.
+If no token is specified then the current effective token is used.
+.PARAMETER Privilege
+A list of privileges to enable.
+.PARAMETER Token
+Optional token object to use to enable privileges. Must be accesible for AdjustPrivileges right.
+.PARAMETER PassThru
+Passthrough the updated privilege results.
+.INPUTS
+None
+.OUTPUTS
+List of TokenPrivilege values indicating the new state of all privileges successfully modified.
+.EXAMPLE
+Enable-NtTokenPrivilege SeDebugPrivilege
+Enable SeDebugPrivilege on the current effective token
+.EXAMPLE
+Enable-NtTokenPrivilege SeBackupPrivilege, SeRestorePrivilege -Token $token
+Enable SeBackupPrivilege and SeRestorePrivilege on an explicit token object.
+#>
+function Enable-NtTokenPrivilege {
+    [CmdletBinding(DefaultParameterSetName = "FromPrivilege")]
+    Param(
+        [NtApiDotNet.NtToken]$Token,
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromPrivilege")]
+        [alias("Privileges")]
+        [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
+        [switch]$PassThru
+    )
+
+    Set-NtTokenPrivilege -Token $Token -Privilege $Privilege -PassThru:$PassThru -Attribute Enabled
+}
+
+<#
+.SYNOPSIS
+Disable a token's privileges.
+.DESCRIPTION
+This cmdlet will disable a token's privileges. If no token is specified then the current effective token is used.
+.PARAMETER Privilege
+A list of privileges to disable.
+.PARAMETER Token
+Optional token object to use to disable privileges. Must be accesible for AdjustPrivileges right.
+.PARAMETER PassThru
+Passthrough the updated privilege results.
+.INPUTS
+None
+.OUTPUTS
+List of TokenPrivilege values indicating the new state of all privileges successfully modified.
+.EXAMPLE
+Disable-NtTokenPrivilege SeDebugPrivilege
+Disable SeDebugPrivilege on the current effective token
+.EXAMPLE
+Disable-NtTokenPrivilege SeBackupPrivilege, SeRestorePrivilege -Token $token
+Disable SeBackupPrivilege and SeRestorePrivilege on an explicit token object.
+#>
+function Disable-NtTokenPrivilege {
+    [CmdletBinding(DefaultParameterSetName = "FromPrivilege")]
+    Param(
+        [NtApiDotNet.NtToken]$Token,
+        [Parameter(Mandatory, Position = 0, ParameterSetName = "FromPrivilege")]
+        [alias("Privileges")]
+        [NtApiDotNet.TokenPrivilegeValue[]]$Privilege,
+        [switch]$PassThru
+    )
+
+    Set-NtTokenPrivilege -Token $Token -Privilege $Privilege -PassThru:$PassThru -Attribute Disabled
 }
 
 <#
@@ -2400,8 +2471,9 @@ function Format-NtSecurityDescriptor {
         try {
             $sd, $t, $n = switch ($PsCmdlet.ParameterSetName) {
                 "FromObject" {
-                    if (!$Object.IsAccessMaskGranted([NtApiDotNet.GenericAccessRights]::ReadControl)) {
-                        Write-Error "Object doesn't have Read Control access."
+                    $access = Get-NtAccessMask -SecurityInformation $SecurityInformation -ToGenericAccess
+                    if (!$Object.IsAccessMaskGranted($access)) {
+                        Write-Error "Object doesn't have $access access."
                         return
                     }
                     ($Object.GetSecurityDescriptor($SecurityInformation), $Object.NtType, $Object.FullPath)
@@ -5880,14 +5952,26 @@ Specify the RPC protocol sequence this client will connect through.
 Specify the endpoint string. If not specified this will lookup the endpoint from the endpoint mapper.
 .PARAMETER SecurityQualityOfService
 Specify the security quality of service for the connection.
+.PARAMETER Credentials
+Specify user credentials for the RPC client authentication.
+.PARAMETER ServicePrincipalName
+Specify service principal name for the RPC client authentication.
+.PARAMETER AuthenticationLevel
+Specify authentication level for the RPC client authentication.
+.PARAMETER AuthenticationType
+Specify authentication type for the RPC client authentication.
+.PARAMETER AuthenticationCapabilities
+Specify authentication capabilities for the RPC client authentication.
 .PARAMETER PassThru
 Specify to the pass the client object to the output.
 .PARAMETER FindAlpcPort
 Specify to search for an ALPC port for the RPC client.
+.PARAMETER Force
+Specify to for the client to connect even if the client is already connected to another transport.
 .INPUTS
-None
+NtApiDotNet.Win32.Rpc.RpcClientBase[]
 .OUTPUTS
-None
+NtApiDotNet.Win32.Rpc.RpcClientBase[]
 .EXAMPLE
 Connect-RpcClient -Client $Client
 Connect an RPC ALPC client, looking up the path using the endpoint mapper.
@@ -5922,31 +6006,89 @@ function Connect-RpcClient {
         [NtApiDotNet.Win32.RpcEndpoint]$Endpoint,
         [parameter(Mandatory, ParameterSetName = "FromFindEndpoint")]
         [switch]$FindAlpcPort,
+        [parameter(ParameterSetName = "FromBindingString")]
+        [string]$StringBinding,
         [NtApiDotNet.SecurityQualityOfService]$SecurityQualityOfService,
-        [switch]$PassThru
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationCredentials]$Credentials,
+        [string]$ServicePrincipalName,
+        [NtApiDotNet.Win32.Rpc.Transport.RpcAuthenticationLevel]$AuthenticationLevel = "None",
+        [NtApiDotNet.Win32.Rpc.Transport.RpcAuthenticationType]$AuthenticationType = "None",
+        [NtApiDotNet.Win32.Rpc.Transport.RpcAuthenticationCapabilities]$AuthenticationCapabilities = "None",
+        [switch]$PassThru,
+        [switch]$Force
     )
 
+    BEGIN {
+        $security = New-Object NtApiDotNet.Win32.Rpc.Transport.RpcTransportSecurity
+        $security.SecurityQualityOfService = $SecurityQualityOfService
+        $security.Credentials = $Credentials
+        $security.ServicePrincipalName = $ServicePrincipalName
+        $security.AuthenticationLevel = $AuthenticationLevel
+        $security.AuthenticationType = $AuthenticationType
+        $security.AuthenticationCapabilities = $AuthenticationCapabilities
+    }
+
     PROCESS {
+        if ($Force) {
+            Disconnect-RpcClient -Client $Client
+        }
         switch ($PSCmdlet.ParameterSetName) {
             "FromProtocol" {
-                $Client.Connect($ProtocolSequence, $EndpointPath, $NetworkAddress, $SecurityQualityOfService)
+                $Client.Connect($ProtocolSequence, $EndpointPath, $NetworkAddress, $security)
             }
             "FromEndpoint" {
-                $Client.Connect($Endpoint, $SecurityQualityOfService)
+                $Client.Connect($Endpoint, $security)
             }
             "FromFindEndpoint" {
                 foreach ($ep in $(Get-ChildItem "NtObject:\RPC Control")) {
                     try {
                         $name = $ep.Name
                         Write-Progress -Activity "Finding ALPC Endpoint" -CurrentOperation "$name"
-                        $Client.Connect("ncalrpc", $name, $SecurityQualityOfService)
+                        $Client.Connect("ncalrpc", $name, $security)
                     }
                     catch {
                         Write-Information $_
                     }
                 }
             }
+            "FromBindingString" {
+                $Client.Connect($StringBinding, $security)
+            }
         }
+
+        if ($PassThru) {
+            $Client | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Disconnect an RPC client.
+.DESCRIPTION
+This cmdlet disconnects a RPC client from an endpoint.
+.PARAMETER Client
+Specify the RPC client to disconnect.
+.PARAMETER PassThru
+Specify to the pass the client object to the output.
+.INPUTS
+NtApiDotNet.Win32.Rpc.RpcClientBase[]
+.OUTPUTS
+NtApiDotNet.Win32.Rpc.RpcClientBase[]
+.EXAMPLE
+Disconnect-RpcClient -Client $Client
+Disconnect an RPC ALPC client.
+#>
+function Disconnect-RpcClient {
+    [CmdletBinding()]
+    Param(
+        [parameter(Mandatory, Position = 0, ValueFromPipeline)]
+        [NtApiDotNet.Win32.Rpc.RpcClientBase]$Client,
+        [switch]$PassThru
+    )
+
+    PROCESS {
+        $Client.Disconnect()
 
         if ($PassThru) {
             $Client | Write-Output
@@ -9509,7 +9651,7 @@ function Set-NtAuditSecurity {
     switch($PSCmdlet.ParameterSetName) {
         "FromSecurityDescriptor" {
             if ($PSCmdlet.ShouldProcess("$SecurityDescriptor", "Set Audit SD")) {
-                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::SetSecurity($SecurityDescriptor)
+                [NtApiDotNet.Win32.Security.Audit.AuditSecurityUtils]::SetSecurity("Dacl", $SecurityDescriptor)
             }
         }
         "FromGlobalSacl" {

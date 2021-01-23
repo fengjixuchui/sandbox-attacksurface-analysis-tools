@@ -12,13 +12,13 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-namespace NtApiDotNet.Win32.Security.Native
+namespace NtApiDotNet.Win32.Security.Buffers
 {
 #pragma warning disable 1591
     /// <summary>
     /// Security buffer type.
     /// </summary>
-    internal enum SecBufferType
+    public enum SecurityBufferType : uint
     {
         Empty = 0,
         Data = 1,
@@ -45,5 +45,9 @@ namespace NtApiDotNet.Win32.Security.Native
         PresharedKey = 22,
         PresharedKeyIdentity = 23,
         DTLAMtu = 24,
+        // Mask to remove the upper flags.
+        Mask = 0x0FFFFFFF,
+        ReadOnlyWithChecksum = 0x10000000,
+        ReadOnly = 0x80000000,
     }
 }

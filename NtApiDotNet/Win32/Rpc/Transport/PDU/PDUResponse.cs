@@ -12,8 +12,6 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using System;
-using System.Collections.Generic;
 using System.IO;
 
 namespace NtApiDotNet.Win32.Rpc.Transport.PDU
@@ -37,9 +35,16 @@ namespace NtApiDotNet.Win32.Rpc.Transport.PDU
             StubData = reader.ReadAllBytes((int)stm.RemainingLength());
         }
 
-        public override List<byte[]> DoFragment(int max_frag_length)
+        public byte[] ToArray(PDUHeader header)
         {
-            throw new NotImplementedException();
+            MemoryStream stm = new MemoryStream();
+            BinaryWriter writer = new BinaryWriter(stm);
+            header.Write(writer);
+            writer.Write(AllocHint);
+            writer.Write(ContextId);
+            writer.Write(CancelCount);
+            writer.Write((byte)0);
+            return stm.ToArray();
         }
     }
 }
