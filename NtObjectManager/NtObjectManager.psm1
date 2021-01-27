@@ -21,14 +21,25 @@ function Get-IsPSCore {
     return ($PSVersionTable.Keys -contains "PSEdition") -and ($PSVersionTable.PSEdition -ne 'Desktop')
 }
 
-if ([System.Environment]::Is64BitProcess) {
-    $native_dir = "$PSScriptRoot\x64"
-}
-else {
-    $native_dir = "$PSScriptRoot\x86"
+$native_dir = switch([NtApiDotNet.NtSystemInfo]::ProcessorInformation.ProcessorArchitecture) {
+    "AMD64" { 
+        "$PSScriptRoot\x64"
+    }
+    "Intel" {
+        "$PSScriptRoot\x86"
+    }
+    "ARM64" {
+        "$PSScriptRoot\ARM64"
+    }
+    "ARM" {
+        "$PSScriptRoot\ARM"
+    }
+    default {
+        ""
+    }
 }
 
-if (Test-Path "$native_dir\dbghelp.dll") {
+if ("" -ne $native_dir -and (Test-Path "$native_dir\dbghelp.dll")) {
     $Script:GlobalDbgHelpPath = "$native_dir\dbghelp.dll"
 }
 else {
@@ -3771,6 +3782,10 @@ which will allow symbol servers however you can use the system version if you ju
 .PARAMETER SymbolPath
 Specify path for the symbols. If not specified it will first use the _NT_SYMBOL_PATH environment variable then use the
 default of 'srv*https://msdl.microsoft.com/download/symbols'
+.PARAMETER Flags
+Flags for the symbol resolver.
+.PARAMETER TraceWriter
+Specify the output text writer for symbol tracing when enabled by the flags.
 .OUTPUTS
 NtApiDotNet.Win32.ISymbolResolver - The symbol resolver. Dispose after use.
 .EXAMPLE
@@ -3787,7 +3802,9 @@ function New-SymbolResolver {
     Param(
         [NtApiDotNet.NtProcess]$Process,
         [string]$DbgHelpPath,
-        [string]$SymbolPath
+        [string]$SymbolPath,
+        [NtApiDotNet.Win32.Debugger.SymbolResolverFlags]$Flags = 0,
+        [System.IO.TextWriter]$TraceWriter
     )
     if ($DbgHelpPath -eq "") {
         $DbgHelpPath = $Script:GlobalDbgHelpPath
@@ -3801,7 +3818,7 @@ function New-SymbolResolver {
     if ($null -eq $Process) {
         $Process = Get-NtProcess -Current
     }
-    [NtApiDotNet.Win32.SymbolResolver]::Create($Process, $DbgHelpPath, $SymbolPath)
+    [NtApiDotNet.Win32.SymbolResolver]::Create($Process, $DbgHelpPath, $SymbolPath, $Flags, $TraceWriter)
 }
 
 <#
@@ -4647,11 +4664,15 @@ function Get-RpcEndpoint {
         [parameter(ParameterSetName = "All")]
         [parameter(ParameterSetName = "FromId")]
         [parameter(ParameterSetName = "FromIdAndVersion")]
+        [parameter(ParameterSetName = "FromRpcClient")]
         [string]$SearchBinding = "",
         [parameter(ParameterSetName = "All")]
         [parameter(ParameterSetName = "FromId")]
         [parameter(ParameterSetName = "FromIdAndVersion")]
-        [string[]]$ProtocolSequence = @()
+        [parameter(ParameterSetName = "FromRpcClient")]
+        [string[]]$ProtocolSequence = @(),
+        [parameter(Mandatory, ParameterSetName = "FromRpcClient")]
+        [NtApiDotNet.Win32.Rpc.RpcClientBase]$Client
     )
 
     PROCESS {
@@ -4683,6 +4704,9 @@ function Get-RpcEndpoint {
             }
             "FromAlpc" {
                 [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpointsForAlpcPort($AlpcPort)
+            }
+            "FromRpcClient" {
+                [NtApiDotNet.Win32.RpcEndpointMapper]::QueryEndpoints($SearchBinding, $Client.InterfaceId, $Client.InterfaceVersion)
             }
         }
 
@@ -7330,6 +7354,72 @@ function Get-Win32ModuleImport {
     }
     else {
         $imports | Write-Output
+    }
+}
+
+<#
+.SYNOPSIS
+Download a symbol file from a symbol server for a module.
+.DESCRIPTION
+This cmdlet extracts the debug information from a loaded module and downloads the symbol file from a symbol server.
+.PARAMETER Module
+Specify the loaded module.
+.PARAMETER Path
+Specify the path to the module.
+.PARAMETER OutPath
+Specify the output path to write the symbol file to. If you specify a directory it will use the original filename. Defaults to current directory.
+.PARAMETER SymbolServerUrl
+Specify the URL for the symbol server. Defaults to the Microsoft public symbol server.
+.PARAMETER Mirror
+Specify that the output file should be a mirror of the symbol path. Useful to create a local symbol cache.
+.INPUTS
+None
+.OUTPUTS
+None
+#>
+function Get-Win32ModuleSymbolFile {
+    [CmdletBinding(DefaultParameterSetName = "FromModule")]
+    Param(
+        [Parameter(Position = 0, Mandatory, ParameterSetName = "FromModule")]
+        [NtApiDotNet.Win32.SafeLoadLibraryHandle]$Module,
+        [Parameter(Position = 0, Mandatory, ParameterSetName = "FromPath")]
+        [string]$Path,
+        [Parameter(Position = 1)]
+        [string]$OutPath,
+        [string]$SymbolServerUrl = "https://msdl.microsoft.com/download/symbols",
+        [switch]$Mirror
+    )
+
+    if ($PsCmdlet.ParameterSetName -eq "FromPath") {
+        Use-NtObject($lib = Import-Win32Module -Path $Path -Flags LoadLibraryAsDataFile) {
+            if ($null -ne $lib) {
+                Get-Win32ModuleSymbolFile -Module $lib -OutPath $OutPath -SymbolServerUrl $SymbolServerUrl -Mirror:$Mirror
+            }
+        }
+    }
+    else {
+        $debug_data = $Module.DebugData
+        $name = $debug_data.PdbName
+        if ($Mirror) {
+            if (!(Test-Path -Path $OutPath -PathType Container)) {
+                Write-Error "Output path must be a directory when using mirror."
+                return
+            }
+
+            $OutPath = $debug_data.GetSymbolPath((Resolve-Path $OutPath))
+            New-Item -Type Directory -Path (Split-Path $OutPath -Parent) -Force -ErrorAction Stop | Out-Null
+        } else {
+            if ("" -eq $OutPath) {
+                $OutPath = $name
+            } else {
+                if (Test-Path -Path $OutPath -PathType Container) {
+                    $OutPath = Join-Path $OutPath $name
+                }
+            }
+        }
+        $url = $debug_data.GetSymbolPath($SymbolServerUrl)
+        Invoke-WebRequest -Uri $url -OutFile $OutPath -ErrorAction Stop
+        Write-Verbose "Wrote symbol file to $OutPath"
     }
 }
 
