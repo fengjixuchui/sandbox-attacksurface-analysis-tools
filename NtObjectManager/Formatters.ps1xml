@@ -1250,9 +1250,9 @@
       </TableControl>
     </View>
     <View>
-      <Name>RunningService</Name>
+      <Name>Win32Service</Name>
       <ViewSelectedBy>
-        <TypeName>NtApiDotNet.Win32.RunningService</TypeName>
+        <TypeName>NtApiDotNet.Win32.Win32Service</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
@@ -4225,6 +4225,53 @@
               </TableColumnItem>
               <TableColumnItem>
                 <ScriptBlock>$_.Output.TrimEnd()</ScriptBlock>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    <View>
+      <Name>ServiceInformation</Name>
+      <ViewSelectedBy>
+        <TypeName>NtApiDotNet.Win32.ServiceInformation</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader>
+            <Label>Name</Label>
+            <Alignment>left</Alignment>
+            <Width>30</Width>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ImageName</Label>
+            <Alignment>left</Alignment>
+            <Width>30</Width>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>StartType</Label>
+            <Alignment>left</Alignment>
+            <Width>10</Width>
+          </TableColumnHeader>
+          <TableColumnHeader>
+            <Label>ServiceType</Label>
+            <Alignment>left</Alignment>
+          </TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>Name</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ImageName</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>StartType</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>ServiceType</PropertyName>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

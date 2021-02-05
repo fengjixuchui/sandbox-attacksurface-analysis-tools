@@ -2253,18 +2253,27 @@ function Format-NtAce {
         [NtApiDotNet.NtType]$Type,
         [switch]$MapGeneric,
         [switch]$Summary,
-        [switch]$Container
+        [switch]$Container,
+        [switch]$SDKName
     )
 
     PROCESS {
         $mask = $ace.Mask
         $access_name = "Access"
         $mask_str = if ($ace.Type -eq "MandatoryLabel") {
-            [NtApiDotNet.NtSecurity]::AccessMaskToString($mask.ToMandatoryLabelPolicy())
+            [NtApiDotNet.NtSecurity]::AccessMaskToString($mask.ToMandatoryLabelPolicy(), $SDKName)
             $access_name = "Policy"
         }
         else {
-            $Type.AccessMaskToString($Container, $mask, $MapGeneric)
+            $Type.AccessMaskToString($Container, $mask, $MapGeneric, $SDKName)
+        }
+
+        if ($SDKName) {
+            $ace_type = [NtApiDotNet.NtSecurity]::AceTypeToSDKName($ace.Type)
+            $ace_flags = [NtApiDotNet.NtSecurity]::AceFlagsToSDKName($ace.Flags)
+        } else {
+            $ace_type = $ace.Type
+            $ace_flags = $ace.Flags
         }
 
         if ($Summary) {
@@ -2287,10 +2296,10 @@ function Format-NtAce {
                 }
             }
 
-            Write-Output "$($ace.Sid.Name): ($($ace.Type))($($ace.Flags))($mask_str)$cond"
+            Write-Output "$($ace.Sid.Name): ($ace_type)($ace_flags)($mask_str)$cond"
         }
         else {
-            Write-Output " - Type  : $($ace.Type)"
+            Write-Output " - Type  : $ace_type"
             Write-Output " - Name  : $($ace.Sid.Name)"
             Write-Output " - SID   : $($ace.Sid)"
             if ($ace.IsCompoundAce) {
@@ -2299,7 +2308,7 @@ function Format-NtAce {
             }
             Write-Output " - Mask  : 0x$($mask.ToString("X08"))"
             Write-Output " - $($access_name): $mask_str"
-            Write-Output " - Flags : $($ace.Flags)"
+            Write-Output " - Flags : $ace_flags"
             if ($ace.IsConditionalAce) {
                 Write-Output " - Condition: $($ace.Condition)"
             }
@@ -2331,7 +2340,8 @@ function Format-NtAcl {
         [switch]$MapGeneric,
         [switch]$AuditOnly,
         [switch]$Summary,
-        [switch]$Container
+        [switch]$Container,
+        [switch]$SDKName
     )
 
     $flags = @()
@@ -2378,10 +2388,10 @@ function Format-NtAcl {
     else {
         Write-Output $Name
         if ($AuditOnly) {
-            $Acl | Where-Object IsAuditAce | Format-NtAce -Type $Type -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container
+            $Acl | Where-Object IsAuditAce | Format-NtAce -Type $Type -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container -SDKName:$SDKName
         }
         else {
-            $Acl | Format-NtAce -Type $Type -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container
+            $Acl | Format-NtAce -Type $Type -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container -SDKName:$SDKName
         }
     }
 }
@@ -2421,6 +2431,8 @@ Specify to format all security descriptor information including the SACL.
 Specify to not print the security descriptor header.
 .PARAMETER DisplayPath
 Specify to display a path when using SecurityDescriptor or Acl formatting.
+.PARAMETER SDKName
+Specify to format the security descriptor using SDK names where available.
 .OUTPUTS
 None
 .EXAMPLE
@@ -2475,7 +2487,8 @@ function Format-NtSecurityDescriptor {
         [switch]$HideHeader,
         [Parameter(ParameterSetName = "FromSecurityDescriptor")]
         [Parameter(ParameterSetName = "FromAcl")]
-        [string]$DisplayPath = ""
+        [string]$DisplayPath = "",
+        [switch]$SDKName
     )
 
     PROCESS {
@@ -2549,7 +2562,11 @@ function Format-NtSecurityDescriptor {
                     Write-Output "Path: $n"
                 }
                 Write-Output "Type: $($t.Name)"
-                Write-Output "Control: $($sd.Control)"
+                $sd_control = $sd.Control
+                if ($SDKName) {
+                    $sd_control = [NtApiDotNet.NtSecurity]::ControlFlagsToSDKName($sd_control)
+                }
+                Write-Output "Control: $sd_control"
                 if ($null -ne $sd.RmControl) {
                     Write-Output $("RmControl: 0x{0:X02}" -f $sd.RmControl)
                 }
@@ -2597,27 +2614,27 @@ function Format-NtSecurityDescriptor {
                 }
             }
             if ($sd.DaclPresent -and (($si -band "Dacl") -ne 0)) {
-                Format-NtAcl -Acl $sd.Dacl -Type $t -Name "<DACL>" -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container
+                Format-NtAcl -Acl $sd.Dacl -Type $t -Name "<DACL>" -MapGeneric:$MapGeneric -Summary:$Summary -Container:$Container -SDKName:$SDKName
             }
             if (($sd.HasAuditAce -or $sd.SaclNull) -and (($si -band "Sacl") -ne 0)) {
-                Format-NtAcl -Acl $sd.Sacl -Type $t -Name "<SACL>" -MapGeneric:$MapGeneric -AuditOnly -Summary:$Summary -Container:$Container
+                Format-NtAcl -Acl $sd.Sacl -Type $t -Name "<SACL>" -MapGeneric:$MapGeneric -AuditOnly -Summary:$Summary -Container:$Container -SDKName:$SDKName
             }
             $label = $sd.GetMandatoryLabel()
             if ($null -ne $label -and (($si -band "Label") -ne 0)) {
                 Write-Output "<Mandatory Label>"
-                Format-NtAce -Ace $label -Type $t -Summary:$Summary -Container:$Container
+                Format-NtAce -Ace $label -Type $t -Summary:$Summary -Container:$Container -SDKName:$SDKName
             }
             $trust = $sd.ProcessTrustLabel
             if ($null -ne $trust -and (($si -band "ProcessTrustLabel") -ne 0)) {
                 Write-Output "<Process Trust Label>"
-                Format-NtAce -Ace $trust -Type $t -Summary:$Summary -Container:$Container
+                Format-NtAce -Ace $trust -Type $t -Summary:$Summary -Container:$Container -SDKName:$SDKName
             }
             if (($si -band "Attribute") -ne 0) {
                 $attrs = $sd.ResourceAttributes
                 if ($attrs.Count -gt 0) {
                     Write-Output "<Resource Attributes>"
                     foreach ($attr in $attrs) {
-                        Format-NtAce -Ace $attr -Type $t -Summary:$Summary -Container:$Container
+                        Format-NtAce -Ace $attr -Type $t -Summary:$Summary -Container:$Container -SDKName:$SDKName
                     }
                 }
             }
@@ -2626,7 +2643,7 @@ function Format-NtSecurityDescriptor {
                 if ($filters.Count -gt 0) {
                     Write-Output "<Access Filters>"
                     foreach ($filter in $filters) {
-                        Format-NtAce -Ace $filter -Type $t -Summary:$Summary -Container:$Container
+                        Format-NtAce -Ace $filter -Type $t -Summary:$Summary -Container:$Container -SDKName:$SDKName
                     }
                 }
             }
@@ -2634,7 +2651,7 @@ function Format-NtSecurityDescriptor {
                 $scope = $sd.ScopedPolicyID
                 if ($null -ne $scope) {
                     Write-Output "<Scoped Policy ID>"
-                    Format-NtAce -Ace $scope -Type $t -Summary:$Summary -Container:$Container
+                    Format-NtAce -Ace $scope -Type $t -Summary:$Summary -Container:$Container -SDKName:$SDKName
                 }
             }
         }
@@ -4740,6 +4757,10 @@ Also parse client interface information, otherwise only servers are returned.
 Don't resolve any symbol information.
 .PARAMETER SerializedPath
 Path to a serialized representation of the RPC servers.
+.PARAMETER ResolveStructureNames
+If private symbols available try and resolve the names of structures and parameters.
+.PARAMETER SymSrvFallback
+Specify to use a built-in fallback for symbol server resolving when using the system dbghelp DLL. You also need to specify a local cache directory in SymbolPath.
 .INPUTS
 string[] List of paths to DLLs.
 .OUTPUTS
@@ -4762,6 +4783,9 @@ Get the list of RPC servers from rpcss.dll, specifying a different symbol path.
 .EXAMPLE
 Get-RpcServer -SerializedPath rpc.bin
 Get the list of RPC servers from the serialized file rpc.bin.
+.EXAMPLE
+Get-RpcServer c:\windows\system32\rpcss.dll -SymSrvFallback -SymbolPath c:\symbols
+Get the list of RPC servers from rpcss.dll, use symbol server fallback with c:\symbols as the cache directory.
 #>
 function Get-RpcServer {
     [CmdletBinding(DefaultParameterSetName = "FromDll")]
@@ -4783,6 +4807,8 @@ function Get-RpcServer {
         [switch]$IgnoreSymbols,
         [parameter(ParameterSetName = "FromDll")]
         [switch]$ResolveStructureNames,
+        [parameter(ParameterSetName = "FromDll")]
+        [switch]$SymSrvFallback,
         [parameter(Mandatory = $true, ParameterSetName = "FromSerialized")]
         [string]$SerializedPath
     )
@@ -4807,6 +4833,9 @@ function Get-RpcServer {
         }
         if ($ResolveStructureNames) {
             $ParserFlags = $ParserFlags -bor [NtApiDotNet.Win32.RpcServerParserFlags]::ResolveStructureNames
+        }
+        if ($SymSrvFallback) {
+            $ParserFlags = $ParserFlags -bor [NtApiDotNet.Win32.RpcServerParserFlags]::SymSrvFallback
         }
     }
 
@@ -5018,7 +5047,7 @@ Specify names to lookup.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.RunningService[]
+NtApiDotNet.Win32.Win32Service[]
 .EXAMPLE
 Get-RunningService
 Get all running services.
@@ -5088,10 +5117,12 @@ Specify the state of the services to get.
 Specify to filter the services to specific types only.
 .PARAMETER Name
 Specify names to lookup.
+.PARAMETER MachineName
+Specify the target computer.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.RunningService[]
+NtApiDotNet.Win32.Win32Service[]
 .EXAMPLE
 Get-Win32Service
 Get all services.
@@ -5118,7 +5149,8 @@ function Get-Win32Service {
         [parameter(Mandatory, ParameterSetName = "FromName", Position = 0)]
         [string[]]$Name,
         [parameter(Mandatory, ParameterSetName = "FromPid", Position = 0)]
-        [int[]]$ProcessId
+        [int[]]$ProcessId,
+        [string]$MachineName
     )
 
     PROCESS {
@@ -5127,15 +5159,15 @@ function Get-Win32Service {
                 if ($Type -eq 0) {
                     $Type = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes()
                 }
-                [NtApiDotNet.Win32.ServiceUtils]::GetServices($State, $Type) | Write-Output
+                [NtApiDotNet.Win32.ServiceUtils]::GetServices($MachineName, $State, $Type) | Write-Output
             }
             "FromName" {
                 foreach ($n in $Name) {
-                    [NtApiDotNet.Win32.ServiceUtils]::GetService($n) | Write-Output
+                    [NtApiDotNet.Win32.ServiceUtils]::GetService($MachineName, $n) | Write-Output
                 }
             }
             "FromPid" {
-                Get-Win32Service -State Active | Where-Object {$_.ProcessId -in $ProcessId}
+                Get-Win32Service -State Active -MachineName $MachineName | Where-Object {$_.ProcessId -in $ProcessId}
             }
         }
     }
@@ -5974,6 +6006,8 @@ Specify the RPC client to connect.
 Specify the RPC protocol sequence this client will connect through.
 .PARAMETER EndpointPath
 Specify the endpoint string. If not specified this will lookup the endpoint from the endpoint mapper.
+.PARAMETER NetworkAddress
+Specify the network address. If not specified the local system will be used.
 .PARAMETER SecurityQualityOfService
 Specify the security quality of service for the connection.
 .PARAMETER Credentials
@@ -9163,6 +9197,10 @@ Specify to not print the security descriptor header.
 Specify to format the security descriptor as SDDL.
 .PARAMETER Container
 Specify to display the access mask from Container Access Rights.
+.PARAMETER MapGeneric
+Specify to map access masks back to generic access rights for the object type.
+.PARAMETER SDKName
+Specify to format the security descriptor using SDK names where available.
 .OUTPUTS
 None
 .EXAMPLE
@@ -9189,13 +9227,15 @@ function Format-Win32SecurityDescriptor {
         [switch]$ToSddl,
         [switch]$Summary,
         [switch]$ShowAll,
-        [switch]$HideHeader
+        [switch]$HideHeader,
+        [switch]$MapGeneric,
+        [switch]$SDKName
     )
 
     Get-Win32SecurityDescriptor -Name $Name -SecurityInformation $SecurityInformation `
         -Type $Type | Format-NtSecurityDescriptor -SecurityInformation $SecurityInformation `
         -Container:$Container -ToSddl:$ToSddl -Summary:$Summary -ShowAll:$ShowAll -HideHeader:$HideHeader `
-        -DisplayPath $Name
+        -DisplayPath $Name -MapGeneric:$MapGeneric -SDKName:$SDKName
 }
 
 <#
@@ -13048,10 +13088,12 @@ Specify the username for the service.
 Specify the password for the username.
 .PARAMETER PassThru
 Specify to return information about the service.
+.PARAMETER MachineName
+Specify the target computer.
 .INPUTS
 None
 .OUTPUTS
-NtApiDotNet.Win32.RunningService
+NtApiDotNet.Win32.Win32Service
 #>
 function New-Win32Service {
     [CmdletBinding()]
@@ -13068,10 +13110,12 @@ function New-Win32Service {
         [string[]]$Dependencies,
         [string]$Username,
         [System.Security.SecureString]$Password,
-        [switch]$PassThru
+        [switch]$PassThru,
+        [string]$MachineName
     )
 
-    $service = [NtApiDotNet.Win32.ServiceUtils]::CreateService($Name, $DisplayName, $Type, $Start, $ErrorControl, $Path, $LoadOrderGroup, $Dependencies, $Username, $Password)
+    $service = [NtApiDotNet.Win32.ServiceUtils]::CreateService($MachineName, $Name, $DisplayName, $Type, `
+        $Start, $ErrorControl, $Path, $LoadOrderGroup, $Dependencies, $Username, $Password)
     if ($PassThru) {
         $service
     }
@@ -13082,9 +13126,11 @@ function New-Win32Service {
 Delete a Win32 service.
 .DESCRIPTION
 This cmdlet deletes a Win32 service. This is basically the same as Remove-Service
-but is available on PowerShell 5.1.
+but is available on PowerShell 5.1. Also directly supports specifying the machine name.
 .PARAMETER Name
 Specify the name of the service.
+.PARAMETER MachineName
+Specify the target computer.
 .INPUTS
 None
 .OUTPUTS
@@ -13094,10 +13140,11 @@ function Remove-Win32Service {
     [CmdletBinding()]
     param (
         [parameter(Mandatory, Position = 0)]
-        [string]$Name
+        [string]$Name,
+        [string]$MachineName
     )
 
-    [NtApiDotNet.Win32.ServiceUtils]::DeleteService($Name)
+    [NtApiDotNet.Win32.ServiceUtils]::DeleteService($MachineName, $Name)
 }
 
 <#
@@ -13140,6 +13187,8 @@ Specify the name of the service.
 Specify to query the service control manager security descriptor.
 .PARAMETER SecurityInformation
 Specify the parts of the security descriptor to return.
+.PARAMETER MachineName
+Specify the target computer.
 .INPUTS
 None
 .OUTPUTS
@@ -13153,15 +13202,16 @@ function Get-Win32ServiceSecurityDescriptor {
         [parameter(Mandatory, Position = 0, ParameterSetName="FromScm")]
         [switch]$ServiceControlManager,
         [parameter(Position = 1)]
-        [NtApiDotNet.SecurityInformation]$SecurityInformation = "Owner, Group, Dacl, Label"
+        [NtApiDotNet.SecurityInformation]$SecurityInformation = "Owner, Group, Dacl, Label",
+        [string]$MachineName
     )
 
     switch($PSCmdlet.ParameterSetName) {
         "FromName" {
-            [NtApiDotNet.Win32.ServiceUtils]::GetServiceSecurityDescriptor($Name, $SecurityInformation)
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceSecurityDescriptor($MachineName, $Name, $SecurityInformation)
         }
         "FromScm" {
-            [NtApiDotNet.Win32.ServiceUtils]::GetScmSecurityDescriptor($SecurityInformation)
+            [NtApiDotNet.Win32.ServiceUtils]::GetScmSecurityDescriptor($MachineName, $SecurityInformation)
         }
     }
 }
@@ -13178,6 +13228,9 @@ Specify to set the service control manager security descriptor.
 .PARAMETER SecurityInformation
 Specify the parts of the security descriptor to set.
 .PARAMETER SecurityDescriptor 
+The security descriptor to set.
+.PARAMETER MachineName
+Specify the target computer.
 .INPUTS
 None
 .OUTPUTS
@@ -13193,15 +13246,133 @@ function Set-Win32ServiceSecurityDescriptor {
         [parameter(Mandatory, Position = 1)]
         [NtApiDotNet.SecurityDescriptor]$SecurityDescriptor,
         [parameter(Mandatory, Position = 2)]
-        [NtApiDotNet.SecurityInformation]$SecurityInformation
+        [NtApiDotNet.SecurityInformation]$SecurityInformation,
+        [string]$MachineName
     )
 
     switch($PSCmdlet.ParameterSetName) {
         "FromName" {
-            [NtApiDotNet.Win32.ServiceUtils]::SetServiceSecurityDescriptor($Name, $SecurityDescriptor, $SecurityInformation)
+            [NtApiDotNet.Win32.ServiceUtils]::SetServiceSecurityDescriptor($MachineName, $Name, $SecurityDescriptor, $SecurityInformation)
         }
         "FromScm" {
-            [NtApiDotNet.Win32.ServiceUtils]::SetScmSecurityDescriptor($SecurityDescriptor, $SecurityInformation)
+            [NtApiDotNet.Win32.ServiceUtils]::SetScmSecurityDescriptor($MachineName, $SecurityDescriptor, $SecurityInformation)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get an RPC string binding from its parts.
+.DESCRIPTION
+This cmdlet gets an RPC string binding based on its component parts.
+.PARAMETER ProtocolSequence
+Specify the RPC protocol sequence .
+.PARAMETER Endpoint
+Specify the endpoint string.
+.PARAMETER NetworkAddress
+Specify the network address.
+.PARAMETER ObjectUuid
+Specify the object UUID.
+.PARAMETER Options
+Specify the options.
+.INPUTS
+None
+.OUTPUTS
+string
+.EXAMPLE
+Get-RpcStringBinding --ProtocolSequence "ncalrpc"
+Connect an RPC ALPC string binding from a specific protocol sequence.
+#>
+function Get-RpcStringBinding {
+    [CmdletBinding(DefaultParameterSetName = "FromProtocol")]
+    Param(
+        [parameter(Mandatory, Position = 0)]
+        [string]$ProtocolSequence,
+        [parameter(Position = 1)]
+        [string]$Endpoint,
+        [parameter(Position = 2)]
+        [string]$NetworkAddress,
+        [parameter(Position = 3)]
+        [Guid]$ObjectUuid = [guid]::Empty,
+        [parameter(Position = 4)]
+        [string]$Options
+    )
+
+    $objuuid_str = ""
+    if ($ObjectUuid -ne [guid]::Empty) {
+        $objuuid_str = $ObjectUuid.ToString()
+    }
+
+    [NtApiDotNet.Win32.Rpc.RpcUtils]::ComposeStringBinding($objuuid_str, $ProtocolSequence, $NetworkAddress, $Endpoint, $Options)
+}
+
+<#
+.SYNOPSIS
+Start a Win32 service.
+.DESCRIPTION
+This cmdlet starts a Win32 service. This is basically the same as Start-Service
+but allows the user to specify the arguments to pass to the start callback.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER ArgumentList
+Specify the list of arguments to the service.
+.PARAMETER PassThru
+Query for the service status after starting.
+.PARAMETER MachineName
+Specify the target computer.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Win32Service
+#>
+function Start-Win32Service {
+    [CmdletBinding()]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [string]$Name,
+        [string[]]$ArgumentList,
+        [switch]$PassThru,
+        [string]$MachineName
+    )
+
+    [NtApiDotNet.Win32.ServiceUtils]::StartService($MachineName, $Name, $ArgumentList)
+    if ($PassThru) {
+        Get-Win32Service -Name $Name -MachineName $MachineName
+    }
+}
+
+<#
+.SYNOPSIS
+Get the configuration for a service or all services.
+.DESCRIPTION
+This cmdlet gets the configuration for a service or all services.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER ServiceType
+Specify the types of services to return when querying all services. Defaults to all user services.
+.PARAMETER MachineName
+Specify the target computer.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.ServiceInformation[]
+#>
+function Get-Win32ServiceConfig {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name,
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.Win32.ServiceType]$ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes(),
+        [string]$MachineName
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceInformation($MachineName, $Name)
+        }
+        "All" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceInformation($MachineName, $ServiceType) | Write-Output
         }
     }
 }

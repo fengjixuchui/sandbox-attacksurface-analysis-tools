@@ -23,6 +23,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -30,6 +31,8 @@ namespace NtApiDotNet.Win32.Debugger
 {
     internal sealed partial class DbgHelpSymbolResolver : ISymbolResolver, ISymbolTypeResolver, IDisposable
     {
+        public static string DEFAULT_SYMSRV = "https://msdl.microsoft.com/download/symbols";
+
         #region Private Members
         [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode, SetLastError = true)]
         delegate bool SymInitializeW(
@@ -199,6 +202,20 @@ namespace NtApiDotNet.Win32.Debugger
             IntPtr Context
         );
 
+        enum HomeDirectoryType
+        {
+            Base = 0,
+            Sym = 1,
+            Src = 2
+        }
+
+        [UnmanagedFunctionPointer(CallingConvention.StdCall, CharSet = CharSet.Unicode, SetLastError = true)]
+        delegate bool SymGetHomeDirectoryW(
+            HomeDirectoryType type,
+            [In, Out] StringBuilder dir,
+            IntPtr size
+        );
+
         private readonly SafeLoadLibraryHandle _dbghelp_lib;
         private readonly SymInitializeW _sym_init;
         private readonly SymCleanup _sym_cleanup;
@@ -220,9 +237,13 @@ namespace NtApiDotNet.Win32.Debugger
         private readonly SymFromIndexW _sym_from_index;
         private readonly SymSetContext _sym_set_context;
         private readonly SymEnumSymbolsW _sym_enum_symbols;
+        private readonly SymGetHomeDirectoryW _sym_get_home_directory;
         private IEnumerable<SymbolLoadedModule> _loaded_modules;
         private readonly TextWriter _trace_writer;
         private readonly bool _trace_symbol_loading;
+        private readonly bool _enable_symsrv_fallback;
+        private readonly string _symbol_cache_path;
+        private readonly Uri _symbol_server_path;
         private readonly DbgHelpDebugCallbackHandler _callback_handler;
 
         private void GetFunc<T>(ref T f) where T : Delegate
@@ -610,7 +631,7 @@ namespace NtApiDotNet.Win32.Debugger
                 }
                 else
                 {
-                    loaded_module = new SymbolLoadedModule(string.Empty, new IntPtr(result.ModBase), 0, this);
+                    loaded_module = new SymbolLoadedModule(string.Empty, new IntPtr(result.ModBase), 0, string.Empty, true, this);
                     modules.Add(result.ModBase, loaded_module);
                 }
 
@@ -632,6 +653,8 @@ namespace NtApiDotNet.Win32.Debugger
 
         private IMAGEHLP_MODULE64 GetModuleInfo(long base_address)
         {
+            if (base_address == 0)
+                return new IMAGEHLP_MODULE64();
             IMAGEHLP_MODULE64 module = new IMAGEHLP_MODULE64();
             module.SizeOfStruct = Marshal.SizeOf(module);
             if (_sym_get_module_info(Handle, base_address, ref module))
@@ -647,7 +670,9 @@ namespace NtApiDotNet.Win32.Debugger
 
             if (!_sym_enum_modules(Handle, (s, m, p) =>
             {
-                modules.Add(new SymbolLoadedModule(s, new IntPtr(m), GetModuleInfo(m).ImageSize, this));
+                var mod_info = GetModuleInfo(m);
+                modules.Add(new SymbolLoadedModule(s, new IntPtr(m), mod_info.ImageSize,
+                    mod_info.LoadedPdbName, mod_info.SymType == SYM_TYPE.SymExport, this));
                 return true;
             }, IntPtr.Zero))
             {
@@ -716,6 +741,52 @@ namespace NtApiDotNet.Win32.Debugger
             }
         }
 
+        private static bool CheckForSymsrv(string dbghelp_path)
+        {
+            string path = Path.Combine(Path.GetDirectoryName(dbghelp_path), "symsrv.dll");
+            return File.Exists(path);
+        }
+
+        private DllDebugData GetDllDebugData(string executable_path)
+        {
+            using (var lib = SafeLoadLibraryHandle.LoadLibrary(executable_path, LoadLibraryFlags.LoadLibraryAsDataFile, false))
+            {
+                if (!lib.IsSuccess)
+                    return new DllDebugData();
+                return lib.Result.DebugData;
+            }
+        }
+
+        private bool CheckOrDownloadSymbolFile(string executable_path)
+        {
+            if (!_enable_symsrv_fallback)
+                return false;
+            var debug_data = GetDllDebugData(executable_path);
+            if (string.IsNullOrEmpty(debug_data.PdbPath))
+                return false;
+            string cache_path = debug_data.GetSymbolPath(_symbol_cache_path);
+            if (File.Exists(cache_path))
+                return true;
+
+            try
+            {
+                var request = WebRequest.CreateHttp(debug_data.GetSymbolPath(_symbol_server_path.AbsoluteUri));
+                using (var response = request.GetResponse())
+                {
+                    Directory.CreateDirectory(Path.GetDirectoryName(cache_path));
+                    using (var file = File.OpenWrite(cache_path))
+                    {
+                        response.GetResponseStream().CopyTo(file);
+                    }
+                }
+                return true;
+            }
+            catch
+            {
+                return false;
+            }
+        }
+
         private bool SymDebugCallback(
             IntPtr hProcess,
             DbgHelpCallbackActionCode ActionCode,
@@ -733,16 +804,51 @@ namespace NtApiDotNet.Win32.Debugger
                 }
             }
 
-            switch (ActionCode)
+            if (_enable_symsrv_fallback)
             {
-                case DbgHelpCallbackActionCode.CBA_DEFERRED_SYMBOL_LOAD_START:
-                    {
-                        var load_evt = (IMAGEHLP_DEFERRED_SYMBOL_LOADW)Marshal.PtrToStructure(CallbackData, typeof(IMAGEHLP_DEFERRED_SYMBOL_LOADW));
-                        return false;
-                    }
+                switch (ActionCode)
+                {
+                    case DbgHelpCallbackActionCode.CBA_DEFERRED_SYMBOL_LOAD_START:
+                        {
+                            var load_evt = (IMAGEHLP_DEFERRED_SYMBOL_LOADW)Marshal.PtrToStructure(CallbackData, typeof(IMAGEHLP_DEFERRED_SYMBOL_LOADW));
+                            return CheckOrDownloadSymbolFile(load_evt.FileName);
+                        }
+                }
             }
 
             return false;
+        }
+
+        private string GetHomeDirectory(HomeDirectoryType type)
+        {
+            StringBuilder builder = new StringBuilder(260);
+            if (!_sym_get_home_directory(type, builder, new IntPtr(260)))
+                return string.Empty;
+            return builder.ToString();
+        }
+
+        private Tuple<string, Uri> GetFallbackSymbolPaths(string symbol_path)
+        {
+            string cache_path = null;
+            Uri server_path = new Uri(DEFAULT_SYMSRV);
+
+            string[] parts = symbol_path.Split(';');
+            foreach (var str in parts)
+            {
+                if (str.StartsWith("srv*"))
+                {
+                    string uri = str.Substring(4);
+                    if (!Uri.TryCreate(uri, UriKind.Absolute, out Uri srv_path))
+                        continue;
+                    if (srv_path.Scheme != "http" && srv_path.Scheme != "https")
+                        continue;
+                }
+                else if (Directory.Exists(str))
+                {
+                    cache_path = Path.GetFullPath(str);
+                }
+            }
+            return Tuple.Create(cache_path, server_path);
         }
 
         #endregion
@@ -764,6 +870,10 @@ namespace NtApiDotNet.Win32.Debugger
 
         public SymbolLoadedModule GetModuleForAddress(IntPtr address, bool refresh)
         {
+            var mod_info = GetModuleInfo(address.ToInt64());
+            if (!string.IsNullOrEmpty(mod_info.ImageName))
+                return new SymbolLoadedModule(mod_info, this);
+
             long check_addr = address.ToInt64();
 
             foreach (SymbolLoadedModule module in GetLoadedModules(refresh))
@@ -897,7 +1007,7 @@ namespace NtApiDotNet.Win32.Debugger
                     }
                     else
                     {
-                        loaded_module = new SymbolLoadedModule(string.Empty, new IntPtr(result.ModBase), 0, this);
+                        loaded_module = new SymbolLoadedModule(string.Empty, new IntPtr(result.ModBase), 0, string.Empty, true, this);
                     }
                     TypeInformationCache type_cache = new TypeInformationCache();
                     var ret = CreateType(type_cache, result.Tag, result.ModBase, result.TypeIndex, result.Size, loaded_module, GetNameFromSymbolInfo(sym_info));
@@ -920,6 +1030,35 @@ namespace NtApiDotNet.Win32.Debugger
             type_cache.FixupPointerTypes();
             return symbols;
         }
+
+        public TypeInformation GetTypeForSymbolByName(string name)
+        {
+            var symbol = GetSymbolInfoForName(name);
+            if (symbol == null)
+            {
+                return null;
+            }
+
+            TypeInformationCache type_cache = new TypeInformationCache();
+            var ret = CreateType(type_cache, symbol.Tag, symbol.Module.BaseAddress.ToInt64(), symbol.TypeIndex, symbol.Size, symbol.Module, symbol.Name, symbol.Address);
+            type_cache.FixupPointerTypes();
+            return ret;
+        }
+
+        public TypeInformation GetTypeForSymbolByAddress(IntPtr address)
+        {
+            var symbol = GetSymbolInfoForAddress(address);
+            if (symbol == null)
+            {
+                return null;
+            }
+
+            TypeInformationCache type_cache = new TypeInformationCache();
+            var ret = CreateType(type_cache, symbol.Tag, symbol.Module.BaseAddress.ToInt64(), symbol.TypeIndex, symbol.Size, symbol.Module, symbol.Name, symbol.Address);
+            type_cache.FixupPointerTypes();
+            return ret;
+        }
+
         #endregion
 
         #region Internals Members
@@ -950,12 +1089,23 @@ namespace NtApiDotNet.Win32.Debugger
             GetFunc(ref _sym_from_index);
             GetFunc(ref _sym_enum_symbols);
             GetFunc(ref _sym_set_context);
+            GetFunc(ref _sym_get_home_directory);
 
             _trace_writer = trace_writer ?? new TraceTextWriter();
             SymOptions options = SymOptions.INCLUDE_32BIT_MODULES | SymOptions.UNDNAME | SymOptions.DEFERRED_LOADS;
+            _enable_symsrv_fallback = flags.HasFlagSet(SymbolResolverFlags.SymSrvFallback) && !CheckForSymsrv(_dbghelp_lib.FullPath);
             _trace_symbol_loading = flags.HasFlagSet(SymbolResolverFlags.TraceSymbolLoading);
             if (_trace_symbol_loading)
             {
+                options |= SymOptions.DEBUG;
+            }
+            if (_enable_symsrv_fallback)
+            {
+                var srv = GetFallbackSymbolPaths(symbol_path);
+                _symbol_cache_path = srv.Item1;
+                _symbol_server_path = srv.Item2;
+                if (string.IsNullOrEmpty(_symbol_cache_path))
+                    throw new ArgumentException("Must specify an existing local path in the symbol path to store downloaded symbols.");
                 options |= SymOptions.DEBUG;
             }
             if (flags.HasFlagSet(SymbolResolverFlags.DisableExportSymbols))
@@ -991,39 +1141,11 @@ namespace NtApiDotNet.Win32.Debugger
                 }
             }
 
-            if (_trace_symbol_loading)
+            if (_trace_symbol_loading || _enable_symsrv_fallback)
             {
                 _callback_handler = DbgHelpDebugCallbackHandler.GetInstance(_dbghelp_lib);
                 _callback_handler.RegisterHandler(Handle, SymDebugCallback);
             }
-        }
-
-        public TypeInformation GetTypeForSymbolByName(string name)
-        {
-            var symbol = GetSymbolInfoForName(name);
-            if (symbol == null)
-            {
-                return null;
-            }
-
-            TypeInformationCache type_cache = new TypeInformationCache();
-            var ret = CreateType(type_cache, symbol.Tag, symbol.Module.BaseAddress.ToInt64(), symbol.TypeIndex, symbol.Size, symbol.Module, symbol.Name, symbol.Address);
-            type_cache.FixupPointerTypes();
-            return ret;
-        }
-
-        public TypeInformation GetTypeForSymbolByAddress(IntPtr address)
-        {
-            var symbol = GetSymbolInfoForAddress(address);
-            if (symbol == null)
-            {
-                return null;
-            }
-
-            TypeInformationCache type_cache = new TypeInformationCache();
-            var ret = CreateType(type_cache, symbol.Tag, symbol.Module.BaseAddress.ToInt64(), symbol.TypeIndex, symbol.Size, symbol.Module, symbol.Name, symbol.Address);
-            type_cache.FixupPointerTypes();
-            return ret;
         }
 
         #endregion
@@ -1037,7 +1159,10 @@ namespace NtApiDotNet.Win32.Debugger
             {
                 disposedValue = true;
                 _callback_handler?.RemoveHandler(Handle);
-                _sym_cleanup?.Invoke(Handle);
+                if (!Handle.IsClosed)
+                {
+                    _sym_cleanup?.Invoke(Handle);
+                }
                 _dbghelp_lib?.Close();
                 Process?.Dispose();
             }

@@ -938,7 +938,7 @@ namespace NtApiDotNet.Win32
           [Out] OptionalInt32 lpdwTagId,
           string lpDependencies,
           string lpServiceStartName,
-          IntPtr lpPassword
+          SecureStringMarshalBuffer lpPassword
         );
 
         [DllImport("Advapi32.dll", SetLastError = true)]
@@ -984,7 +984,7 @@ namespace NtApiDotNet.Win32
             [Out] OptionalInt32 lpdwTagId,
             string lpDependencies,
             string lpServiceStartName,
-            IntPtr lpPassword,
+            SecureStringMarshalBuffer lpPassword,
             string lpDisplayName
         );
 
@@ -1022,7 +1022,7 @@ namespace NtApiDotNet.Win32
         internal static extern bool StartService(
           SafeServiceHandle hService,
           int dwNumServiceArgs,
-          [MarshalAs(UnmanagedType.LPArray)] string[] lpServiceArgVectors
+          [MarshalAs(UnmanagedType.LPArray, ArraySubType = UnmanagedType.LPWStr)] string[] lpServiceArgVectors
         );
 
         [DllImport("kernel32.dll", SetLastError = true)]

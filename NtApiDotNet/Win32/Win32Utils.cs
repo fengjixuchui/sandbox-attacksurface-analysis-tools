@@ -199,7 +199,7 @@ namespace NtApiDotNet.Win32
         public static string GetImagePathFromCommandLine(string command_line)
         {
             command_line = command_line.Trim();
-            if (File.Exists(command_line))
+            if (command_line.IndexOfAny(Path.GetInvalidFileNameChars()) < 0 && File.Exists(command_line))
             {
                 return command_line;
             }
@@ -314,6 +314,16 @@ namespace NtApiDotNet.Win32
             if (result)
                 return Win32Error.SUCCESS;
             return GetLastWin32Error();
+        }
+
+        internal static NtResult<T> CreateResultFromDosError<T>(bool throw_on_error)
+        {
+            return GetLastWin32Error().CreateResultFromDosError<T>(throw_on_error);
+        }
+
+        internal static NtStatus ToNtException(this bool result, bool throw_on_error)
+        {
+            return GetLastWin32Error(result).ToNtException(throw_on_error);
         }
 
         internal static NtStatus ToHresult(this Win32Error error)

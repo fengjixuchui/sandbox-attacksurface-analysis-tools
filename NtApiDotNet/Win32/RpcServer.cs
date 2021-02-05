@@ -14,6 +14,7 @@
 
 using NtApiDotNet.Ndr;
 using NtApiDotNet.Utilities.Memory;
+using NtApiDotNet.Win32.Debugger;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -282,8 +283,10 @@ namespace NtApiDotNet.Win32
                 var offsets = sections.SelectMany(s => FindRpcServerInterfaces(s, flags.HasFlagSet(RpcServerParserFlags.ParseClients)));
                 if (offsets.Any())
                 {
+                    SymbolResolverFlags symbol_flags = flags.HasFlagSet(RpcServerParserFlags.SymSrvFallback) ? SymbolResolverFlags.SymSrvFallback : SymbolResolverFlags.None;
+
                     using (var sym_resolver = !flags.HasFlagSet(RpcServerParserFlags.IgnoreSymbols) ? SymbolResolver.Create(NtProcess.Current,
-                            dbghelp_path, symbol_path) : null)
+                            dbghelp_path, symbol_path, symbol_flags, null) : null)
                     {
                         NdrParserFlags parser_flags = NdrParserFlags.IgnoreUserMarshal;
                         if (flags.HasFlagSet(RpcServerParserFlags.ResolveStructureNames))
@@ -375,9 +378,9 @@ namespace NtApiDotNet.Win32
             }
         }
 
-        private static Dictionary<string, RunningService> GetExesToServices()
+        private static Dictionary<string, Win32Service> GetExesToServices()
         {
-            Dictionary<string, RunningService> services = new Dictionary<string, RunningService>(StringComparer.OrdinalIgnoreCase);
+            Dictionary<string, Win32Service> services = new Dictionary<string, Win32Service>(StringComparer.OrdinalIgnoreCase);
             foreach (var entry in ServiceUtils.GetServices())
             {
                 services[entry.ImagePath] = entry;
@@ -390,7 +393,7 @@ namespace NtApiDotNet.Win32
             return services;
         }
 
-        private static Lazy<Dictionary<string, RunningService>> _exes_to_service = new Lazy<Dictionary<string, RunningService>>(GetExesToServices);
+        private static Lazy<Dictionary<string, Win32Service>> _exes_to_service = new Lazy<Dictionary<string, Win32Service>>(GetExesToServices);
 
         private RpcServer(NdrRpcServerInterface server, IEnumerable<NdrComplexTypeReference> complex_types, string filepath, long offset, bool client)
         {

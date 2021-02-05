@@ -612,11 +612,11 @@ namespace NtApiDotNet
             return new CachedEnumerable<T>(enumerable);
         }
 
-        internal static bool IsWindows7OrLess => Environment.OSVersion.Version < new Version(6, 2);
+        internal static bool IsWindows7OrLess => NtSystemInfo.OSVersion.Version < new Version(6, 2);
 
-        internal static bool IsWindows8OrLess => Environment.OSVersion.Version < new Version(6, 3);
+        internal static bool IsWindows8OrLess => NtSystemInfo.OSVersion.Version < new Version(6, 3);
 
-        internal static bool IsWindows81OrLess => Environment.OSVersion.Version < new Version(6, 4);
+        internal static bool IsWindows81OrLess => NtSystemInfo.OSVersion.Version < new Version(6, 4);
 
         internal static SupportedVersion SupportedVersion
         {
@@ -628,7 +628,7 @@ namespace NtApiDotNet
                     return SupportedVersion.Windows8;
                 if (IsWindows81OrLess)
                     return SupportedVersion.Windows81;
-                Version ver = Environment.OSVersion.Version;
+                Version ver = NtSystemInfo.OSVersion.Version;
                 if (ver.Major != 10)
                 {
                     return SupportedVersion.Unknown;
@@ -838,19 +838,6 @@ namespace NtApiDotNet
         internal static string[] ParseMultiString(byte[] data)
         {
             return Encoding.Unicode.GetString(data).Split(new char[] { '\0' }, StringSplitOptions.RemoveEmptyEntries);
-        }
-
-        internal static T GetEnumAttribute<T>(this Enum value) where T : Attribute
-        {
-            MemberInfo member = value.GetType().GetMember(value.ToString()).FirstOrDefault();
-            if (member == null)
-                return null;
-            return member.GetCustomAttribute<T>();
-        }
-
-        internal static string GetSDKName(this Enum value)
-        {
-            return GetEnumAttribute<SDKNameAttribute>(value)?.Name ?? string.Empty;
         }
     }
 }
