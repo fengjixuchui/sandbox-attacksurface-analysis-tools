@@ -6464,7 +6464,7 @@ function Start-AccessibleScheduledTask {
         [parameter(Mandatory, Position = 0)]
         [NtObjectManager.Cmdlets.Accessible.ScheduledTaskAccessCheckResult]$Task,
         [string]$User,
-        [NtObjectManager.Cmdlets.Accessible.TaskRunFlags]$Flags = 0,
+        [NtObjectManager.Utils.ScheduledTask.TaskRunFlags]$Flags = 0,
         [int]$SessionId,
         [string[]]$Arguments
     )
@@ -6999,9 +6999,9 @@ function Send-NtWindowMessage {
 
 <#
 .SYNOPSIS
-Outputs a hex dump for a byte array.
+Formats a hex dump for a byte array.
 .DESCRIPTION
-This cmdlet converts a byte array to a hex dump.
+This cmdlet converts a byte array to a hex dump string. If invoked as Out-HexDump will write the to the console.
 .PARAMETER Bytes
 The bytes to convert.
 .PARAMETER ShowHeader
@@ -7025,11 +7025,13 @@ byte[]
 .OUTPUTS
 String
 #>
-function Out-HexDump {
+function Format-HexDump {
     [CmdletBinding(DefaultParameterSetName = "FromBytes")]
     Param(
         [Parameter(Mandatory, Position = 0, ValueFromPipeline, ParameterSetName = "FromBytes")]
-        [byte[]]$Bytes,
+        [Alias("Bytes")]
+        [AllowEmptyCollection()]
+        [byte[]]$Byte,
         [Parameter(Mandatory, Position = 0, ParameterSetName = "FromFile")]
         [string]$Path,
         [Parameter(Mandatory, Position = 0, ParameterSetName = "FromBuffer")]
@@ -7055,7 +7057,10 @@ function Out-HexDump {
             $ShowAscii = $true
             $ShowAddress = $true
         }
-        switch ($PsCmdlet.ParameterSetName) {
+
+        $WriteToHost = $PSCmdlet.MyInvocation.InvocationName -eq "Out-HexDump"
+
+        switch ($PSCmdlet.ParameterSetName) {
             "FromBytes" {
                 $builder = [NtApiDotNet.Utilities.Text.HexDumpBuilder]::new($ShowHeader, $ShowAddress, $ShowAscii, $HideRepeating, $BaseAddress);
             }
@@ -7069,9 +7074,9 @@ function Out-HexDump {
     }
 
     PROCESS {
-        switch ($PsCmdlet.ParameterSetName) {
+        switch ($PSCmdlet.ParameterSetName) {
             "FromBytes" {
-                $builder.Append($Bytes)
+                $builder.Append($Byte)
             }
             "FromFile" {
                 $Path = Resolve-Path $Path -ErrorAction Stop
@@ -7082,9 +7087,16 @@ function Out-HexDump {
 
     END {
         $builder.Complete()
-        $builder.ToString() | Write-Output
+        $output = $builder.ToString()
+        if ($WriteToHost) {
+            $output | Write-Host
+        } else {
+            $output | Write-Output
+        }
     }
 }
+
+Set-Alias -Name Out-HexDump -Value Format-HexDump
 
 <#
 .SYNOPSIS
@@ -7494,13 +7506,13 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.AuthenticationPackage
 .EXAMPLE
-Get-AuthPackage
+Get-LsaPackage
 Get all authentication packages.
 .EXAMPLE
-Get-AuthPackage -Name NTLM
+Get-LsaPackage -Name NTLM
 Get the NTLM authentication package.
 #>
-function Get-AuthPackage {
+function Get-LsaPackage {
     [CmdletBinding(DefaultParameterSetName = "All")]
     Param(
         [Parameter(Position = 0, ParameterSetName = "FromName")]
@@ -7533,10 +7545,10 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.UserCredentials
 .EXAMPLE
-$user_creds = Read-UserCredentials
+$user_creds = Read-LsaCredential
 Read user credentials from the shell.
 #>
-function Read-AuthCredential {
+function Read-LsaCredential {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0)]
@@ -7583,10 +7595,10 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.UserCredentials
 .EXAMPLE
-$user_creds = Get-UserCredentials -UserName "ABC" -Domain "DOMAIN" -Password "pwd"
+$user_creds = Get-LsaCredential -UserName "ABC" -Domain "DOMAIN" -Password "pwd"
 Get user credentials from components.
 #>
-function Get-AuthCredential {
+function Get-LsaCredential {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0)]
@@ -7647,16 +7659,16 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.CredentialHandle
 .EXAMPLE
-$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Both
+$h = New-LsaCredentialHandle -Package "NTLM" -UseFlag Both
 Get a credential handle for the NTLM package for both directions.
 .EXAMPLE
-$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Both -UserName "user" -Password "pwd"
+$h = New-LsaCredentialHandle -Package "NTLM" -UseFlag Both -UserName "user" -Password "pwd"
 Get a credential handle for the NTLM package for both directions with a username password.
 .EXAMPLE
-$h = Get-AuthCredentialHandle -Package "NTLM" -UseFlag Inbound -ReadCredential
+$h = New-LsaCredentialHandle -Package "NTLM" -UseFlag Inbound -ReadCredential
 Get a credential handle for the NTLM package for outbound directions and read credentials from the shell.
 #>
-function Get-AuthCredentialHandle {
+function New-LsaCredentialHandle {
     [CmdletBinding(DefaultParameterSetName="FromCreds")]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7681,10 +7693,10 @@ function Get-AuthCredentialHandle {
 
     if ($PSCmdlet.ParameterSetName -EQ "FromParts") {
         if ($ReadCredential) {
-            $Credential = Read-AuthCredential -UserName $UserName -Domain $Domain `
+            $Credential = Read-LsaCredential -UserName $UserName -Domain $Domain `
                     -Password $Password
         } else {
-            $Credential = Get-AuthCredential -UserName $UserName -Domain $Domain `
+            $Credential = Get-LsaCredential -UserName $UserName -Domain $Domain `
                     -Password $Password -SecurePassword $SecurePassword
         }
     }
@@ -7712,7 +7724,7 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext
 #>
-function Get-AuthClientContext {
+function New-LsaClientContext {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7745,7 +7757,7 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.ServerAuthenticationContext
 #>
-function Get-AuthServerContext {
+function New-LsaServerContext {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7773,7 +7785,7 @@ None
 .OUTPUTS
 bool
 #>
-function Update-AuthClientContext {
+function Update-LsaClientContext {
     [CmdletBinding(DefaultParameterSetName="FromToken")]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7806,7 +7818,7 @@ None
 .OUTPUTS
 bool
 #>
-function Update-AuthServerContext {
+function Update-LsaServerContext {
     [CmdletBinding(DefaultParameterSetName="FromToken")]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7836,7 +7848,7 @@ None
 .OUTPUTS
 NtApiDotNet.NtToken
 #>
-function Get-AuthAccessToken {
+function Get-LsaAccessToken {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7861,7 +7873,7 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
 #>
-function Get-AuthToken {
+function Get-LsaAuthToken {
     [CmdletBinding(DefaultParameterSetName="FromContext")]
     Param(
         [Parameter(Position = 0, Mandatory, ParameterSetName="FromBytes")]
@@ -7891,7 +7903,7 @@ None
 .OUTPUTS
 bool
 #>
-function Test-AuthContext {
+function Test-LsaContext {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -7920,7 +7932,7 @@ None
 .OUTPUTS
 string
 #>
-function Format-AuthToken {
+function Format-LsaAuthToken {
     [CmdletBinding(DefaultParameterSetName="FromContext")]
     Param(
         [Parameter(Position = 0, Mandatory, ValueFromPipeline, ParameterSetName="FromToken")]
@@ -7967,7 +7979,7 @@ None
 .OUTPUTS
 None
 #>
-function Export-AuthToken {
+function Export-LsaAuthToken {
     [CmdletBinding(DefaultParameterSetName="FromContext")]
     Param(
         [Parameter(Position = 0, Mandatory, ParameterSetName="FromToken")]
@@ -7997,7 +8009,7 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
 #>
-function Import-AuthToken {
+function Import-LsaAuthToken {
     [CmdletBinding(DefaultParameterSetName="FromContext")]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -10374,7 +10386,7 @@ None
 .OUTPUTS
 NtApiDotNet.Win32.Security.Authentication.AuthenticationToken
 #>
-function Unprotect-AuthToken {
+function Unprotect-LsaAuthToken {
     [CmdletBinding()]
     Param(
         [Parameter(Position = 0, Mandatory)]
@@ -13376,3 +13388,297 @@ function Get-Win32ServiceConfig {
         }
     }
 }
+
+<#
+.SYNOPSIS
+Get the configuration for a service or all services.
+.DESCRIPTION
+This cmdlet gets the configuration for a service or all services.
+.PARAMETER Name
+Specify the name of the service.
+.PARAMETER ServiceType
+Specify the types of services to return when querying all services. Defaults to all user services.
+.PARAMETER MachineName
+Specify the target computer.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.ServiceInformation[]
+#>
+function Get-Win32ServiceConfig {
+    [CmdletBinding(DefaultParameterSetName="All")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromName")]
+        [string]$Name,
+        [parameter(ParameterSetName = "All")]
+        [NtApiDotNet.Win32.ServiceType]$ServiceType = [NtApiDotNet.Win32.ServiceUtils]::GetServiceTypes(),
+        [string]$MachineName
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromName" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceInformation($MachineName, $Name)
+        }
+        "All" {
+            [NtApiDotNet.Win32.ServiceUtils]::GetServiceInformation($MachineName, $ServiceType) | Write-Output
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Get a signature from an authentication context for some message.
+.DESCRIPTION
+This cmdlet uses an authentication context to generate a message signature. It can be verified using Test-LsaContextSignature.
+.PARAMETER Context
+Specify the authentication context to use.
+.PARAMETER Message
+Specify message to sign.
+.PARAMETER SequenceNumber
+Specify the sequence number for the signature to prevent replay.
+.PARAMETER Buffer
+Specify the list of buffers to sign.
+.INPUTS
+byte[]
+.OUTPUTS
+byte[]
+#>
+function Get-LsaContextSignature {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName="FromBytes")]
+        [byte[]]$Message,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [parameter(Position = 2)]
+        [int]$SequenceNumber = 0
+    )
+
+    BEGIN {
+        $sig_data = New-Object byte[] -ArgumentList 0
+    }
+
+    PROCESS {
+        if ($PSCmdlet.ParameterSetName -eq "FromBytes") {
+            $sig_data += $Message
+        }
+    }
+
+    END {
+        switch($PSCmdlet.ParameterSetName) {
+            "FromBytes" {
+                $Context.MakeSignature($sig_data, $SequenceNumber)
+            } 
+            "FromBuffers" {
+                $Context.MakeSignature($Buffer, $SequenceNumber)
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Verify a signature from an authentication context for some message.
+.DESCRIPTION
+This cmdlet uses an authentication context to verify a  signature.
+.PARAMETER Context
+Specify the authentication context to use.
+.PARAMETER Message
+Specify message to verify.
+.PARAMETER Signature
+Specify signature to verify.
+.PARAMETER SequenceNumber
+Specify the sequence number for the signature to prevent replay.
+.PARAMETER Buffer
+Specify the list of buffers to sign.
+.INPUTS
+None
+.OUTPUTS
+bool
+#>
+function Test-LsaContextSignature {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBytes")]
+        [byte[]]$Message,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [parameter(Mandatory, Position = 2)]
+        [byte[]]$Signature,
+        [parameter(Position = 3)]
+        [int]$SequenceNumber = 0
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromBytes" {
+            $Context.VerifySignature($Message, $Signature, $SequenceNumber)
+        }
+        "FromBuffers" {
+            $Context.VerifySignature($Buffer, $Signature, $SequenceNumber)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Encrypt some message for an authentication context.
+.DESCRIPTION
+This cmdlet uses an authentication context to encrypt some message. It returns both the encrypted message and a signature.
+It can be decrypted using Unprotect-LsaContextData. If you use buffers only the signature is returned from the command
+and the encrypted data is updated in place.
+.PARAMETER Context
+Specify the authentication context to use.
+.PARAMETER Message
+Specify message to encrypt.
+.PARAMETER SequenceNumber
+Specify the sequence number for the encryption to prevent replay.
+.INPUTS
+byte[]
+.OUTPUTS
+NtApiDotNet.Win32.Security.Authentication.EncryptedMessage
+#>
+function Protect-LsaContextMessage {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [parameter(Mandatory, Position = 1, ValueFromPipeline, ParameterSetName="FromBytes")]
+        [byte[]]$Message,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [parameter(Position = 2)]
+        [int]$SequenceNumber = 0
+    )
+
+    BEGIN {
+        $enc_data = New-Object byte[] -ArgumentList 0
+    }
+
+    PROCESS {
+        if ($PSCmdlet.ParameterSetName -eq "FromBytes") {
+            $enc_data += $Message
+        }
+    }
+
+    END {
+        switch($PSCmdlet.ParameterSetName) {
+            "FromBytes" {
+                $Context.EncryptMessage($enc_data, $SequenceNumber)
+            }
+            "FromBuffers" {
+                $Context.EncryptMessage($Buffer, $SequenceNumber)
+            }
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Decrypt some message from an authentication context.
+.DESCRIPTION
+This cmdlet uses an authentication context to decrypt some message as well as verify a signature.
+If using buffers the data is decrypted in place.
+.PARAMETER Context
+Specify the authentication context to use.
+.PARAMETER Message
+Specify message to decrypt.
+.PARAMETER Signature
+Specify signature to verify.
+.PARAMETER SequenceNumber
+Specify the sequence number for the encryption to prevent replay.
+.INPUTS
+None
+.OUTPUTS
+byte[]
+#>
+function Unprotect-LsaContextMessage {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    param (
+        [parameter(Mandatory, Position = 0)]
+        [NtApiDotNet.Win32.Security.Authentication.IAuthenticationContext]$Context,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBytes")]
+        [byte[]]$Message,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [parameter(Mandatory, Position = 2)]
+        [byte[]]$Signature,
+        [parameter(Position = 3)]
+        [int]$SequenceNumber = 0
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromBytes" {
+            $msg = [NtApiDotNet.Win32.Security.Authentication.EncryptedMessage]::new($Message, $Signature)
+            $Context.DecryptMessage($msg, $SequenceNumber)
+        }
+        "FromBuffers" {
+            $Context.DecryptMessage($Buffer, $Signature, $SequenceNumber)
+        }
+    }
+}
+
+<#
+.SYNOPSIS
+Create a new security buffer based on existing data or for output.
+.DESCRIPTION
+This cmdlet creates a new security object either containing existing data for input/output or and output only buffer.
+.PARAMETER Type
+Specify the type of the buffer.
+.PARAMETER Byte
+Specify the existing bytes for the buffer.
+.PARAMETER Size
+Specify the size of a buffer for an output buffer.
+.PARAMETER ChannelBinding
+Specify a channel binding token.
+.INPUTS
+None
+.OUTPUTS
+NtApiDotNet.Win32.Security.Buffers.SecurityBuffer
+#>
+function New-LsaSecurityBuffer {
+    [CmdletBinding(DefaultParameterSetName="FromBytes")]
+    param (
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromBytes")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromSize")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBufferType]$Type,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromBytes")]
+        [byte[]]$Byte,
+        [parameter(Mandatory, Position = 1, ParameterSetName="FromSize")]
+        [int]$Size,
+        [parameter(Mandatory, ParameterSetName="FromChannelBinding")]
+        [byte[]]$ChannelBinding
+    )
+
+    switch($PSCmdlet.ParameterSetName) {
+        "FromBytes" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferInOut]::new($Type, $Byte)
+        }
+        "FromSize" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferOut]::new($Type, $Size)
+        }
+        "FromChannelBinding" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferChannelBinding]::new($ChannelBinding)
+        }
+    }
+}
+
+# Alias old functions. Remove eventually.
+Set-Alias -Name Get-AuthPackage -Value Get-LsaPackage
+Set-Alias -Name Read-AuthCredential -Value Read-LsaCredential
+Set-Alias -Name Get-AuthCredential -Value Get-LsaCredential
+Set-Alias -Name Get-AuthCredentialHandle -Value New-LsaCredentialHandle
+Set-Alias -Name Get-AuthClientContext -Value New-LsaClientContext
+Set-Alias -Name Get-AuthServerContext -Value New-LsaServerContext
+Set-Alias -Name Update-AuthClientContext -Value Update-LsaClientContext
+Set-Alias -Name Update-AuthServerContext -Value Update-LsaServerContext
+Set-Alias -Name Get-AuthAccessToken -Value Get-LsaAccessToken
+Set-Alias -Name Get-AuthToken -Value Get-LsaAuthToken
+Set-Alias -Name Test-AuthContext -Value Test-LsaContext
+Set-Alias -Name Format-AuthToken -Value Format-LsaAuthToken
+Set-Alias -Name Export-AuthToken -Value Export-LsaAuthToken
+Set-Alias -Name Import-AuthToken -Value Import-LsaAuthToken
+Set-Alias -Name Unprotect-AuthToken -Value Unprotect-LsaAuthToken

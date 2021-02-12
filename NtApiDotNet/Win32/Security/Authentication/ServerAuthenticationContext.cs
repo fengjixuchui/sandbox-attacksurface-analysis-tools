@@ -74,6 +74,11 @@ namespace NtApiDotNet.Win32.Security.Authentication
         public int SecurityTrailerSize => SecurityContextUtils.GetSecurityTrailerSize(_context);
 
         /// <summary>
+        /// Get the name of the authentication package.
+        /// </summary>
+        public string PackageName => SecurityContextUtils.GetPackageName(_context) ?? _creds.PackageName;
+
+        /// <summary>
         /// Get an access token for the authenticated user.
         /// </summary>
         /// <returns>The user's access token.</returns>
@@ -250,6 +255,15 @@ namespace NtApiDotNet.Win32.Security.Authentication
         {
             Dispose(true);
             GC.SuppressFinalize(this);
+        }
+
+        /// <summary>
+        /// Export the security context.
+        /// </summary>
+        /// <returns>The exported security context.</returns>
+        public ExportedSecurityContext Export()
+        {
+            return SecurityContextUtils.ExportContext(_context, SecPkgContextExportFlags.None, _creds.PackageName);
         }
 
         private bool GenServerContext(AuthenticationToken token)
