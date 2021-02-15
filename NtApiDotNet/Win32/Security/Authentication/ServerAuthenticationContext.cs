@@ -16,6 +16,7 @@ using NtApiDotNet.Win32.Security.Buffers;
 using NtApiDotNet.Win32.Security.Native;
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 
 namespace NtApiDotNet.Win32.Security.Authentication
@@ -25,14 +26,60 @@ namespace NtApiDotNet.Win32.Security.Authentication
     /// </summary>
     public sealed class ServerAuthenticationContext : IDisposable, IAuthenticationContext, IServerAuthenticationContext
     {
+        #region Private Members
         private readonly CredentialHandle _creds;
-        private readonly SecHandle _context;
         private readonly AcceptContextReqFlags _req_flags;
         private readonly SecDataRep _data_rep;
         private readonly byte[] _channel_binding;
-        private bool _new_context;
+        private SecHandle _context;
         private int _token_count;
 
+        private void CallAccept(List<SecurityBuffer> input_buffers)
+        {
+            var token_buffer = new SecurityBufferAllocMem(SecurityBufferType.Token);
+            var output_buffers = new[] { token_buffer };
+
+            if (_channel_binding != null)
+            {
+                input_buffers.Add(new SecurityBufferChannelBinding(_channel_binding));
+            }
+
+            LargeInteger expiry = new LargeInteger();
+            SecHandle new_context = _context ?? new SecHandle();
+            SecStatusCode result = SecurityContextUtils.AcceptSecurityContext(_creds, _context,
+                _req_flags | AcceptContextReqFlags.AllocateMemory, _data_rep, input_buffers, new_context, output_buffers,
+                out AcceptContextRetFlags context_attr, expiry).CheckResult();
+            _context = new_context;
+            Flags = context_attr & ~AcceptContextRetFlags.AllocatedMemory;
+            Expiry = expiry.QuadPart;
+
+            Token = AuthenticationToken.Parse(_creds.PackageName, _token_count++, false, token_buffer.ToArray());
+            Done = !(result == SecStatusCode.ContinueNeeded || result == SecStatusCode.CompleteAndContinue);
+        }
+
+
+        private void Dispose(bool _)
+        {
+            if (_context != null)
+            {
+                SecurityNativeMethods.DeleteSecurityContext(_context);
+            }
+        }
+
+        private string GetTargetName()
+        {
+            using (var buffer = new SafeStructureInOutBuffer<SecPkgContext_ClientSpecifiedTarget>())
+            {
+                var result = SecurityNativeMethods.QueryContextAttributesEx(_context, SECPKG_ATTR.CLIENT_SPECIFIED_TARGET, buffer, buffer.Length);
+                if (result == SecStatusCode.Success)
+                    return Marshal.PtrToStringUni(buffer.Result.sTargetName);
+            }
+            return string.Empty;
+        }
+
+        #endregion
+
+        #region Public Properties
         /// <summary>
         /// The current authentication token.
         /// </summary>
@@ -61,7 +108,7 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// <summary>
         /// Get the Session Key for this context.
         /// </summary>
-        public byte[] SessionKey => GetSessionKey(_context);
+        public byte[] SessionKey => SecurityContextUtils.GetSessionKey(_context);
 
         /// <summary>
         /// Get the maximum signature size of this context.
@@ -77,7 +124,9 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Get the name of the authentication package.
         /// </summary>
         public string PackageName => SecurityContextUtils.GetPackageName(_context) ?? _creds.PackageName;
+        #endregion
 
+        #region Public Methods
         /// <summary>
         /// Get an access token for the authenticated user.
         /// </summary>
@@ -99,52 +148,44 @@ namespace NtApiDotNet.Win32.Security.Authentication
         }
 
         /// <summary>
-        /// Constructor.
-        /// </summary>
-        /// <param name="creds">Credential handle.</param>
-        /// <param name="req_attributes">Request attribute flags.</param>
-        /// <param name="channel_binding">Optional channel binding token.</param>
-        /// <param name="data_rep">Data representation.</param>
-        public ServerAuthenticationContext(CredentialHandle creds, AcceptContextReqFlags req_attributes,
-            byte[] channel_binding, SecDataRep data_rep)
-        {
-            _creds = creds;
-            _context = new SecHandle();
-            _req_flags = req_attributes & ~AcceptContextReqFlags.AllocateMemory;
-            _data_rep = data_rep;
-            _new_context = true;
-            _token_count = 0;
-            _channel_binding = channel_binding;
-        }
-
-        /// <summary>
-        /// Constructor.
-        /// </summary>
-        /// <param name="creds">Credential handle.</param>
-        /// <param name="req_attributes">Request attribute flags.</param>
-        /// <param name="data_rep">Data representation.</param>
-        public ServerAuthenticationContext(CredentialHandle creds, 
-            AcceptContextReqFlags req_attributes, SecDataRep data_rep)
-            : this(creds, req_attributes, null, data_rep)
-        {
-        }
-
-        /// <summary>
-        /// Constructor.
-        /// </summary>
-        /// <param name="creds">Credential handle.</param>
-        public ServerAuthenticationContext(CredentialHandle creds) 
-            : this(creds, AcceptContextReqFlags.None, SecDataRep.Native)
-        {
-        }
-
-        /// <summary>
         /// Continue the authentication with the client token.
         /// </summary>
         /// <param name="token">The client token to continue authentication.</param>
         public void Continue(AuthenticationToken token)
         {
-            Done = GenServerContext(token);
+            if (token is null)
+            {
+                throw new ArgumentNullException(nameof(token));
+            }
+
+            var input_buffers = new List<SecurityBuffer>
+            {
+                new SecurityBufferInOut(SecurityBufferType.Token, token.ToArray())
+            };
+
+            CallAccept(input_buffers);
+        }
+
+        /// <summary>
+        /// Continue the authentication..
+        /// </summary>
+        /// <param name="input_buffers">The input buffers for the continue.</param>
+        public void Continue(IEnumerable<SecurityBuffer> input_buffers)
+        {
+            if (input_buffers is null)
+            {
+                throw new ArgumentNullException(nameof(input_buffers));
+            }
+
+            CallAccept(input_buffers.ToList());
+        }
+
+        /// <summary>
+        /// Continue the authentication. Will not pass any buffers to the accept call.
+        /// </summary>
+        public void Continue()
+        {
+            Continue(new SecurityBuffer[0]);
         }
 
         /// <summary>
@@ -197,23 +238,25 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Encrypt a message for this context.
         /// </summary>
         /// <param name="message">The message to encrypt.</param>
-        /// <param name="sequence_no">The sequence number.</param>
+        /// <param name="quality_of_protection">Quality of protection flags.</param>
         /// <returns>The encrypted message.</returns>
-        public EncryptedMessage EncryptMessage(byte[] message, int sequence_no)
+        /// <param name="sequence_no">The sequence number.</param>
+        public EncryptedMessage EncryptMessage(byte[] message, SecurityQualityOfProtectionFlags quality_of_protection, int sequence_no)
         {
-            return SecurityContextUtils.EncryptMessage(_context, 0, message, sequence_no);
+            return SecurityContextUtils.EncryptMessage(_context, quality_of_protection, message, sequence_no);
         }
 
         /// <summary>
         /// Encrypt a message for this context.
         /// </summary>
         /// <param name="messages">The messages to encrypt.</param>
-        /// <param name="sequence_no">The sequence number.</param>
+        /// <param name="quality_of_protection">Quality of protection flags.</param>
         /// <returns>The signature for the messages.</returns>
         /// <remarks>The messages are encrypted in place. You can add buffers with the ReadOnly flag to prevent them being encrypted.</remarks>
-        public byte[] EncryptMessage(IEnumerable<SecurityBuffer> messages, int sequence_no)
+        /// <param name="sequence_no">The sequence number.</param>
+        public byte[] EncryptMessage(IEnumerable<SecurityBuffer> messages, SecurityQualityOfProtectionFlags quality_of_protection, int sequence_no)
         {
-            return SecurityContextUtils.EncryptMessage(_context, 0, messages, sequence_no);
+            return SecurityContextUtils.EncryptMessage(_context, quality_of_protection, messages, sequence_no);
         }
 
         /// <summary>
@@ -249,6 +292,61 @@ namespace NtApiDotNet.Win32.Security.Authentication
         }
 
         /// <summary>
+        /// Export and delete the current security context.
+        /// </summary>
+        /// <returns>The exported security context.</returns>
+        /// <remarks>The security context will not longer be usable afterwards.</remarks>
+        public ExportedSecurityContext Export()
+        {
+            var context = SecurityContextUtils.ExportContext(_context, SecPkgContextExportFlags.DeleteOld, _creds.PackageName, false);
+            Dispose();
+            return context;
+        }
+
+        #endregion
+
+        #region Constructors
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="creds">Credential handle.</param>
+        /// <param name="req_attributes">Request attribute flags.</param>
+        /// <param name="channel_binding">Optional channel binding token.</param>
+        /// <param name="data_rep">Data representation.</param>
+        public ServerAuthenticationContext(CredentialHandle creds, AcceptContextReqFlags req_attributes,
+            byte[] channel_binding, SecDataRep data_rep)
+        {
+            _creds = creds;
+            _req_flags = req_attributes & ~AcceptContextReqFlags.AllocateMemory;
+            _data_rep = data_rep;
+            _token_count = 0;
+            _channel_binding = channel_binding;
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="creds">Credential handle.</param>
+        /// <param name="req_attributes">Request attribute flags.</param>
+        /// <param name="data_rep">Data representation.</param>
+        public ServerAuthenticationContext(CredentialHandle creds, 
+            AcceptContextReqFlags req_attributes, SecDataRep data_rep)
+            : this(creds, req_attributes, null, data_rep)
+        {
+        }
+
+        /// <summary>
+        /// Constructor.
+        /// </summary>
+        /// <param name="creds">Credential handle.</param>
+        public ServerAuthenticationContext(CredentialHandle creds) 
+            : this(creds, AcceptContextReqFlags.None, SecDataRep.Native)
+        {
+        }
+        #endregion
+
+        #region IDisposable Implementation
+        /// <summary>
         /// Dispose the client context.
         /// </summary>
         public void Dispose()
@@ -258,84 +356,12 @@ namespace NtApiDotNet.Win32.Security.Authentication
         }
 
         /// <summary>
-        /// Export the security context.
-        /// </summary>
-        /// <returns>The exported security context.</returns>
-        public ExportedSecurityContext Export()
-        {
-            return SecurityContextUtils.ExportContext(_context, SecPkgContextExportFlags.None, _creds.PackageName);
-        }
-
-        private bool GenServerContext(AuthenticationToken token)
-        {
-            bool new_context = _new_context;
-            _new_context = false;
-            using (DisposableList list = new DisposableList())
-            {
-                SecBuffer out_sec_buffer = list.AddResource(new SecBuffer(SecurityBufferType.Token, 64*1024));
-                SecBufferDesc out_buffer_desc = list.AddResource(new SecBufferDesc(out_sec_buffer));
-
-                List<SecBuffer> buffers = new List<SecBuffer>();
-                buffers.Add(list.AddResource(new SecBuffer(SecurityBufferType.Token, token.ToArray())));
-                if (_channel_binding != null)
-                {
-                    buffers.Add(list.AddResource(SecBuffer.CreateForChannelBinding(_channel_binding)));
-                }
-                SecBufferDesc in_buffer_desc = list.AddResource(new SecBufferDesc(buffers.ToArray()));
-
-                LargeInteger expiry = new LargeInteger();
-                SecStatusCode result = SecurityNativeMethods.AcceptSecurityContext(_creds.CredHandle, new_context ? null : _context,
-                    in_buffer_desc, _req_flags, _data_rep, _context, out_buffer_desc, out AcceptContextRetFlags context_attr, expiry).CheckResult();
-                Flags = context_attr;
-                Expiry = expiry.QuadPart;
-                if (result == SecStatusCode.CompleteNeeded || result == SecStatusCode.CompleteAndContinue)
-                {
-                    SecurityNativeMethods.CompleteAuthToken(_context, out_buffer_desc).CheckResult();
-                }
-
-                Token = AuthenticationToken.Parse(_creds.PackageName, _token_count++, false, out_buffer_desc.ToArray()[0].ToArray());
-                return !(result == SecStatusCode.ContinueNeeded || result == SecStatusCode.CompleteAndContinue);
-            }
-        }
-
-        private void Dispose(bool _)
-        {
-            if (!_new_context)
-                SecurityNativeMethods.DeleteSecurityContext(_context);
-        }
-
-        /// <summary>
         /// Finalizer.
         /// </summary>
         ~ServerAuthenticationContext()
         {
             Dispose(false);
         }
-
-        private string GetTargetName()
-        {
-            using (var buffer = new SafeStructureInOutBuffer<SecPkgContext_ClientSpecifiedTarget>())
-            {
-                var result = SecurityNativeMethods.QueryContextAttributesEx(_context, SECPKG_ATTR.CLIENT_SPECIFIED_TARGET, buffer, buffer.Length);
-                if (result == SecStatusCode.Success)
-                    return Marshal.PtrToStringUni(buffer.Result.sTargetName);
-            }
-            return string.Empty;
-        }
-
-        internal static byte[] GetSessionKey(SecHandle context)
-        {
-            using (var buffer = new SafeStructureInOutBuffer<SecPkgContext_SessionKey>())
-            {
-                var result = SecurityNativeMethods.QueryContextAttributesEx(context, SECPKG_ATTR.SESSION_KEY, buffer, buffer.Length);
-                if (result == SecStatusCode.Success)
-                {
-                    byte[] ret = new byte[buffer.Result.SessionKeyLength];
-                    Marshal.Copy(buffer.Result.SessionKey, ret, 0, ret.Length);
-                    return ret;
-                }
-            }
-            return new byte[0];
-        }
+        #endregion
     }
 }

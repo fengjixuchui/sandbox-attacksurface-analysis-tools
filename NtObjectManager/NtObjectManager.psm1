@@ -7704,6 +7704,13 @@ function New-LsaCredentialHandle {
     [NtApiDotNet.Win32.Security.Authentication.CredentialHandle]::Create($Principal, $Package, $AuthId, $UseFlag, $Credential) | Write-Output
 }
 
+$package_completer = {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+    (Get-LsaPackage).Name | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object { "'$_'" }
+}
+
+Register-ArgumentCompleter -CommandName New-LsaCredentialHandle -ParameterName Package -ScriptBlock $package_completer
+
 <#
 .SYNOPSIS
 Create a new authentication client.
@@ -7719,6 +7726,8 @@ Optional SPN target.
 Data representation format.
 .PARAMETER ChannelBinding
 Optional channel binding token.
+.PARAMETER NoInit
+Don't initialize the client authentication context.
 .INPUTS
 None
 .OUTPUTS
@@ -7732,11 +7741,12 @@ function New-LsaClientContext {
         [NtApiDotNet.Win32.Security.Authentication.InitializeContextReqFlags]$RequestAttribute = 0,
         [string]$Target,
         [byte[]]$ChannelBinding,
-        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native"
+        [NtApiDotNet.Win32.Security.Authentication.SecDataRep]$DataRepresentation = "Native",
+        [switch]$NoInit
     )
 
     [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]::new($CredHandle, `
-            $RequestAttribute, $Target, $ChannelBinding, $DataRepresentation) | Write-Output
+            $RequestAttribute, $Target, $ChannelBinding, $DataRepresentation, !$NoInit)
 }
 
 <#
@@ -7768,7 +7778,7 @@ function New-LsaServerContext {
     )
 
     [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]::new($CredHandle, `
-            $RequestAttribute, $ChannelBinding, $DataRepresentation) | Write-Output
+            $RequestAttribute, $ChannelBinding, $DataRepresentation)
 }
 
 <#
@@ -7776,14 +7786,20 @@ function New-LsaServerContext {
 Update an authentication client.
 .DESCRIPTION
 This cmdlet updates an authentication client. Returns true if the authentication is complete.
-.PARAMETER Server
+.PARAMETER Client
 The authentication client.
+.PARAMETER Server
+The authentication server to extract token from.
 .PARAMETER Token
 The next authentication token.
+.PARAMETER Buffer
+A list of input buffers.
+.PARAMETER Empty
+Specify to update with no input buffers.
 .INPUTS
 None
 .OUTPUTS
-bool
+None
 #>
 function Update-LsaClientContext {
     [CmdletBinding(DefaultParameterSetName="FromToken")]
@@ -7793,13 +7809,27 @@ function Update-LsaClientContext {
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromToken")]
         [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromContext")]
-        [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]$Server
+        [NtApiDotNet.Win32.Security.Authentication.ServerAuthenticationContext]$Server,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [Parameter(Mandatory, ParameterSetName="FromEmpty")]
+        [switch]$Empty
     )
 
-    if ($PSCmdlet.ParameterSetName -eq "FromContext") {
-        $Token = $Server.Token
+    switch($PSCmdlet.ParameterSetName) {
+        "FromContext" {
+            $Client.Continue($Server.Token)
+        }
+        "FromToken" {
+            $Client.Continue($Token)
+        }
+        "FromBuffers" {
+            $Client.Continue($Buffer)
+        }
+        "FromEmpty" {
+            $Client.Continue()
+        }
     }
-    $Client.Continue($Token)
 }
 
 <#
@@ -7813,10 +7843,14 @@ The authentication server.
 The authentication client to extract token from.
 .PARAMETER Token
 The next authentication token.
+.PARAMETER Buffer
+A list of input buffers.
+.PARAMETER Empty
+Specify to update with no input buffers.
 .INPUTS
 None
 .OUTPUTS
-bool
+None
 #>
 function Update-LsaServerContext {
     [CmdletBinding(DefaultParameterSetName="FromToken")]
@@ -7826,14 +7860,27 @@ function Update-LsaServerContext {
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromContext")]
         [NtApiDotNet.Win32.Security.Authentication.ClientAuthenticationContext]$Client,
         [Parameter(Position = 1, Mandatory, ParameterSetName="FromToken")]
-        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [Parameter(Position = 1, Mandatory, ParameterSetName="FromBuffers")]
+        [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
+        [Parameter(Mandatory, ParameterSetName="FromEmpty")]
+        [switch]$Empty
     )
 
-    if ($PSCmdlet.ParameterSetName -eq "FromContext") {
-        $Token = $Client.Token
+    switch($PSCmdlet.ParameterSetName) {
+        "FromContext" {
+            $Server.Continue($Client.Token)
+        }
+        "FromToken" {
+            $Server.Continue($Token)
+        }
+        "FromBuffers" {
+            $Server.Continue($Buffer)
+        }
+        "FromEmpty" {
+            $Server.Continue()
+        }
     }
-
-    $Server.Continue($Token)
 }
 
 <#
@@ -13536,6 +13583,8 @@ Specify the authentication context to use.
 Specify message to encrypt.
 .PARAMETER SequenceNumber
 Specify the sequence number for the encryption to prevent replay.
+.PARAMETER QualityOfProtection
+Specify flags for the encryption operation. For example wrap but don't encrypt.
 .INPUTS
 byte[]
 .OUTPUTS
@@ -13551,7 +13600,8 @@ function Protect-LsaContextMessage {
         [parameter(Mandatory, Position = 1, ParameterSetName="FromBuffers")]
         [NtApiDotNet.Win32.Security.Buffers.SecurityBuffer[]]$Buffer,
         [parameter(Position = 2)]
-        [int]$SequenceNumber = 0
+        [int]$SequenceNumber = 0,
+        [NtApiDotNet.Win32.Security.Authentication.SecurityQualityOfProtectionFlags]$QualityOfProtection = 0
     )
 
     BEGIN {
@@ -13567,10 +13617,10 @@ function Protect-LsaContextMessage {
     END {
         switch($PSCmdlet.ParameterSetName) {
             "FromBytes" {
-                $Context.EncryptMessage($enc_data, $SequenceNumber)
+                $Context.EncryptMessage($enc_data, $QualityOfProtection, $SequenceNumber)
             }
             "FromBuffers" {
-                $Context.EncryptMessage($Buffer, $SequenceNumber)
+                $Context.EncryptMessage($Buffer, $QualityOfProtection, $SequenceNumber)
             }
         }
     }
@@ -13634,6 +13684,8 @@ Specify the existing bytes for the buffer.
 Specify the size of a buffer for an output buffer.
 .PARAMETER ChannelBinding
 Specify a channel binding token.
+.PARAMETER Token
+Specify a buffer which is an authentication token.
 .INPUTS
 None
 .OUTPUTS
@@ -13644,13 +13696,23 @@ function New-LsaSecurityBuffer {
     param (
         [parameter(Mandatory, Position = 0, ParameterSetName="FromBytes")]
         [parameter(Mandatory, Position = 0, ParameterSetName="FromSize")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromEmpty")]
+        [parameter(Mandatory, Position = 0, ParameterSetName="FromString")]
         [NtApiDotNet.Win32.Security.Buffers.SecurityBufferType]$Type,
         [parameter(Mandatory, Position = 1, ParameterSetName="FromBytes")]
         [byte[]]$Byte,
         [parameter(Mandatory, Position = 1, ParameterSetName="FromSize")]
         [int]$Size,
         [parameter(Mandatory, ParameterSetName="FromChannelBinding")]
-        [byte[]]$ChannelBinding
+        [byte[]]$ChannelBinding,
+        [Parameter(Mandatory, ParameterSetName="FromToken")]
+        [NtApiDotNet.Win32.Security.Authentication.AuthenticationToken]$Token,
+        [parameter(Mandatory, ParameterSetName="FromEmpty")]
+        [switch]$Empty,
+        [parameter(Mandatory, ParameterSetName="FromString")]
+        [string]$String,
+        [parameter(ParameterSetName="FromString")]
+        [string]$Encoding = "Unicode"
     )
 
     switch($PSCmdlet.ParameterSetName) {
@@ -13662,6 +13724,15 @@ function New-LsaSecurityBuffer {
         }
         "FromChannelBinding" {
             [NtApiDotNet.Win32.Security.Buffers.SecurityBufferChannelBinding]::new($ChannelBinding)
+        }
+        "FromToken" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferInOut]::new("Token", $Token.ToArray())
+        }
+        "FromEmpty" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferEmpty]::new($Type)
+        }
+        "FromString" {
+            [NtApiDotNet.Win32.Security.Buffers.SecurityBufferInOut]::new($Type, [System.Text.Encoding]::GetEncoding($Encoding).GetBytes($String))
         }
     }
 }

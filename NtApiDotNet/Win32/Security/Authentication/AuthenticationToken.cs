@@ -13,6 +13,7 @@
 //  limitations under the License.
 
 using NtApiDotNet.Utilities.Text;
+using NtApiDotNet.Win32.Security.Authentication.Digest;
 using NtApiDotNet.Win32.Security.Authentication.Kerberos;
 using NtApiDotNet.Win32.Security.Authentication.Negotiate;
 using NtApiDotNet.Win32.Security.Authentication.Ntlm;
@@ -80,6 +81,9 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// a raw AuthenticationToken.</returns>
         internal static AuthenticationToken Parse(string package_name, int token_count, bool client, byte[] token)
         {
+            if (token.Length == 0)
+                return new AuthenticationToken(token);
+
             if (AuthenticationPackage.CheckNtlm(package_name) 
                 && NtlmAuthenticationToken.TryParse(token, token_count, client, out NtlmAuthenticationToken ntlm_token))
             {
@@ -97,6 +101,12 @@ namespace NtApiDotNet.Win32.Security.Authentication
                 client, out NegotiateAuthenticationToken nego_token))
             {
                 return nego_token;
+            }
+
+            if (AuthenticationPackage.CheckDigest(package_name) &&
+                DigestAuthenticationToken.TryParse(token, out DigestAuthenticationToken digest_token))
+            {
+                return digest_token;
             }
 
             if (ASN1AuthenticationToken.TryParse(token, token_count, 

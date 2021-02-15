@@ -81,18 +81,20 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Encrypt a message for this context.
         /// </summary>
         /// <param name="message">The message to encrypt.</param>
-        /// <param name="sequence_no">The sequence number.</param>
+        /// <param name="quality_of_protection">Quality of protection flags.</param>
         /// <returns>The encrypted message.</returns>
-        EncryptedMessage EncryptMessage(byte[] message, int sequence_no);
+        /// <param name="sequence_no">The sequence number.</param>
+        EncryptedMessage EncryptMessage(byte[] message, SecurityQualityOfProtectionFlags quality_of_protection, int sequence_no);
 
         /// <summary>
         /// Encrypt a message for this context.
         /// </summary>
         /// <param name="messages">The messages to encrypt.</param>
-        /// <param name="sequence_no">The sequence number.</param>
+        /// <param name="quality_of_protection">Quality of protection flags.</param>
         /// <returns>The signature for the messages.</returns>
         /// <remarks>The messages are encrypted in place. You can add buffers with the ReadOnly flag to prevent them being encrypted.</remarks>
-        byte[] EncryptMessage(IEnumerable<SecurityBuffer> messages, int sequence_no);
+        /// <param name="sequence_no">The sequence number.</param>
+        byte[] EncryptMessage(IEnumerable<SecurityBuffer> messages, SecurityQualityOfProtectionFlags quality_of_protection, int sequence_no);
 
         /// <summary>
         /// Decrypt a message for this context.
@@ -112,6 +114,13 @@ namespace NtApiDotNet.Win32.Security.Authentication
         void DecryptMessage(IEnumerable<SecurityBuffer> messages, byte[] signature, int sequence_no);
 
         /// <summary>
+        /// Export and delete the current security context.
+        /// </summary>
+        /// <returns>The exported security context.</returns>
+        /// <remarks>The security context will not longer be usable afterwards.</remarks>
+        ExportedSecurityContext Export();
+
+        /// <summary>
         /// Query the context's package info.
         /// </summary>
         /// <returns>The authentication package info,</returns>
@@ -127,6 +136,17 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// </summary>
         /// <param name="token">The token to continue authentication.</param>
         void Continue(AuthenticationToken token);
+
+        /// <summary>
+        /// Continue the authentication..
+        /// </summary>
+        /// <param name="input_buffers">The input buffers for the continue.</param>
+        void Continue(IEnumerable<SecurityBuffer> input_buffers);
+
+        /// <summary>
+        /// Continue the authentication. Will not pass any buffers to the accept call.
+        /// </summary>
+        void Continue();
 
         /// <summary>
         /// Get the maximum signature size of this context.
