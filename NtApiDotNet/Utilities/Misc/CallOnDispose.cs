@@ -12,40 +12,43 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
-using NtApiDotNet.Win32.Security.Native;
+using System;
 
-namespace NtApiDotNet.Win32.Security.Buffers
+namespace NtApiDotNet.Utilities.Misc
 {
     /// <summary>
-    /// Class to represent an empty security buffer.
+    /// Class which calls a delegate on dispose.
     /// </summary>
-    public class SecurityBufferEmpty : SecurityBuffer
+    public sealed class CallOnDispose : IDisposable
     {
+        private readonly Action _action;
+        private bool _disposed;
+
         /// <summary>
         /// Constructor.
         /// </summary>
-        /// <param name="type">The type of buffer.</param>
-        public SecurityBufferEmpty(SecurityBufferType type) 
-            : base(type)
+        /// <param name="action">The delegate to call on dispose.</param>
+        public CallOnDispose(Action action)
         {
+            _action = action;
         }
 
         /// <summary>
-        /// Convert to buffer back to an array.
+        /// Dispose and call the action.
         /// </summary>
-        /// <returns>The buffer as an array.</returns>
-        public override byte[] ToArray()
+        public void Dispose()
         {
-            return new byte[0];
-        }
-
-        internal override void FromBuffer(SecBuffer buffer)
-        {
-        }
-
-        internal override SecBuffer ToBuffer()
-        {
-            return new SecBuffer { BufferType = Type };
+            try
+            {
+                if (!_disposed)
+                {
+                    _disposed = true;
+                }
+                _action();
+            }
+            catch
+            {
+            }
         }
     }
 }

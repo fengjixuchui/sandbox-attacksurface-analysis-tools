@@ -12,11 +12,13 @@
 //  See the License for the specific language governing permissions and
 //  limitations under the License.
 
+using NtApiDotNet.Win32.Security.Authentication.Schannel;
 using NtApiDotNet.Win32.Security.Buffers;
 using NtApiDotNet.Win32.Security.Native;
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Security.Cryptography.X509Certificates;
 
 namespace NtApiDotNet.Win32.Security.Authentication
 {
@@ -27,33 +29,33 @@ namespace NtApiDotNet.Win32.Security.Authentication
     {
         #region Private Members
         private readonly CredentialHandle _creds;
-        private readonly InitializeContextReqFlags _req_attributes;
-        private readonly string _target;
-        private readonly SecDataRep _data_rep;
-        private readonly byte[] _channel_binding;
         private int _token_count;
         private SecHandle _context;
 
-        private void CallInitialize(List<SecurityBuffer> input_buffers)
+        private SecStatusCode CallInitialize(List<SecurityBuffer> input_buffers, List<SecurityBuffer> output_buffers, bool throw_on_error)
         {
             var token_buffer = new SecurityBufferAllocMem(SecurityBufferType.Token);
-            var output_buffers = new[] { token_buffer };
-
-            if (_channel_binding != null)
+            output_buffers.Insert(0, token_buffer);
+            if (ChannelBinding != null)
             {
-                input_buffers.Add(new SecurityBufferChannelBinding(_channel_binding));
+                input_buffers.Add(new SecurityBufferChannelBinding(ChannelBinding));
             }
+
+            string target_name = string.IsNullOrEmpty(Target) ? null : Target;
 
             LargeInteger expiry = new LargeInteger();
             SecHandle new_context = _context ?? new SecHandle();
-            SecStatusCode result = SecurityContextUtils.InitializeSecurityContext(_creds, _context, _target,
-                _req_attributes | InitializeContextReqFlags.AllocateMemory, _data_rep, input_buffers, new_context,
-                output_buffers, out InitializeContextRetFlags flags, expiry);
+            SecStatusCode result = SecurityContextUtils.InitializeSecurityContext(_creds, _context, target_name,
+                RequestAttributes | InitializeContextReqFlags.AllocateMemory, DataRepresentation, input_buffers, new_context,
+                output_buffers, out InitializeContextRetFlags flags, expiry, throw_on_error);
+            if (!result.IsSuccess())
+                return result;
             _context = new_context;
             Expiry = expiry.QuadPart;
-            Flags = flags & ~InitializeContextRetFlags.AllocatedMemory;
+            ReturnAttributes = flags & ~InitializeContextRetFlags.AllocatedMemory;
             Token = AuthenticationToken.Parse(_creds.PackageName, _token_count++, true, token_buffer.ToArray());
-            Done = !(result == SecStatusCode.ContinueNeeded || result == SecStatusCode.CompleteAndContinue);
+            Done = !(result == SecStatusCode.SEC_I_CONTINUE_NEEDED || result == SecStatusCode.SEC_I_COMPLETE_AND_CONTINUE);
+            return result;
         }
 
         private SecHandle Context => _context ?? throw new InvalidOperationException("Client authentication context hasn't been initialized.");
@@ -80,9 +82,35 @@ namespace NtApiDotNet.Win32.Security.Authentication
         public bool Done { get; private set; }
 
         /// <summary>
+        /// Current request attribute flags.
+        /// </summary>
+        public InitializeContextReqFlags RequestAttributes { get; set; }
+
+        /// <summary>
+        /// Current return attribute flags.
+        /// </summary>
+        public InitializeContextRetFlags ReturnAttributes { get; private set; }
+
+        /// <summary>
+        /// Current data representation.
+        /// </summary>
+        public SecDataRep DataRepresentation { get; set; }
+
+        /// <summary>
+        /// Current target name.
+        /// </summary>
+        public string Target { get; set; }
+
+        /// <summary>
+        /// Current channel binding.
+        /// </summary>
+        public byte[] ChannelBinding { get; set; }
+
+        /// <summary>
         /// Current status flags.
         /// </summary>
-        public InitializeContextRetFlags Flags { get; private set; }
+        [Obsolete("Use ReturnAttributes")]
+        public InitializeContextRetFlags Flags => ReturnAttributes;
 
         /// <summary>
         /// Expiry of the authentication.
@@ -105,6 +133,37 @@ namespace NtApiDotNet.Win32.Security.Authentication
         public int SecurityTrailerSize => SecurityContextUtils.GetSecurityTrailerSize(Context);
 
         /// <summary>
+        /// Size of any header when using a stream protocol such as Schannel.
+        /// </summary>
+        public int StreamHeaderSize => SecurityContextUtils.GetStreamSizes(Context).cbHeader;
+        /// <summary>
+        /// Size of any trailer when using a stream protocol such as Schannel.
+        /// </summary>
+        public int StreamTrailerSize => SecurityContextUtils.GetStreamSizes(Context).cbTrailer;
+        /// <summary>
+        /// Number of buffers needed when using a stream protocol such as Schannel.
+        /// </summary>
+        public int StreamBufferCount => SecurityContextUtils.GetStreamSizes(Context).cBuffers;
+        /// <summary>
+        /// Maximum message size when using a stream protocol such as Schannel.
+        /// </summary>
+        public int StreamMaxMessageSize => SecurityContextUtils.GetStreamSizes(Context).cbMaximumMessage;
+        /// <summary>
+        /// Preferred block size when using a stream protocol such as Schannel.
+        /// </summary>
+        public int StreamBlockSize => SecurityContextUtils.GetStreamSizes(Context).cbBlockSize;
+
+        /// <summary>
+        /// Get the local certificate. Only used for Schannel related authentication.
+        /// </summary>
+        public X509Certificate2 LocalCertificate => SecurityContextUtils.GetLocalCertificate(Context);
+
+        /// <summary>
+        /// Get the remote certificate. Only used for Schannel related authentication.
+        /// </summary>
+        public X509Certificate2 RemoteCertificate => SecurityContextUtils.GetRemoteCertificate(Context);
+
+        /// <summary>
         /// Get the last token status for the client context.
         /// </summary>
         public SecPkgLastClientTokenStatus LastTokenStatus => 
@@ -115,6 +174,11 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// Get the name of the authentication package.
         /// </summary>
         public string PackageName => SecurityContextUtils.GetPackageName(Context) ?? _creds.PackageName;
+
+        /// <summary>
+        /// Get connection information for the schannel connection.
+        /// </summary>
+        public SchannelConnectionInfo ConnectionInfo => SecurityContextUtils.GetConnectionInfo(Context);
 
         #endregion
 
@@ -133,11 +197,11 @@ namespace NtApiDotNet.Win32.Security.Authentication
             string target, byte[] channel_binding, SecDataRep data_rep, bool initialize)
         {
             _creds = creds;
-            _req_attributes = req_attributes & ~InitializeContextReqFlags.AllocateMemory;
-            _target = target == string.Empty ? null : target;
-            _data_rep = data_rep;
             _token_count = 0;
-            _channel_binding = channel_binding;
+            RequestAttributes = req_attributes;
+            Target = target;
+            DataRepresentation = data_rep;
+            ChannelBinding = channel_binding;
             if (initialize)
             {
                 Continue();
@@ -202,30 +266,77 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// <param name="token">The server token to continue authentication.</param>
         public void Continue(AuthenticationToken token)
         {
+            Continue(token, new List<SecurityBuffer>());
+        }
+
+        /// <summary>
+        /// Continue the authentication..
+        /// </summary>
+        /// <param name="token">The server token to continue authentication.</param>
+        /// <param name="additional_input">Additional input buffers for the continue, does not need to include the token.</param>
+        public void Continue(AuthenticationToken token, IEnumerable<SecurityBuffer> additional_input)
+        {
+            Continue(token, additional_input, new SecurityBuffer[0]);
+        }
+
+        /// <summary>
+        /// Continue the authentication.
+        /// </summary>
+        /// <param name="token">The server token to continue authentication.</param>
+        /// <param name="additional_input">Additional input buffers for the continue, does not need to include the token.</param>
+        /// <param name="additional_output">Additional output buffers, does not need to include the token.</param>
+        public void Continue(AuthenticationToken token, IEnumerable<SecurityBuffer> additional_input, IEnumerable<SecurityBuffer> additional_output)
+        {
             if (token is null)
             {
                 throw new ArgumentNullException(nameof(token));
+            }
+
+            if (additional_input is null)
+            {
+                throw new ArgumentNullException(nameof(additional_input));
             }
 
             var input_buffers = new List<SecurityBuffer>
             {
                 new SecurityBufferInOut(SecurityBufferType.Token, token.ToArray())
             };
-            CallInitialize(input_buffers);
+            input_buffers.AddRange(additional_input);
+
+            Continue(input_buffers, additional_output);
         }
 
         /// <summary>
-        /// Continue the authentication..
+        /// Continue the authentication without any token.
         /// </summary>
-        /// <param name="input_buffers">The input buffers for the continue.</param>
-        public void Continue(IEnumerable<SecurityBuffer> input_buffers)
+        /// <param name="input_buffers">Input buffers for the continue. Does not contain a token.</param>
+        /// <param name="additional_output">Specify additional output buffers, does not need to include the token.</param>
+        /// <param name="throw_on_error">True to throw on error.</param>
+        /// <remarks>This sends the input buffers directly to the initialize call, it does not contain any token.</remarks>
+        public SecStatusCode Continue(IEnumerable<SecurityBuffer> input_buffers, IEnumerable<SecurityBuffer> additional_output, bool throw_on_error)
         {
             if (input_buffers is null)
             {
                 throw new ArgumentNullException(nameof(input_buffers));
             }
 
-            CallInitialize(input_buffers.ToList());
+            if (additional_output is null)
+            {
+                throw new ArgumentNullException(nameof(additional_output));
+            }
+
+            return CallInitialize(input_buffers.ToList(), additional_output.ToList(), throw_on_error);
+        }
+
+        /// <summary>
+        /// Continue the authentication without any token.
+        /// </summary>
+        /// <param name="input_buffers">Input buffers for the continue. Does not contain a token.</param>
+        /// <param name="additional_output">Specify additional output buffers, does not need to include the token.</param>
+        /// <remarks>This sends the input buffers directly to the initialize call, it does not contain any token.</remarks>
+        public void Continue(IEnumerable<SecurityBuffer> input_buffers, IEnumerable<SecurityBuffer> additional_output)
+        {
+            Continue(input_buffers, additional_output, true);
         }
 
         /// <summary>
@@ -233,7 +344,7 @@ namespace NtApiDotNet.Win32.Security.Authentication
         /// </summary>
         public void Continue()
         {
-            Continue(new SecurityBuffer[0]);
+            CallInitialize(new List<SecurityBuffer>(), new List<SecurityBuffer>(), true);
         }
 
         /// <summary>
@@ -308,6 +419,19 @@ namespace NtApiDotNet.Win32.Security.Authentication
         }
 
         /// <summary>
+        /// Encrypt a message for this context with no specific signature.
+        /// </summary>
+        /// <param name="messages">The messages to encrypt.</param>
+        /// <param name="quality_of_protection">Quality of protection flags.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <remarks>The messages are encrypted in place. You can add buffers with the ReadOnly flag to prevent them being encrypted. 
+        /// If you need to return a signature then it must be specified in a buffer.</remarks>
+        public void EncryptMessageNoSignature(IEnumerable<SecurityBuffer> messages, SecurityQualityOfProtectionFlags quality_of_protection, int sequence_no)
+        {
+            SecurityContextUtils.EncryptMessage(Context, quality_of_protection, messages, sequence_no);
+        }
+
+        /// <summary>
         /// Decrypt a message for this context.
         /// </summary>
         /// <param name="message">The message to decrypt.</param>
@@ -328,6 +452,18 @@ namespace NtApiDotNet.Win32.Security.Authentication
         public void DecryptMessage(IEnumerable<SecurityBuffer> messages, byte[] signature, int sequence_no)
         {
             SecurityContextUtils.DecryptMessage(Context, messages, signature, sequence_no);
+        }
+
+        /// <summary>
+        /// Decrypt a message for this context.
+        /// </summary>
+        /// <param name="messages">The messages to decrypt.</param>
+        /// <param name="sequence_no">The sequence number.</param>
+        /// <remarks>The messages are decrypted in place. You can add buffers with the ReadOnly flag to prevent them being decrypted.
+        /// If you need to specify a signature you need to add a buffer.</remarks>
+        public void DecryptMessageNoSignature(IEnumerable<SecurityBuffer> messages, int sequence_no)
+        {
+            SecurityContextUtils.DecryptMessageNoSignature(Context, messages, sequence_no);
         }
 
         /// <summary>

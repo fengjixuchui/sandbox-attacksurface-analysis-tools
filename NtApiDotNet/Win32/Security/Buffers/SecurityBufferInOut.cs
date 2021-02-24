@@ -60,16 +60,17 @@ namespace NtApiDotNet.Win32.Security.Buffers
 
         internal override SecBuffer ToBuffer()
         {
-            return new SecBuffer(Type, ToArray());
+            return new SecBuffer(_type, ToArray());
         }
 
         internal override void FromBuffer(SecBuffer buffer)
         {
-            if (Type.HasFlagSet(SecurityBufferType.ReadOnly | SecurityBufferType.ReadOnlyWithChecksum))
+            if (_type.HasFlagSet(SecurityBufferType.ReadOnly | SecurityBufferType.ReadOnlyWithChecksum))
             {
                 return;
             }
             _array = new ArraySegment<byte>(buffer.ToArray());
+            _type = buffer.BufferType;
         }
     }
 }
